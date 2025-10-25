@@ -9,6 +9,8 @@
 #include <string.h>
 #include <ctype.h>
 #include <limits.h>
+#include <glob.h>
+#include <dirent.h>
 #include <sys/stat.h>
 #include <cjson/cJSON.h>
 
@@ -45,17 +47,16 @@ static void print_error(const char *text) {
 // ============================================================================
 
 static int cmd_exit(ConversationState *state, const char *args) {
-    (void)state;  // Unused
-    (void)args;   // Unused
+    (void)state; (void)args;
     return -2;  // Special code to exit
 }
 
 static int cmd_quit(ConversationState *state, const char *args) {
-    return cmd_exit(state, args);  // Same as exit
+    return cmd_exit(state, args);
 }
 
 static int cmd_clear(ConversationState *state, const char *args) {
-    (void)args;  // Unused
+    (void)args;
     clear_conversation(state);
     print_status("Conversation cleared");
     printf("\n");
@@ -64,33 +65,20 @@ static int cmd_clear(ConversationState *state, const char *args) {
 
 static int cmd_add_dir(ConversationState *state, const char *args) {
     // Trim leading whitespace from args
-    while (*args == ' ' || *args == '\t') {
-        args++;
-    }
-
+    while (*args == ' ' || *args == '\t') args++;
     if (strlen(args) == 0) {
         print_error("Usage: /add-dir <directory-path>");
         printf("\n");
         return -1;
     }
-
     if (add_directory(state, args) == 0) {
         print_status("Added directory to context");
-
-        // Rebuild and update system message with new context
-        char *new_system_prompt = build_system_prompt(state);
-        if (new_system_prompt) {
-            // Access state->messages[0] to update system message
-            // This requires ConversationState definition
-            // For now, we'll handle this in the caller
-            free(new_system_prompt);
-        }
+        printf("\n");
         return 0;
     } else {
         char err_msg[PATH_MAX + 64];
         snprintf(err_msg, sizeof(err_msg),
-                 "Failed to add directory: %s (not found, not a directory, or already added)",
-                 args);
+                 "Failed to add directory: %s (not found or already added)", args);
         print_error(err_msg);
         printf("\n");
         return -1;
@@ -98,16 +86,12 @@ static int cmd_add_dir(ConversationState *state, const char *args) {
 }
 
 static int cmd_help(ConversationState *state, const char *args) {
-    (void)state;  // Unused
-    (void)args;   // Unused
-
+    (void)state; (void)args;
     printf("\n%sCommands:%s\n", ANSI_CYAN, ANSI_RESET);
-
     for (int i = 0; i < command_count; i++) {
         const Command *cmd = command_registry[i];
         printf("  %-18s - %s\n", cmd->usage, cmd->description);
     }
-
     printf("  Ctrl+D             - Exit\n\n");
     return 0;
 }
@@ -121,7 +105,7 @@ static Command exit_cmd = {
     .usage = "/exit",
     .description = "Exit interactive mode",
     .handler = cmd_exit,
-    .completer = NULL
+    .completer = commands_tab_completer
 };
 
 static Command quit_cmd = {
@@ -129,7 +113,7 @@ static Command quit_cmd = {
     .usage = "/quit",
     .description = "Exit interactive mode",
     .handler = cmd_quit,
-    .completer = NULL
+    .completer = commands_tab_completer
 };
 
 static Command clear_cmd = {
@@ -137,7 +121,7 @@ static Command clear_cmd = {
     .usage = "/clear",
     .description = "Clear conversation history",
     .handler = cmd_clear,
-    .completer = NULL
+    .completer = commands_tab_completer
 };
 
 static Command add_dir_cmd = {
@@ -145,7 +129,7 @@ static Command add_dir_cmd = {
     .usage = "/add-dir <path>",
     .description = "Add directory to working directories",
     .handler = cmd_add_dir,
-    .completer = NULL  // TODO: Add directory path completion
+    .completer = dir_path_completer
 };
 
 static Command help_cmd = {
@@ -153,7 +137,7 @@ static Command help_cmd = {
     .usage = "/help",
     .description = "Show this help",
     .handler = cmd_help,
-    .completer = NULL
+    .completer = commands_tab_completer
 };
 
 // ============================================================================
@@ -162,8 +146,6 @@ static Command help_cmd = {
 
 void commands_init(void) {
     command_count = 0;
-
-    // Register built-in commands
     commands_register(&exit_cmd);
     commands_register(&quit_cmd);
     commands_register(&clear_cmd);
@@ -172,46 +154,25 @@ void commands_init(void) {
 }
 
 void commands_register(const Command *cmd) {
-    if (command_count >= MAX_COMMANDS) {
+    if (command_count < MAX_COMMANDS) {
+        command_registry[command_count++] = cmd;
+    } else {
         fprintf(stderr, "Warning: Command registry full, cannot register '%s'\n", cmd->name);
-        return;
     }
-
-    command_registry[command_count++] = cmd;
 }
 
 int commands_execute(ConversationState *state, const char *input) {
-    // Input should start with '/'
-    if (input[0] != '/') {
-        return -1;  // Not a command
-    }
-
-    // Skip the '/' prefix
+    if (!input || input[0] != '/') return -1;
     const char *cmd_line = input + 1;
-
-    // Find where command name ends (space or end of string)
     const char *space = strchr(cmd_line, ' ');
-    size_t cmd_len;
-    const char *args;
-
-    if (space) {
-        cmd_len = space - cmd_line;
-        args = space + 1;  // Arguments start after the space
-    } else {
-        cmd_len = strlen(cmd_line);
-        args = "";  // No arguments
-    }
-
-    // Find matching command
+    size_t cmd_len = space ? (space - cmd_line) : strlen(cmd_line);
+    const char *args = space ? space + 1 : "";
     for (int i = 0; i < command_count; i++) {
         const Command *cmd = command_registry[i];
-        if (strncmp(cmd->name, cmd_line, cmd_len) == 0 && strlen(cmd->name) == cmd_len) {
-            // Found matching command, execute it
+        if (strlen(cmd->name) == cmd_len && strncmp(cmd->name, cmd_line, cmd_len) == 0) {
             return cmd->handler(state, args);
         }
     }
-
-    // Command not found
     char err_msg[256];
     snprintf(err_msg, sizeof(err_msg), "Unknown command: %.*s", (int)cmd_len, cmd_line);
     print_error(err_msg);
@@ -222,4 +183,89 @@ int commands_execute(ConversationState *state, const char *input) {
 const Command** commands_list(int *count) {
     *count = command_count;
     return command_registry;
+}
+
+// ============================================================================
+// Tab Completion Implementations
+// ============================================================================
+
+CompletionResult* commands_tab_completer(const char *line, int cursor_pos, void *ctx) {
+    ConversationState *state = (ConversationState*)ctx;
+    if (!line || line[0] != '/') return NULL;
+    const char *space = strchr(line, ' ');
+    int cmd_name_len = space ? (space - line - 1) : ((int)strlen(line) - 1);
+    int name_end_pos = cmd_name_len + 1;
+    if (cursor_pos <= name_end_pos) {
+        // Complete command names
+        int match_count = 0;
+        for (int i = 0; i < command_count; i++) {
+            if (strncmp(command_registry[i]->name, line + 1, cmd_name_len) == 0) match_count++;
+        }
+        if (match_count == 0) return NULL;
+        CompletionResult *res = malloc(sizeof(CompletionResult));
+        res->options = malloc(sizeof(char*) * match_count);
+        res->count = 0; res->selected = 0;
+        for (int i = 0; i < command_count; i++) {
+            const char *name = command_registry[i]->name;
+            if (strncmp(name, line + 1, cmd_name_len) == 0) {
+                char *opt = malloc(strlen(name) + 2);
+                snprintf(opt, strlen(name) + 2, "/%s", name);
+                res->options[res->count++] = opt;
+            }
+        }
+        return res;
+    } else {
+        // Delegate argument completion
+        // Identify command name
+        char cmd_name[64];
+        int clen = cmd_name_len;
+        if (clen >= (int)sizeof(cmd_name)) clen = sizeof(cmd_name) - 1;
+        memcpy(cmd_name, line + 1, clen);
+        cmd_name[clen] = '\0';
+        for (int i = 0; i < command_count; i++) {
+            const Command *cmd = command_registry[i];
+            if (strcmp(cmd->name, cmd_name) == 0 && cmd->completer) {
+                return cmd->completer(line, cursor_pos, ctx);
+            }
+        }
+        return NULL;
+    }
+}
+
+static CompletionResult* dir_path_completer(const char *line, int cursor_pos, void *ctx) {
+    (void)ctx;
+    const char *arg = strchr(line, ' ');
+    if (!arg) return NULL;
+    arg++;
+    int arg_start = (int)(arg - line);
+    int arg_len = cursor_pos - arg_start;
+    if (arg_len < 0) arg_len = 0;
+    char prefix[PATH_MAX];
+    int plen = arg_len < PATH_MAX ? arg_len : PATH_MAX - 1;
+    memcpy(prefix, arg, plen);
+    prefix[plen] = '\0';
+    char pattern[PATH_MAX];
+    if (plen == 0) strcpy(pattern, "*"); else snprintf(pattern, sizeof(pattern), "%s*", prefix);
+    glob_t globbuf;
+    int ret = glob(pattern, GLOB_MARK | GLOB_NOSORT, NULL, &globbuf);
+    if (ret != 0) { globfree(&globbuf); return NULL; }
+    size_t dir_count = 0;
+    for (size_t i = 0; i < globbuf.gl_pathc; i++) {
+        const char *m = globbuf.gl_pathv[i];
+        size_t len = strlen(m);
+        if (len > 0 && m[len-1] == '/') dir_count++;
+    }
+    if (dir_count == 0) { globfree(&globbuf); return NULL; }
+    CompletionResult *res = malloc(sizeof(CompletionResult));
+    res->options = malloc(sizeof(char*) * dir_count);
+    res->count = 0; res->selected = 0;
+    for (size_t i = 0; i < globbuf.gl_pathc; i++) {
+        const char *m = globbuf.gl_pathv[i];
+        size_t len = strlen(m);
+        if (len > 0 && m[len-1] == '/') {
+            res->options[res->count++] = strdup(m);
+        }
+    }
+    globfree(&globbuf);
+    return res;
 }
