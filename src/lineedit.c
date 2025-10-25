@@ -411,8 +411,7 @@ char* lineedit_readline(LineEditor *ed, const char *prompt) {
                     // Multiple completions: list them, then redraw
                     printf("\n");
                     for (int i = 0; i < res->count; i++) {
-                        printf("%s\t
-", res->options[i]);
+                        printf("%s\t\n", res->options[i]);
                     }
                     completion_free(res);
                     redraw_input_line(prompt, ed->buffer, ed->cursor);
