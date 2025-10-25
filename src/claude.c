@@ -2029,10 +2029,15 @@ static int read_line_advanced(const char *prompt, char *buffer, size_t buffer_si
     new_term.c_cc[VTIME] = 0;
     tcsetattr(STDIN_FILENO, TCSANOW, &new_term);
 
+    // Enable bracketed paste mode
+    printf("\033[?2004h");
+    fflush(stdout);
+
     // Initialize buffer
     memset(buffer, 0, buffer_size);
     int len = 0;
     int cursor_pos = 0;
+    int in_paste_mode = 0;  // Track if we're receiving pasted text
 
     // Print initial prompt
     printf("%s", prompt);
@@ -2043,6 +2048,8 @@ static int read_line_advanced(const char *prompt, char *buffer, size_t buffer_si
         unsigned char c;
         if (read(STDIN_FILENO, &c, 1) != 1) {
             // Error or EOF
+            printf("\033[?2004l");  // Disable bracketed paste mode
+            fflush(stdout);
             tcsetattr(STDIN_FILENO, TCSANOW, &old_term);
             return 0;
         }
@@ -2074,7 +2081,17 @@ static int read_line_advanced(const char *prompt, char *buffer, size_t buffer_si
                     continue;
                 }
 
-                if (seq[1] == 'D') {
+                if (seq[1] == '2') {
+                    // Possible bracketed paste sequence: \e[200~ or \e[201~
+                    unsigned char paste_seq[3];
+                    if (read(STDIN_FILENO, paste_seq, 3) == 3) {
+                        if (paste_seq[0] == '0' && paste_seq[1] == '0' && paste_seq[2] == '~') {
+                            in_paste_mode = 1;  // Start of paste
+                        } else if (paste_seq[0] == '0' && paste_seq[1] == '1' && paste_seq[2] == '~') {
+                            in_paste_mode = 0;  // End of paste
+                        }
+                    }
+                } else if (seq[1] == 'D') {
                     // Left arrow
                     if (cursor_pos > 0) {
                         cursor_pos--;
@@ -2109,6 +2126,8 @@ static int read_line_advanced(const char *prompt, char *buffer, size_t buffer_si
         } else if (c == 4) {
             // Ctrl+D: EOF only (always exits, even if buffer has content)
             printf("\n");
+            printf("\033[?2004l");  // Disable bracketed paste mode
+            fflush(stdout);
             tcsetattr(STDIN_FILENO, TCSANOW, &old_term);
             return 0;
         } else if (c == 11) {
@@ -2142,9 +2161,21 @@ static int read_line_advanced(const char *prompt, char *buffer, size_t buffer_si
                 redraw_input_line(prompt, buffer, cursor_pos);
             }
         } else if (c == '\r' || c == '\n') {
-            // Enter: Submit (handles both \r and \n)
-            printf("\n");
-            running = 0;
+            // Enter: Submit, unless we're in paste mode
+            if (in_paste_mode) {
+                // In paste mode, insert newline as a regular character
+                if (len < (int)buffer_size - 1) {
+                    memmove(&buffer[cursor_pos + 1], &buffer[cursor_pos], len - cursor_pos + 1);
+                    buffer[cursor_pos] = '\n';
+                    len++;
+                    cursor_pos++;
+                    redraw_input_line(prompt, buffer, cursor_pos);
+                }
+            } else {
+                // Normal mode: submit on Enter
+                printf("\n");
+                running = 0;
+            }
         } else if (c >= 32 && c < 127) {
             // Printable character
             if (len < (int)buffer_size - 1) {
@@ -2157,6 +2188,10 @@ static int read_line_advanced(const char *prompt, char *buffer, size_t buffer_si
             }
         }
     }
+
+    // Disable bracketed paste mode
+    printf("\033[?2004l");
+    fflush(stdout);
 
     // Restore terminal settings
     tcsetattr(STDIN_FILENO, TCSANOW, &old_term);
