@@ -303,11 +303,43 @@ static cJSON* tool_bash(cJSON *params, ConversationState *state) {
     return result;
 }
 
-static cJSON* tool_read(cJSON *params, ConversationState *state) {
+STATIC cJSON* tool_read(cJSON *params, ConversationState *state) {
     const cJSON *path_json = cJSON_GetObjectItem(params, "file_path");
     if (!path_json || !cJSON_IsString(path_json)) {
         cJSON *error = cJSON_CreateObject();
         cJSON_AddStringToObject(error, "error", "Missing 'file_path' parameter");
+        return error;
+    }
+
+    // Get optional line range parameters
+    const cJSON *start_line_json = cJSON_GetObjectItem(params, "start_line");
+    const cJSON *end_line_json = cJSON_GetObjectItem(params, "end_line");
+    
+    int start_line = -1;  // -1 means no limit
+    int end_line = -1;    // -1 means no limit
+    
+    if (start_line_json && cJSON_IsNumber(start_line_json)) {
+        start_line = start_line_json->valueint;
+        if (start_line < 1) {
+            cJSON *error = cJSON_CreateObject();
+            cJSON_AddStringToObject(error, "error", "start_line must be >= 1");
+            return error;
+        }
+    }
+    
+    if (end_line_json && cJSON_IsNumber(end_line_json)) {
+        end_line = end_line_json->valueint;
+        if (end_line < 1) {
+            cJSON *error = cJSON_CreateObject();
+            cJSON_AddStringToObject(error, "error", "end_line must be >= 1");
+            return error;
+        }
+    }
+    
+    // Validate line range
+    if (start_line > 0 && end_line > 0 && start_line > end_line) {
+        cJSON *error = cJSON_CreateObject();
+        cJSON_AddStringToObject(error, "error", "start_line must be <= end_line");
         return error;
     }
 
@@ -329,9 +361,103 @@ static cJSON* tool_read(cJSON *params, ConversationState *state) {
         return error;
     }
 
+    // If line range is specified, extract only those lines
+    char *filtered_content = content;
+    int total_lines = 0;
+    
+    if (start_line > 0 || end_line > 0) {
+        // Count total lines and build filtered content
+        char *result_buffer = NULL;
+        size_t result_size = 0;
+        int current_line = 1;
+        char *line_start = content;
+        char *pos = content;
+        
+        while (*pos) {
+            if (*pos == '\n') {
+                // Found end of line
+                int line_len = pos - line_start + 1;  // Include the newline
+                
+                // Check if this line should be included
+                int include = 1;
+                if (start_line > 0 && current_line < start_line) include = 0;
+                if (end_line > 0 && current_line > end_line) include = 0;
+                
+                if (include) {
+                    // Add this line to result
+                    char *new_buffer = realloc(result_buffer, result_size + line_len + 1);
+                    if (!new_buffer) {
+                        free(result_buffer);
+                        free(content);
+                        cJSON *error = cJSON_CreateObject();
+                        cJSON_AddStringToObject(error, "error", "Out of memory");
+                        return error;
+                    }
+                    result_buffer = new_buffer;
+                    memcpy(result_buffer + result_size, line_start, line_len);
+                    result_size += line_len;
+                    result_buffer[result_size] = '\0';
+                }
+                
+                current_line++;
+                line_start = pos + 1;
+                
+                // Stop if we've reached end_line
+                if (end_line > 0 && current_line > end_line) {
+                    break;
+                }
+            }
+            pos++;
+        }
+        
+        // Handle last line (if file doesn't end with newline)
+        if (*line_start && (end_line < 0 || current_line <= end_line) && 
+            (start_line < 0 || current_line >= start_line)) {
+            int line_len = strlen(line_start);
+            char *new_buffer = realloc(result_buffer, result_size + line_len + 1);
+            if (!new_buffer) {
+                free(result_buffer);
+                free(content);
+                cJSON *error = cJSON_CreateObject();
+                cJSON_AddStringToObject(error, "error", "Out of memory");
+                return error;
+            }
+            result_buffer = new_buffer;
+            memcpy(result_buffer + result_size, line_start, line_len);
+            result_size += line_len;
+            result_buffer[result_size] = '\0';
+            current_line++;
+        }
+        
+        total_lines = current_line - 1;
+        
+        if (!result_buffer) {
+            result_buffer = strdup("");
+        }
+        
+        free(content);
+        filtered_content = result_buffer;
+    } else {
+        // Count total lines for the full file
+        char *pos = content;
+        total_lines = 0;
+        while (*pos) {
+            if (*pos == '\n') total_lines++;
+            pos++;
+        }
+        if (pos > content && *(pos-1) != '\n') total_lines++;  // Last line without newline
+    }
+
     cJSON *result = cJSON_CreateObject();
-    cJSON_AddStringToObject(result, "content", content);
-    free(content);
+    cJSON_AddStringToObject(result, "content", filtered_content);
+    cJSON_AddNumberToObject(result, "total_lines", total_lines);
+    
+    if (start_line > 0 || end_line > 0) {
+        cJSON_AddNumberToObject(result, "start_line", start_line > 0 ? start_line : 1);
+        cJSON_AddNumberToObject(result, "end_line", end_line > 0 ? end_line : total_lines);
+    }
+    
+    free(filtered_content);
 
     return result;
 }
@@ -768,7 +894,8 @@ static cJSON* get_tool_definitions() {
     cJSON_AddStringToObject(read, "type", "function");
     cJSON *read_func = cJSON_CreateObject();
     cJSON_AddStringToObject(read_func, "name", "Read");
-    cJSON_AddStringToObject(read_func, "description", "Reads a file from the filesystem");
+    cJSON_AddStringToObject(read_func, "description", 
+        "Reads a file from the filesystem with optional line range support");
     cJSON *read_params = cJSON_CreateObject();
     cJSON_AddStringToObject(read_params, "type", "object");
     cJSON *read_props = cJSON_CreateObject();
@@ -776,6 +903,16 @@ static cJSON* get_tool_definitions() {
     cJSON_AddStringToObject(read_path, "type", "string");
     cJSON_AddStringToObject(read_path, "description", "The absolute path to the file");
     cJSON_AddItemToObject(read_props, "file_path", read_path);
+    cJSON *read_start = cJSON_CreateObject();
+    cJSON_AddStringToObject(read_start, "type", "integer");
+    cJSON_AddStringToObject(read_start, "description", 
+        "Optional: Starting line number (1-indexed, inclusive)");
+    cJSON_AddItemToObject(read_props, "start_line", read_start);
+    cJSON *read_end = cJSON_CreateObject();
+    cJSON_AddStringToObject(read_end, "type", "integer");
+    cJSON_AddStringToObject(read_end, "description", 
+        "Optional: Ending line number (1-indexed, inclusive)");
+    cJSON_AddItemToObject(read_props, "end_line", read_end);
     cJSON_AddItemToObject(read_params, "properties", read_props);
     cJSON *read_req = cJSON_CreateArray();
     cJSON_AddItemToArray(read_req, cJSON_CreateString("file_path"));

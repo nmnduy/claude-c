@@ -186,15 +186,22 @@ Executes shell commands and captures output.
 ```
 
 ### 2. Read
-Reads file contents from the filesystem.
+Reads file contents from the filesystem with optional line range support.
 ```json
 {
   "name": "Read",
   "parameters": {
-    "file_path": "/path/to/file.txt"
+    "file_path": "/path/to/file.txt",
+    "start_line": 10,     // Optional: Start reading from line 10 (1-indexed, inclusive)
+    "end_line": 20        // Optional: Stop reading at line 20 (1-indexed, inclusive)
   }
 }
 ```
+**Features:**
+- Read entire file or specific line ranges
+- Line numbers are 1-indexed
+- Returns total line count and range info
+- Efficient for large files when only a portion is needed
 
 ### 3. Write
 Writes content to a file (creates or overwrites).
@@ -299,7 +306,6 @@ Searches for patterns in files (uses ripgrep/grep).
 
 1. **Basic error handling**: Errors printed to stderr, minimal recovery
 2. **No streaming**: Waits for full API response
-3. **Limited file operations**: No line offset/limit in Read tool
 
 ## Future Enhancements
 
@@ -308,7 +314,7 @@ Searches for patterns in files (uses ripgrep/grep).
 - [ ] Interactive conversation mode
 - [ ] Configuration file support
 - [x] ~~More sophisticated Edit tool (multi-replace, regex)~~ - **COMPLETED!**
-- [ ] Read tool with line range support
+- [x] ~~Read tool with line range support~~ - **COMPLETED!**
 - [ ] WebFetch tool with libcurl
 - [ ] Memory-efficient large file handling
 - [ ] Comprehensive error recovery
