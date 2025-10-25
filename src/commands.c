@@ -43,6 +43,12 @@ static void print_error(const char *text) {
 }
 
 // ============================================================================
+// Forward Declarations for Completion Functions
+// ============================================================================
+
+static CompletionResult* dir_path_completer(const char *line, int cursor_pos, void *ctx);
+
+// ============================================================================
 // Command Handlers
 // ============================================================================
 
