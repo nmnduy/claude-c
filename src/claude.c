@@ -2184,7 +2184,6 @@ static void interactive_mode(ConversationState *state) {
         int result = read_line_advanced(prompt, input_buffer, sizeof(input_buffer));
         if (result == 0) {
             // EOF (Ctrl+D)
-            printf("Goodbye!\n");
             break;
         } else if (result < 0) {
             // Error
