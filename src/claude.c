@@ -1603,7 +1603,7 @@ static void add_system_message(ConversationState *state, const char *text) {
 
     Message *msg = &state->messages[state->count++];
     msg->role = MSG_SYSTEM;
-    msg->content = malloc(sizeof(ContentBlock));
+    msg->content = calloc(1, sizeof(ContentBlock));
     msg->content_count = 1;
     msg->content[0].type = CONTENT_TEXT;
     msg->content[0].text = strdup(text);
@@ -1617,7 +1617,7 @@ static void add_user_message(ConversationState *state, const char *text) {
 
     Message *msg = &state->messages[state->count++];
     msg->role = MSG_USER;
-    msg->content = malloc(sizeof(ContentBlock));
+    msg->content = calloc(1, sizeof(ContentBlock));
     msg->content_count = 1;
     msg->content[0].type = CONTENT_TEXT;
     msg->content[0].text = strdup(text);
@@ -1894,6 +1894,27 @@ static int move_forward_word(const char *buffer, int cursor_pos, int buffer_len)
     return pos;
 }
 
+// Helper: Delete the next word
+#ifdef TEST_BUILD
+int delete_next_word(char *buffer, int *cursor_pos, int *buffer_len) {
+#else
+static int delete_next_word(char *buffer, int *cursor_pos, int *buffer_len) {
+#endif
+    if (*cursor_pos >= *buffer_len) return 0;
+
+    int start_pos = *cursor_pos;
+    int end_pos = move_forward_word(buffer, start_pos, *buffer_len);
+
+    if (end_pos > start_pos) {
+        // Delete characters from start_pos to end_pos
+        memmove(&buffer[start_pos], &buffer[end_pos], *buffer_len - end_pos + 1);
+        *buffer_len -= (end_pos - start_pos);
+        return end_pos - start_pos; // Return number of characters deleted
+    }
+
+    return 0;
+}
+
 // Helper: Calculate visible length of string (excluding ANSI escape sequences)
 #ifdef TEST_BUILD
 int visible_strlen(const char *str) {
@@ -2042,6 +2063,11 @@ static int read_line_advanced(const char *prompt, char *buffer, size_t buffer_si
                 // Alt+f: forward word
                 cursor_pos = move_forward_word(buffer, cursor_pos, len);
                 redraw_input_line(prompt, buffer, cursor_pos);
+            } else if (seq[0] == 'd' || seq[0] == 'D') {
+                // Alt+d: delete next word
+                if (delete_next_word(buffer, &cursor_pos, &len)) {
+                    redraw_input_line(prompt, buffer, cursor_pos);
+                }
             } else if (seq[0] == '[') {
                 // Arrow keys and other escape sequences
                 if (read(STDIN_FILENO, &seq[1], 1) != 1) {
@@ -2145,7 +2171,7 @@ static void interactive_mode(ConversationState *state) {
     printf("%s▝▜███████▛▘%s  Directory: %s\n", ANSI_BLUE, ANSI_RESET, state->working_dir);
     printf("%s  ▘▘   ▝▝%s\n", ANSI_BLUE, ANSI_RESET);
     printf("             Commands: /exit /quit /clear /help\n");
-    printf("             Keybindings: Alt+b/f (word), Ctrl+a/e (line), Ctrl+n (newline)\n");
+    printf("             Keybindings: Alt+b/f/d (word), Ctrl+a/e (line), Ctrl+n (newline)\n");
     printf("             Type Ctrl+D to exit\n\n");
 
     char input_buffer[BUFFER_SIZE];
