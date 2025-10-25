@@ -164,6 +164,9 @@ typedef struct {
     char *api_url;
     char *model;
     char *working_dir;
+    char **additional_dirs;         // Array of additional working directory paths
+    int additional_dirs_count;      // Number of additional directories
+    int additional_dirs_capacity;   // Capacity of additional_dirs array
     char *session_id;               // Unique session identifier for this conversation
     PersistenceDB *persistence_db;  // For logging API calls to SQLite
 } ConversationState;
@@ -246,6 +249,62 @@ static char* resolve_path(const char *path, const char *working_dir) {
     char *clean = realpath(resolved, NULL);
     free(resolved);
     return clean;
+}
+
+// Add a directory to the additional working directories list
+// Returns: 0 on success, -1 on error
+static int add_directory(ConversationState *state, const char *path) {
+    // Validate that directory exists
+    struct stat st;
+    char *resolved_path = NULL;
+
+    // Resolve path (handle relative paths)
+    if (path[0] == '/') {
+        resolved_path = realpath(path, NULL);
+    } else {
+        char full_path[PATH_MAX];
+        snprintf(full_path, sizeof(full_path), "%s/%s", state->working_dir, path);
+        resolved_path = realpath(full_path, NULL);
+    }
+
+    if (!resolved_path) {
+        return -1;  // Path doesn't exist or can't be resolved
+    }
+
+    if (stat(resolved_path, &st) != 0 || !S_ISDIR(st.st_mode)) {
+        free(resolved_path);
+        return -1;  // Not a directory
+    }
+
+    // Check if directory is already in the list (avoid duplicates)
+    if (strcmp(resolved_path, state->working_dir) == 0) {
+        free(resolved_path);
+        return -1;  // Already the main working directory
+    }
+
+    for (int i = 0; i < state->additional_dirs_count; i++) {
+        if (strcmp(resolved_path, state->additional_dirs[i]) == 0) {
+            free(resolved_path);
+            return -1;  // Already in additional directories
+        }
+    }
+
+    // Expand array if needed
+    if (state->additional_dirs_count >= state->additional_dirs_capacity) {
+        int new_capacity = state->additional_dirs_capacity == 0 ? 4 : state->additional_dirs_capacity * 2;
+        char **new_array = realloc(state->additional_dirs, new_capacity * sizeof(char*));
+        if (!new_array) {
+            free(resolved_path);
+            return -1;  // Out of memory
+        }
+        state->additional_dirs = new_array;
+        state->additional_dirs_capacity = new_capacity;
+    }
+
+    // Add directory to list
+    state->additional_dirs[state->additional_dirs_count++] = resolved_path;
+
+    return 0;
 }
 
 // ============================================================================
@@ -765,25 +824,44 @@ static cJSON* tool_glob(cJSON *params, ConversationState *state) {
     }
 
     const char *pattern = pattern_json->valuestring;
+    cJSON *result = cJSON_CreateObject();
+    cJSON *files = cJSON_CreateArray();
+    int total_count = 0;
+
+    // Search in main working directory
     char full_pattern[PATH_MAX];
     snprintf(full_pattern, sizeof(full_pattern), "%s/%s", state->working_dir, pattern);
 
     glob_t glob_result;
     int ret = glob(full_pattern, GLOB_TILDE, NULL, &glob_result);
 
-    cJSON *result = cJSON_CreateObject();
-    cJSON *files = cJSON_CreateArray();
-
     if (ret == 0) {
         for (size_t i = 0; i < glob_result.gl_pathc; i++) {
             cJSON_AddItemToArray(files, cJSON_CreateString(glob_result.gl_pathv[i]));
+            total_count++;
+        }
+        globfree(&glob_result);
+    }
+
+    // Search in additional working directories
+    for (int dir_idx = 0; dir_idx < state->additional_dirs_count; dir_idx++) {
+        snprintf(full_pattern, sizeof(full_pattern), "%s/%s",
+                 state->additional_dirs[dir_idx], pattern);
+
+        ret = glob(full_pattern, GLOB_TILDE, NULL, &glob_result);
+
+        if (ret == 0) {
+            for (size_t i = 0; i < glob_result.gl_pathc; i++) {
+                cJSON_AddItemToArray(files, cJSON_CreateString(glob_result.gl_pathv[i]));
+                total_count++;
+            }
+            globfree(&glob_result);
         }
     }
 
     cJSON_AddItemToObject(result, "files", files);
-    cJSON_AddNumberToObject(result, "count", glob_result.gl_pathc);
+    cJSON_AddNumberToObject(result, "count", total_count);
 
-    globfree(&glob_result);
     return result;
 }
 
@@ -801,7 +879,10 @@ static cJSON* tool_grep(cJSON *params, ConversationState *state) {
     const char *path = path_json && cJSON_IsString(path_json) ?
                        path_json->valuestring : ".";
 
-    // Use grep command for simplicity
+    cJSON *result = cJSON_CreateObject();
+    cJSON *matches = cJSON_CreateArray();
+
+    // Search in main working directory
     char command[BUFFER_SIZE];
     snprintf(command, sizeof(command),
              "cd %s && grep -r -n '%s' %s 2>/dev/null || true",
@@ -814,16 +895,28 @@ static cJSON* tool_grep(cJSON *params, ConversationState *state) {
         return error;
     }
 
-    cJSON *result = cJSON_CreateObject();
-    cJSON *matches = cJSON_CreateArray();
-
     char buffer[BUFFER_SIZE];
     while (fgets(buffer, sizeof(buffer), pipe)) {
         buffer[strcspn(buffer, "\n")] = 0;  // Remove newline
         cJSON_AddItemToArray(matches, cJSON_CreateString(buffer));
     }
-
     pclose(pipe);
+
+    // Search in additional working directories
+    for (int dir_idx = 0; dir_idx < state->additional_dirs_count; dir_idx++) {
+        snprintf(command, sizeof(command),
+                 "cd %s && grep -r -n '%s' %s 2>/dev/null || true",
+                 state->additional_dirs[dir_idx], pattern, path);
+
+        pipe = popen(command, "r");
+        if (!pipe) continue;  // Skip this directory on error
+
+        while (fgets(buffer, sizeof(buffer), pipe)) {
+            buffer[strcspn(buffer, "\n")] = 0;  // Remove newline
+            cJSON_AddItemToArray(matches, cJSON_CreateString(buffer));
+        }
+        pclose(pipe);
+    }
 
     cJSON_AddItemToObject(result, "matches", matches);
     return result;
@@ -1544,7 +1637,8 @@ static const char* get_platform(void) {
 }
 
 // Build complete system prompt with environment context
-static char* build_system_prompt(const char *working_dir) {
+static char* build_system_prompt(ConversationState *state) {
+    const char *working_dir = state->working_dir;
     char *date = get_current_date();
     const char *platform = get_platform();
     char *os_version = get_os_version();
@@ -1555,6 +1649,11 @@ static char* build_system_prompt(const char *working_dir) {
     size_t prompt_size = 2048; // Base size for the prompt template
     if (git_status) prompt_size += strlen(git_status);
 
+    // Add space for additional directories
+    for (int i = 0; i < state->additional_dirs_count; i++) {
+        prompt_size += strlen(state->additional_dirs[i]) + 4; // path + ", " separator
+    }
+
     char *prompt = malloc(prompt_size);
     if (!prompt) {
         free(date);
@@ -1563,17 +1662,31 @@ static char* build_system_prompt(const char *working_dir) {
         return NULL;
     }
 
-    // Build the system prompt
+    // Build the system prompt with additional directories
     int offset = snprintf(prompt, prompt_size,
         "Here is useful information about the environment you are running in:\n"
         "<env>\n"
         "Working directory: %s\n"
+        "Additional working directories: ",
+        working_dir);
+
+    // Add additional directories
+    if (state->additional_dirs_count > 0) {
+        for (int i = 0; i < state->additional_dirs_count; i++) {
+            if (i > 0) {
+                offset += snprintf(prompt + offset, prompt_size - offset, ", ");
+            }
+            offset += snprintf(prompt + offset, prompt_size - offset, "%s", state->additional_dirs[i]);
+        }
+    }
+    offset += snprintf(prompt + offset, prompt_size - offset, "\n");
+
+    offset += snprintf(prompt + offset, prompt_size - offset,
         "Is directory a git repo: %s\n"
         "Platform: %s\n"
         "OS Version: %s\n"
         "Today's date: %s\n"
         "</env>\n",
-        working_dir,
         is_git ? "Yes" : "No",
         platform,
         os_version,
@@ -2205,7 +2318,7 @@ static void interactive_mode(ConversationState *state) {
     printf(" %s ▐▛███▜▌%s    %s\n", ANSI_BLUE, ANSI_RESET, state->model);
     printf("%s▝▜███████▛▘%s  %s\n", ANSI_BLUE, ANSI_RESET, state->working_dir);
     printf("%s  ▘▘   ▝▝%s\n", ANSI_BLUE, ANSI_RESET);
-    printf("             Commands: /exit /quit /clear /help\n");
+    printf("             Commands: /exit /quit /clear /add-dir /help\n");
     printf("             Keybindings: Alt+b/f/d (word), Ctrl+a/e (line), Ctrl+n (newline)\n");
     printf("             Type Ctrl+D to exit\n\n");
 
@@ -2243,12 +2356,51 @@ static void interactive_mode(ConversationState *state) {
             continue;
         }
 
+        if (strncmp(input_buffer, "/add-dir ", 9) == 0) {
+            // Extract directory path after "/add-dir "
+            const char *dir_path = input_buffer + 9;
+
+            // Trim leading whitespace
+            while (*dir_path == ' ' || *dir_path == '\t') {
+                dir_path++;
+            }
+
+            if (strlen(dir_path) == 0) {
+                print_error("Usage: /add-dir <directory-path>");
+                printf("\n");
+                continue;
+            }
+
+            if (add_directory(state, dir_path) == 0) {
+                char msg[PATH_MAX + 32];
+                snprintf(msg, sizeof(msg), "Added directory to context");
+                print_status(msg);
+
+                // Rebuild and update system message with new context
+                char *new_system_prompt = build_system_prompt(state);
+                if (new_system_prompt) {
+                    // Update the first message (system message) with new context
+                    if (state->count > 0 && state->messages[0].role == MSG_SYSTEM) {
+                        free(state->messages[0].content[0].text);
+                        state->messages[0].content[0].text = new_system_prompt;
+                    }
+                }
+            } else {
+                char err_msg[PATH_MAX + 64];
+                snprintf(err_msg, sizeof(err_msg), "Failed to add directory: %s (not found, not a directory, or already added)", dir_path);
+                print_error(err_msg);
+            }
+            printf("\n");
+            continue;
+        }
+
         if (strcmp(input_buffer, "/help") == 0) {
             printf("\n%sCommands:%s\n", ANSI_CYAN, ANSI_RESET);
-            printf("  /exit /quit - Exit interactive mode\n");
-            printf("  /clear      - Clear conversation history\n");
-            printf("  /help       - Show this help\n");
-            printf("  Ctrl+D      - Exit\n\n");
+            printf("  /exit /quit        - Exit interactive mode\n");
+            printf("  /clear             - Clear conversation history\n");
+            printf("  /add-dir <path>    - Add directory to working directories\n");
+            printf("  /help              - Show this help\n");
+            printf("  Ctrl+D             - Exit\n\n");
             continue;
         }
 
@@ -2419,7 +2571,7 @@ int main(int argc, char *argv[]) {
     }
 
     // Build and add system prompt with environment context
-    char *system_prompt = build_system_prompt(state.working_dir);
+    char *system_prompt = build_system_prompt(&state);
     if (system_prompt) {
         add_system_message(&state, system_prompt);
         free(system_prompt);
@@ -2443,6 +2595,12 @@ int main(int argc, char *argv[]) {
         }
         free(state.messages[i].content);
     }
+
+    // Free additional directories
+    for (int i = 0; i < state.additional_dirs_count; i++) {
+        free(state.additional_dirs[i]);
+    }
+    free(state.additional_dirs);
 
     free(state.api_key);
     free(state.api_url);
