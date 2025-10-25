@@ -23,6 +23,7 @@ BUILD_DIR = build
 TARGET = $(BUILD_DIR)/claude
 TEST_EDIT_TARGET = $(BUILD_DIR)/test_edit
 TEST_INPUT_TARGET = $(BUILD_DIR)/test_input
+TEST_READ_TARGET = $(BUILD_DIR)/test_read
 QUERY_TOOL = $(BUILD_DIR)/query_logs
 SRC = src/claude.c
 LOGGER_SRC = src/logger.c
@@ -33,15 +34,16 @@ MIGRATIONS_SRC = src/migrations.c
 MIGRATIONS_OBJ = $(BUILD_DIR)/migrations.o
 TEST_EDIT_SRC = tests/test_edit.c
 TEST_INPUT_SRC = tests/test_input.c
+TEST_READ_SRC = tests/test_read.c
 QUERY_TOOL_SRC = tools/query_logs.c
 
-.PHONY: all clean install check-deps test test-edit test-input query-tool
+.PHONY: all clean install check-deps test test-edit test-input test-read query-tool
 
 all: check-deps $(TARGET)
 
 query-tool: check-deps $(QUERY_TOOL)
 
-test: test-edit test-input
+test: test-edit test-input test-read
 
 test-edit: check-deps $(TEST_EDIT_TARGET)
 	@echo ""
@@ -54,6 +56,12 @@ test-input: check-deps $(TEST_INPUT_TARGET)
 	@echo "Running Input handler tests..."
 	@echo ""
 	@./$(TEST_INPUT_TARGET)
+
+test-read: check-deps $(TEST_READ_TARGET)
+	@echo ""
+	@echo "Running Read tool tests..."
+	@echo ""
+	@./$(TEST_READ_TARGET)
 
 $(TARGET): $(SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ)
 	@mkdir -p $(BUILD_DIR)
@@ -113,6 +121,19 @@ $(TEST_INPUT_TARGET): $(SRC) $(TEST_INPUT_SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) 
 	@echo "✓ Input handler test build successful!"
 	@echo ""
 
+# Test target for Read tool - compiles test suite with claude.c functions
+$(TEST_READ_TARGET): $(SRC) $(TEST_READ_SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ)
+	@mkdir -p $(BUILD_DIR)
+	@echo "Compiling claude.c for read testing..."
+	@$(CC) $(CFLAGS) -DTEST_BUILD -Dmain=unused_main -c -o $(BUILD_DIR)/claude_read_test.o $(SRC)
+	@echo "Compiling Read tool test suite..."
+	@$(CC) $(CFLAGS) -c -o $(BUILD_DIR)/test_read.o $(TEST_READ_SRC)
+	@echo "Linking test executable..."
+	@$(CC) -o $(TEST_READ_TARGET) $(BUILD_DIR)/claude_read_test.o $(BUILD_DIR)/test_read.o $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(LDFLAGS)
+	@echo ""
+	@echo "✓ Read tool test build successful!"
+	@echo ""
+
 clean:
 	rm -rf $(BUILD_DIR)
 
@@ -137,6 +158,7 @@ help:
 	@echo "  make test      - Build and run all unit tests"
 	@echo "  make test-edit - Build and run Edit tool tests only"
 	@echo "  make test-input - Build and run Input handler tests only"
+	@echo "  make test-read - Build and run Read tool tests only"
 	@echo "  make query-tool - Build the API call log query utility"
 	@echo "  make clean     - Remove built files"
 	@echo "  make install   - Install to /usr/local/bin (requires sudo)"
