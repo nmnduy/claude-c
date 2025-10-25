@@ -1661,17 +1661,27 @@ static void process_response(ConversationState *state, cJSON *response) {
             pthread_create(&threads[i], NULL, tool_thread_func, &args[i]);
         }
 
+        // Show spinner while waiting for tools to complete
+        char spinner_msg[128];
+        snprintf(spinner_msg, sizeof(spinner_msg), "Running %d tool%s...", 
+                 tool_count, tool_count > 1 ? "s" : "");
+        Spinner *tool_spinner = spinner_start(spinner_msg, SPINNER_YELLOW);
+
         // Wait for all tool threads to complete
         for (int i = 0; i < tool_count; i++) {
             pthread_join(threads[i], NULL);
         }
+        
+        spinner_stop(tool_spinner, "Tools completed", 1);
         free(threads);
         free(args);
 
         // Add tool results and continue conversation
         add_tool_results(state, results, tool_count);
 
+        Spinner *followup_spinner = spinner_start("Processing tool results...", SPINNER_CYAN);
         cJSON *next_response = call_api(state);
+        spinner_stop(followup_spinner, NULL, 1);
         if (next_response) {
             process_response(state, next_response);
             cJSON_Delete(next_response);
@@ -2052,9 +2062,10 @@ static void interactive_mode(ConversationState *state) {
         // Add to conversation
         add_user_message(state, input_buffer);
 
-        // Call API
-        print_status("Thinking...");
+        // Call API with spinner
+        Spinner *api_spinner = spinner_start("Waiting for API response...", SPINNER_CYAN);
         cJSON *response = call_api(state);
+        spinner_stop(api_spinner, NULL, 1);
 
         if (!response) {
             print_error("Failed to get response from API");
