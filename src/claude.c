@@ -76,6 +76,11 @@ static void persistence_log_api_call(
 #define MAX_TOOLS 10
 #define BUFFER_SIZE 8192
 
+// Retry configuration for rate limiting (429 errors)
+#define MAX_RETRIES 3                    // Maximum number of retry attempts
+#define INITIAL_BACKOFF_MS 1000          // Initial backoff delay in milliseconds
+#define BACKOFF_MULTIPLIER 2.0           // Exponential backoff multiplier
+
 // ANSI color codes (for non-TUI output)
 #define ANSI_RESET "\033[0m"
 #define ANSI_BLUE "\033[34m"
@@ -890,17 +895,10 @@ static cJSON* get_tool_definitions() {
 // ============================================================================
 
 static cJSON* call_api(ConversationState *state) {
-    CURL *curl;
-    CURLcode res;
-    MemoryBuffer response = {NULL, 0};
+    int retry_count = 0;
+    int backoff_ms = INITIAL_BACKOFF_MS;
 
-    curl = curl_easy_init();
-    if (!curl) {
-        fprintf(stderr, "Failed to initialize CURL\n");
-        return NULL;
-    }
-
-    // Build request body for OpenAI-compatible API
+    // Build request body once (used for all retries)
     cJSON *request = cJSON_CreateObject();
     cJSON_AddStringToObject(request, "model", state->model);
     cJSON_AddNumberToObject(request, "max_completion_tokens", MAX_TOKENS);
@@ -1015,102 +1013,223 @@ static cJSON* call_api(ConversationState *state) {
     // Keep copy of request for persistence logging
     char *request_copy = strdup(json_str);
 
-    // Set up headers for OpenAI-compatible API
-    struct curl_slist *headers = NULL;
-    headers = curl_slist_append(headers, "Content-Type: application/json");
-
-    char auth_header[512];
-    snprintf(auth_header, sizeof(auth_header), "Authorization: Bearer %s", state->api_key);
-    headers = curl_slist_append(headers, auth_header);
-
     // Build full API URL by appending endpoint to base
     char full_url[512];
     snprintf(full_url, sizeof(full_url), "%s/v1/chat/completions", state->api_url);
 
-    // Configure CURL
-    curl_easy_setopt(curl, CURLOPT_URL, full_url);
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, json_str);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
+    // Retry loop for handling rate limits
+    while (retry_count <= MAX_RETRIES) {
+        CURL *curl;
+        CURLcode res;
+        MemoryBuffer response = {NULL, 0};
 
-    // Time the API call
-    struct timespec start, end;
-    clock_gettime(CLOCK_MONOTONIC, &start);
-
-    // Perform request
-    res = curl_easy_perform(curl);
-
-    clock_gettime(CLOCK_MONOTONIC, &end);
-    long duration_ms = (end.tv_sec - start.tv_sec) * 1000 +
-                       (end.tv_nsec - start.tv_nsec) / 1000000;
-
-    // Get HTTP status code
-    long http_status = 0;
-    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_status);
-
-    curl_slist_free_all(headers);
-    curl_easy_cleanup(curl);
-    free(json_str);
-
-    // Handle CURL errors
-    if (res != CURLE_OK) {
-        const char *error_msg = curl_easy_strerror(res);
-        fprintf(stderr, "CURL request failed: %s\n", error_msg);
-
-        // Log failed request to persistence
-        if (state->persistence_db) {
-            persistence_log_api_call(
-                state->persistence_db,
-                state->session_id,
-                state->api_url,
-                request_copy,
-                NULL,  // No response on error
-                state->model,
-                "error",
-                (int)http_status,
-                error_msg,
-                duration_ms,
-                0  // No tools on error
-            );
+        curl = curl_easy_init();
+        if (!curl) {
+            fprintf(stderr, "Failed to initialize CURL\n");
+            free(json_str);
+            free(request_copy);
+            return NULL;
         }
 
-        free(request_copy);
-        free(response.output);
-        return NULL;
-    }
+        // Set up headers for OpenAI-compatible API
+        struct curl_slist *headers = NULL;
+        headers = curl_slist_append(headers, "Content-Type: application/json");
 
-    // Parse response
-    cJSON *json_response = cJSON_Parse(response.output);
-    if (!json_response) {
-        fprintf(stderr, "Failed to parse JSON response\n");
+        char auth_header[512];
+        snprintf(auth_header, sizeof(auth_header), "Authorization: Bearer %s", state->api_key);
+        headers = curl_slist_append(headers, auth_header);
 
-        // Log parsing error
-        if (state->persistence_db) {
-            persistence_log_api_call(
-                state->persistence_db,
-                state->session_id,
-                state->api_url,
-                request_copy,
-                response.output,
-                state->model,
-                "error",
-                (int)http_status,
-                "Failed to parse JSON response",
-                duration_ms,
-                0
-            );
+        // Configure CURL
+        curl_easy_setopt(curl, CURLOPT_URL, full_url);
+        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+        curl_easy_setopt(curl, CURLOPT_POSTFIELDS, json_str);
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
+
+        // Time the API call
+        struct timespec start, end;
+        clock_gettime(CLOCK_MONOTONIC, &start);
+
+        // Perform request
+        res = curl_easy_perform(curl);
+
+        clock_gettime(CLOCK_MONOTONIC, &end);
+        long duration_ms = (end.tv_sec - start.tv_sec) * 1000 +
+                           (end.tv_nsec - start.tv_nsec) / 1000000;
+
+        // Get HTTP status code
+        long http_status = 0;
+        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_status);
+
+        curl_slist_free_all(headers);
+        curl_easy_cleanup(curl);
+
+        // Handle CURL errors
+        if (res != CURLE_OK) {
+            const char *error_msg = curl_easy_strerror(res);
+            fprintf(stderr, "CURL request failed: %s\n", error_msg);
+
+            // Log failed request to persistence
+            if (state->persistence_db) {
+                persistence_log_api_call(
+                    state->persistence_db,
+                    state->session_id,
+                    state->api_url,
+                    request_copy,
+                    NULL,  // No response on error
+                    state->model,
+                    "error",
+                    (int)http_status,
+                    error_msg,
+                    duration_ms,
+                    0  // No tools on error
+                );
+            }
+
+            free(request_copy);
+            free(json_str);
+            free(response.output);
+            return NULL;
         }
 
-        free(request_copy);
-        free(response.output);
-        return NULL;
-    }
+        // Parse response
+        cJSON *json_response = cJSON_Parse(response.output);
+        if (!json_response) {
+            fprintf(stderr, "Failed to parse JSON response\n");
 
-    // Count tool uses in response
-    int tool_count = 0;
-    cJSON *choices = cJSON_GetObjectItem(json_response, "choices");
-    if (choices && cJSON_IsArray(choices)) {
+            // Log parsing error
+            if (state->persistence_db) {
+                persistence_log_api_call(
+                    state->persistence_db,
+                    state->session_id,
+                    state->api_url,
+                    request_copy,
+                    response.output,
+                    state->model,
+                    "error",
+                    (int)http_status,
+                    "Failed to parse JSON response",
+                    duration_ms,
+                    0
+                );
+            }
+
+            free(request_copy);
+            free(json_str);
+            free(response.output);
+            return NULL;
+        }
+
+        // Check for API error response
+        cJSON *error = cJSON_GetObjectItem(json_response, "error");
+        if (error) {
+            // Extract error details
+            cJSON *error_message = cJSON_GetObjectItem(error, "message");
+            cJSON *error_code = cJSON_GetObjectItem(error, "code");
+
+            const char *err_msg = error_message && cJSON_IsString(error_message)
+                                  ? error_message->valuestring
+                                  : "Unknown error";
+            const char *err_code = error_code && cJSON_IsString(error_code)
+                                   ? error_code->valuestring
+                                   : "";
+
+            // Check if this is a rate limit error (429)
+            int is_rate_limit = (http_status == 429 || strcmp(err_code, "429") == 0);
+
+            if (is_rate_limit && retry_count < MAX_RETRIES) {
+                // Retry with exponential backoff
+                char retry_msg[256];
+                snprintf(retry_msg, sizeof(retry_msg), "Rate limit exceeded. Retrying in %d ms...", backoff_ms);
+                print_error(retry_msg);
+
+                // Log this attempt
+                if (state->persistence_db) {
+                    persistence_log_api_call(
+                        state->persistence_db,
+                        state->session_id,
+                        state->api_url,
+                        request_copy,
+                        response.output,
+                        state->model,
+                        "error",
+                        (int)http_status,
+                        err_msg,
+                        duration_ms,
+                        0
+                    );
+                }
+
+                // Sleep and retry
+                usleep(backoff_ms * 1000); // usleep takes microseconds
+                backoff_ms = (int)(backoff_ms * BACKOFF_MULTIPLIER);
+                retry_count++;
+
+                cJSON_Delete(json_response);
+                free(response.output);
+                continue; // Retry the request
+            }
+
+            // Non-retryable error or max retries exceeded
+            char error_msg[512];
+            snprintf(error_msg, sizeof(error_msg), "API error: %s", err_msg);
+            print_error(error_msg);
+
+            // Log error
+            if (state->persistence_db) {
+                persistence_log_api_call(
+                    state->persistence_db,
+                    state->session_id,
+                    state->api_url,
+                    request_copy,
+                    response.output,
+                    state->model,
+                    "error",
+                    (int)http_status,
+                    err_msg,
+                    duration_ms,
+                    0
+                );
+            }
+
+            cJSON_Delete(json_response);
+            free(request_copy);
+            free(json_str);
+            free(response.output);
+            return NULL;
+        }
+
+        // Check for valid response format (must have "choices")
+        cJSON *choices = cJSON_GetObjectItem(json_response, "choices");
+        if (!choices || !cJSON_IsArray(choices) || cJSON_GetArraySize(choices) == 0) {
+            print_error("Invalid response format: no choices");
+
+            // Log error
+            if (state->persistence_db) {
+                persistence_log_api_call(
+                    state->persistence_db,
+                    state->session_id,
+                    state->api_url,
+                    request_copy,
+                    response.output,
+                    state->model,
+                    "error",
+                    (int)http_status,
+                    "Invalid response format: no choices",
+                    duration_ms,
+                    0
+                );
+            }
+
+            cJSON_Delete(json_response);
+            free(request_copy);
+            free(json_str);
+            free(response.output);
+            return NULL;
+        }
+
+        // Count tool uses in response
+        int tool_count = 0;
         cJSON *first_choice = cJSON_GetArrayItem(choices, 0);
         if (first_choice) {
             cJSON *message = cJSON_GetObjectItem(first_choice, "message");
@@ -1121,29 +1240,35 @@ static cJSON* call_api(ConversationState *state) {
                 }
             }
         }
+
+        // Log successful request to persistence
+        if (state->persistence_db) {
+            persistence_log_api_call(
+                state->persistence_db,
+                state->session_id,
+                state->api_url,
+                request_copy,
+                response.output,
+                state->model,
+                "success",
+                (int)http_status,
+                NULL,  // No error message
+                duration_ms,
+                tool_count
+            );
+        }
+
+        free(request_copy);
+        free(json_str);
+        free(response.output);
+
+        return json_response;
     }
 
-    // Log successful request to persistence
-    if (state->persistence_db) {
-        persistence_log_api_call(
-            state->persistence_db,
-            state->session_id,
-            state->api_url,
-            request_copy,
-            response.output,
-            state->model,
-            "success",
-            (int)http_status,
-            NULL,  // No error message
-            duration_ms,
-            tool_count
-        );
-    }
-
+    // Max retries exceeded (shouldn't reach here normally)
     free(request_copy);
-    free(response.output);
-
-    return json_response;
+    free(json_str);
+    return NULL;
 }
 
 // ============================================================================
