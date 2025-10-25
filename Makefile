@@ -2,7 +2,9 @@
 
 CC = gcc
 CFLAGS = -Wall -Wextra -O2 -std=c11 -D_POSIX_C_SOURCE=200809L
+DEBUG_CFLAGS = -Wall -Wextra -g -O0 -std=c11 -D_POSIX_C_SOURCE=200809L -fsanitize=address -fno-omit-frame-pointer
 LDFLAGS = -lcurl -lpthread -lsqlite3
+DEBUG_LDFLAGS = -lcurl -lpthread -lsqlite3 -fsanitize=address
 
 # Detect OS for cJSON library linking
 UNAME_S := $(shell uname -s)
@@ -11,12 +13,16 @@ ifeq ($(UNAME_S),Darwin)
     HOMEBREW_PREFIX := $(shell brew --prefix 2>/dev/null)
     ifneq ($(HOMEBREW_PREFIX),)
         CFLAGS += -I$(HOMEBREW_PREFIX)/include
+        DEBUG_CFLAGS += -I$(HOMEBREW_PREFIX)/include
         LDFLAGS += -L$(HOMEBREW_PREFIX)/lib
+        DEBUG_LDFLAGS += -L$(HOMEBREW_PREFIX)/lib
     endif
     LDFLAGS += -lcjson
+    DEBUG_LDFLAGS += -lcjson
 else ifeq ($(UNAME_S),Linux)
     # Linux
     LDFLAGS += -lcjson
+    DEBUG_LDFLAGS += -lcjson
 endif
 
 BUILD_DIR = build
@@ -37,9 +43,11 @@ TEST_INPUT_SRC = tests/test_input.c
 TEST_READ_SRC = tests/test_read.c
 QUERY_TOOL_SRC = tools/query_logs.c
 
-.PHONY: all clean install check-deps test test-edit test-input test-read query-tool
+.PHONY: all clean install check-deps test test-edit test-input test-read query-tool debug
 
 all: check-deps $(TARGET)
+
+debug: check-deps $(BUILD_DIR)/claude-debug
 
 query-tool: check-deps $(QUERY_TOOL)
 
@@ -69,6 +77,25 @@ $(TARGET): $(SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ)
 	@echo ""
 	@echo "✓ Build successful!"
 	@echo "Run: ./$(TARGET) \"your prompt here\""
+	@echo ""
+
+# Debug build with AddressSanitizer for finding memory bugs
+$(BUILD_DIR)/claude-debug: $(SRC) $(LOGGER_SRC) $(PERSISTENCE_SRC) $(MIGRATIONS_SRC)
+	@mkdir -p $(BUILD_DIR)
+	@echo "Building with AddressSanitizer (debug mode)..."
+	$(CC) $(DEBUG_CFLAGS) -c -o $(BUILD_DIR)/logger_debug.o $(LOGGER_SRC)
+	$(CC) $(DEBUG_CFLAGS) -c -o $(BUILD_DIR)/migrations_debug.o $(MIGRATIONS_SRC)
+	$(CC) $(DEBUG_CFLAGS) -c -o $(BUILD_DIR)/persistence_debug.o $(PERSISTENCE_SRC)
+	$(CC) $(DEBUG_CFLAGS) -o $(BUILD_DIR)/claude-debug $(SRC) $(BUILD_DIR)/logger_debug.o $(BUILD_DIR)/persistence_debug.o $(BUILD_DIR)/migrations_debug.o $(DEBUG_LDFLAGS)
+	@echo ""
+	@echo "✓ Debug build successful with AddressSanitizer!"
+	@echo "Run: ./$(BUILD_DIR)/claude-debug \"your prompt here\""
+	@echo ""
+	@echo "AddressSanitizer will detect:"
+	@echo "  - Use-after-free"
+	@echo "  - Double-free"
+	@echo "  - Heap/stack buffer overflows"
+	@echo "  - Memory leaks"
 	@echo ""
 
 $(LOGGER_OBJ): $(LOGGER_SRC) src/logger.h
@@ -155,6 +182,7 @@ help:
 	@echo ""
 	@echo "Usage:"
 	@echo "  make           - Build the claude executable"
+	@echo "  make debug     - Build with AddressSanitizer (memory bug detection)"
 	@echo "  make test      - Build and run all unit tests"
 	@echo "  make test-edit - Build and run Edit tool tests only"
 	@echo "  make test-input - Build and run Input handler tests only"
