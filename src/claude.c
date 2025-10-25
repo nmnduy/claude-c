@@ -60,6 +60,9 @@ static void persistence_log_api_call(
 #include "persistence.h"
 #endif
 
+// Visual indicators for interactive mode
+#include "indicators.h"
+
 #ifdef TEST_BUILD
 #define main claude_main
 #endif
