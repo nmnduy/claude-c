@@ -1515,11 +1515,13 @@ static char* exec_git_command(const char *command) {
 
     while (fgets(buffer, sizeof(buffer), fp)) {
         size_t len = strlen(buffer);
-        output = realloc(output, output_size + len + 1);
-        if (!output) {
+        char *new_output = realloc(output, output_size + len + 1);
+        if (!new_output) {
+            free(output);
             pclose(fp);
             return NULL;
         }
+        output = new_output;
         memcpy(output + output_size, buffer, len);
         output_size += len;
         output[output_size] = '\0';
@@ -1685,9 +1687,28 @@ static void add_system_message(ConversationState *state, const char *text) {
     Message *msg = &state->messages[state->count++];
     msg->role = MSG_SYSTEM;
     msg->content = calloc(1, sizeof(ContentBlock));
+    if (!msg->content) {
+        fprintf(stderr, "Failed to allocate memory for message content\n");
+        state->count--;
+        return;
+    }
     msg->content_count = 1;
+    // calloc already zeros memory, but explicitly set for analyzer
     msg->content[0].type = CONTENT_TEXT;
+    msg->content[0].text = NULL;
+    msg->content[0].tool_use_id = NULL;
+    msg->content[0].tool_name = NULL;
+    msg->content[0].tool_input = NULL;
+    msg->content[0].tool_result = NULL;
+
     msg->content[0].text = strdup(text);
+    if (!msg->content[0].text) {
+        fprintf(stderr, "Failed to duplicate message text\n");
+        free(msg->content);
+        msg->content = NULL;
+        state->count--;
+        return;
+    }
 }
 
 static void add_user_message(ConversationState *state, const char *text) {
@@ -1699,9 +1720,28 @@ static void add_user_message(ConversationState *state, const char *text) {
     Message *msg = &state->messages[state->count++];
     msg->role = MSG_USER;
     msg->content = calloc(1, sizeof(ContentBlock));
+    if (!msg->content) {
+        fprintf(stderr, "Failed to allocate memory for message content\n");
+        state->count--; // Rollback count increment
+        return;
+    }
     msg->content_count = 1;
+    // calloc already zeros memory, but explicitly set for analyzer
     msg->content[0].type = CONTENT_TEXT;
+    msg->content[0].text = NULL;
+    msg->content[0].tool_use_id = NULL;
+    msg->content[0].tool_name = NULL;
+    msg->content[0].tool_input = NULL;
+    msg->content[0].tool_result = NULL;
+
     msg->content[0].text = strdup(text);
+    if (!msg->content[0].text) {
+        fprintf(stderr, "Failed to duplicate message text\n");
+        free(msg->content);
+        msg->content = NULL;
+        state->count--; // Rollback count increment
+        return;
+    }
 }
 
 // Parse OpenAI message format and add to conversation
@@ -1729,7 +1769,19 @@ static void add_assistant_message_openai(ConversationState *state, cJSON *messag
         content_count += tool_calls_count;
     }
 
+    // Ensure we have at least some content
+    if (content_count == 0) {
+        fprintf(stderr, "Warning: Assistant message has no content\n");
+        state->count--; // Rollback count increment
+        return;
+    }
+
     msg->content = calloc(content_count, sizeof(ContentBlock));
+    if (!msg->content) {
+        fprintf(stderr, "Failed to allocate memory for message content\n");
+        state->count--; // Rollback count increment
+        return;
+    }
     msg->content_count = content_count;
 
     int idx = 0;
@@ -1738,6 +1790,13 @@ static void add_assistant_message_openai(ConversationState *state, cJSON *messag
     if (content && cJSON_IsString(content) && content->valuestring) {
         msg->content[idx].type = CONTENT_TEXT;
         msg->content[idx].text = strdup(content->valuestring);
+        if (!msg->content[idx].text) {
+            fprintf(stderr, "Failed to duplicate message text\n");
+            free(msg->content);
+            msg->content = NULL;
+            state->count--;
+            return;
+        }
         idx++;
     }
 
@@ -1754,7 +1813,34 @@ static void add_assistant_message_openai(ConversationState *state, cJSON *messag
 
                 msg->content[idx].type = CONTENT_TOOL_USE;
                 msg->content[idx].tool_use_id = strdup(id->valuestring);
+                if (!msg->content[idx].tool_use_id) {
+                    fprintf(stderr, "Failed to duplicate tool use ID\n");
+                    // Cleanup previously allocated content
+                    for (int j = 0; j < idx; j++) {
+                        free(msg->content[j].text);
+                        free(msg->content[j].tool_use_id);
+                        free(msg->content[j].tool_name);
+                    }
+                    free(msg->content);
+                    msg->content = NULL;
+                    state->count--;
+                    return;
+                }
                 msg->content[idx].tool_name = strdup(name->valuestring);
+                if (!msg->content[idx].tool_name) {
+                    fprintf(stderr, "Failed to duplicate tool name\n");
+                    free(msg->content[idx].tool_use_id);
+                    // Cleanup previously allocated content
+                    for (int j = 0; j < idx; j++) {
+                        free(msg->content[j].text);
+                        free(msg->content[j].tool_use_id);
+                        free(msg->content[j].tool_name);
+                    }
+                    free(msg->content);
+                    msg->content = NULL;
+                    state->count--;
+                    return;
+                }
 
                 // Parse arguments string as JSON
                 if (arguments && cJSON_IsString(arguments)) {
@@ -1848,6 +1934,7 @@ static void process_response(ConversationState *state, cJSON *response) {
         ContentBlock *results = calloc(tool_count, sizeof(ContentBlock));
         pthread_t *threads = malloc(tool_count * sizeof(pthread_t));
         ToolThreadArg *args = malloc(tool_count * sizeof(ToolThreadArg));
+        int thread_count = 0;
 
         // Launch tool execution threads
         for (int i = 0; i < tool_count; i++) {
@@ -1869,24 +1956,25 @@ static void process_response(ConversationState *state, cJSON *response) {
             } else {
                 input = cJSON_CreateObject();
             }
-            args[i].tool_use_id = strdup(id->valuestring);
-            args[i].tool_name = name->valuestring;
-            args[i].input = input;
-            args[i].state = state;
-            args[i].result_block = &results[i];
+            args[thread_count].tool_use_id = strdup(id->valuestring);
+            args[thread_count].tool_name = name->valuestring;
+            args[thread_count].input = input;
+            args[thread_count].state = state;
+            args[thread_count].result_block = &results[i];
 
             // Create thread
-            pthread_create(&threads[i], NULL, tool_thread_func, &args[i]);
+            pthread_create(&threads[thread_count], NULL, tool_thread_func, &args[thread_count]);
+            thread_count++;
         }
 
         // Show spinner while waiting for tools to complete
         char spinner_msg[128];
-        snprintf(spinner_msg, sizeof(spinner_msg), "Running %d tool%s...", 
-                 tool_count, tool_count > 1 ? "s" : "");
+        snprintf(spinner_msg, sizeof(spinner_msg), "Running %d tool%s...",
+                 thread_count, thread_count > 1 ? "s" : "");
         Spinner *tool_spinner = spinner_start(spinner_msg, SPINNER_YELLOW);
 
         // Wait for all tool threads to complete
-        for (int i = 0; i < tool_count; i++) {
+        for (int i = 0; i < thread_count; i++) {
             pthread_join(threads[i], NULL);
         }
         
@@ -2525,15 +2613,17 @@ int main(int argc, char *argv[]) {
 
     // Cleanup
     for (int i = 0; i < state.count; i++) {
-        for (int j = 0; j < state.messages[i].content_count; j++) {
-            ContentBlock *cb = &state.messages[i].content[j];
-            free(cb->text);
-            free(cb->tool_use_id);
-            free(cb->tool_name);
-            if (cb->tool_input) cJSON_Delete(cb->tool_input);
-            if (cb->tool_result) cJSON_Delete(cb->tool_result);
+        if (state.messages[i].content) {
+            for (int j = 0; j < state.messages[i].content_count; j++) {
+                ContentBlock *cb = &state.messages[i].content[j];
+                free(cb->text);
+                free(cb->tool_use_id);
+                free(cb->tool_name);
+                if (cb->tool_input) cJSON_Delete(cb->tool_input);
+                if (cb->tool_result) cJSON_Delete(cb->tool_result);
+            }
+            free(state.messages[i].content);
         }
-        free(state.messages[i].content);
     }
 
     // Free additional directories
