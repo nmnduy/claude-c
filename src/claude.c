@@ -1990,13 +1990,13 @@ static int read_line_advanced(const char *prompt, char *buffer, size_t buffer_si
 static void interactive_mode(ConversationState *state) {
     // Print intro with blue mascot featuring 'C'
     printf("\n");
-    printf("              %sclaude%s v%s\n", ANSI_CYAN, ANSI_RESET, VERSION);
-    printf(" %s   ▄▄▄▄▄▄▄%s   Model: %s\n", ANSI_BLUE, ANSI_RESET, state->model);
-    printf(" %s  ▐▛▀▀▀▀▀▜▌%s  Directory: %s\n", ANSI_BLUE, ANSI_RESET, state->working_dir);
-    printf(" %s  ▐▌  C  ▐▌%s\n", ANSI_BLUE, ANSI_RESET);
-    printf(" %s  ▐▙█████▟▌%s  Commands: /exit /quit /clear /help\n", ANSI_BLUE, ANSI_RESET);
-    printf(" %s   ▀▀▀▀▀▀▀%s   Keybindings: Alt+b/f (word), Ctrl+a/e (line), Ctrl+n (newline)\n", ANSI_BLUE, ANSI_RESET);
-    printf("              Type Ctrl+D to exit\n\n");
+    printf("             %sclaude%s v%s\n", ANSI_CYAN, ANSI_RESET, VERSION);
+    printf(" %s ▐▛███▜▌%s     Model: %s\n", ANSI_BLUE, ANSI_RESET, state->model);
+    printf("%s▝▜██ C ██▛▘%s   Directory: %s\n", ANSI_BLUE, ANSI_RESET, state->working_dir);
+    printf("%s  ▘▘ ▝▝%s\n", ANSI_BLUE, ANSI_RESET);
+    printf("             Commands: /exit /quit /clear /help\n");
+    printf("             Keybindings: Alt+b/f (word), Ctrl+a/e (line), Ctrl+n (newline)\n");
+    printf("             Type Ctrl+D to exit\n\n");
 
     char input_buffer[BUFFER_SIZE];
     int running = 1;
