@@ -16,6 +16,169 @@ This is a pure C implementation of a coding agent that interacts with Anthropic'
 - Direct API integration via libcurl
 - Implements 6 core tools: Bash, Read, Write, Edit, Glob, Grep
 
+## C Coding Best Practices
+
+This project follows modern C development practices to minimize memory bugs and maximize code safety. All contributors and AI assistants must adhere to these guidelines.
+
+### Compiler Flags and Static Analysis
+
+**Required compilation flags:**
+```bash
+# Warning flags (always enabled)
+-Wall -Wextra -Wshadow -Wconversion -Wuninitialized -Werror
+
+# Hardening flags (production builds)
+-fstack-protector-strong  # Stack overflow detection
+-D_FORTIFY_SOURCE=2       # Runtime checks for buffer overflows
+```
+
+**Static analysis tools:**
+- Run `clang --analyze` or `gcc -fanalyzer` regularly
+- Use Clang Static Analyzer for deeper checks
+- Consider Coverity for complex refactorings
+
+**Sanitizers (development/testing):**
+```bash
+# Address Sanitizer (detects buffer overflows, use-after-free, double-free)
+clang -fsanitize=address -g src/claude.c -o build/claude
+
+# Undefined Behavior Sanitizer (catches undefined behavior)
+clang -fsanitize=undefined -g src/claude.c -o build/claude
+
+# Memory Sanitizer (detects uninitialized reads)
+clang -fsanitize=memory -g src/claude.c -o build/claude
+
+# Leak Sanitizer (finds memory leaks)
+clang -fsanitize=leak -g src/claude.c -o build/claude
+
+# Combined (recommended for testing)
+clang -fsanitize=address,undefined -g src/claude.c -o build/claude
+```
+
+### Memory Management Patterns
+
+**1. Always initialize pointers:**
+```c
+char *buffer = NULL;  // Good: explicit initialization
+char *data;           // Bad: uninitialized pointer
+```
+
+**2. Use RAII-style cleanup with goto:**
+```c
+char *read_and_process(const char *path) {
+    FILE *f = NULL;
+    char *buffer = NULL;
+    char *result = NULL;
+
+    f = fopen(path, "r");
+    if (!f) goto cleanup;
+
+    buffer = malloc(1024);
+    if (!buffer) goto cleanup;
+
+    // ... processing ...
+
+    result = strdup(buffer);  // Only successful result
+
+cleanup:
+    if (f) fclose(f);
+    free(buffer);  // safe even if NULL
+    return result;
+}
+```
+
+**3. Enforce clear ownership:**
+- Document who owns each allocated pointer
+- Use naming conventions: `*_create()` pairs with `*_destroy()`
+- Avoid shared ownership; prefer explicit reference counting if needed
+
+**4. Prefer stack allocation for small buffers:**
+```c
+char buffer[256];     // Good for small, fixed-size data
+char *buf = malloc(); // Only when size is dynamic or large
+```
+
+**5. Zero-initialize structs:**
+```c
+ConversationState state = {0};  // All fields set to 0/NULL
+```
+
+### Safe String and Buffer APIs
+
+**Never use these:**
+- `gets()` - no bounds checking
+- `sprintf()` - use `snprintf()` instead
+- `strcpy()` - use `strncpy()` or `strlcpy()` instead
+
+**Always use bounded versions:**
+```c
+// Good
+snprintf(buffer, sizeof(buffer), "Value: %d", value);
+strncpy(dest, src, sizeof(dest) - 1);
+dest[sizeof(dest) - 1] = '\0';  // Ensure null termination
+
+// Bad
+sprintf(buffer, "Value: %d", value);
+strcpy(dest, src);
+```
+
+**Check all allocations:**
+```c
+char *buf = malloc(size);
+if (!buf) {
+    fprintf(stderr, "malloc failed\n");
+    return NULL;
+}
+```
+
+### Runtime Testing Tools
+
+**Valgrind (memory error detection):**
+```bash
+valgrind --leak-check=full --show-leak-kinds=all ./build/claude "test"
+```
+
+**Fuzzing (continuous testing):**
+```bash
+# Use libFuzzer or AFL++ for input validation functions
+clang -fsanitize=fuzzer,address -g fuzz_target.c -o fuzz
+./fuzz corpus/
+```
+
+### Code Review Checklist
+
+When reviewing code (human or AI-generated), verify:
+- [ ] All pointers initialized to NULL before use
+- [ ] All `malloc()`/`calloc()` calls checked for NULL
+- [ ] All allocated memory has a corresponding `free()`
+- [ ] No `free()` called twice on same pointer
+- [ ] No pointer used after `free()` (use-after-free)
+- [ ] Buffer operations use bounded functions (`snprintf`, `strncpy`)
+- [ ] Array accesses are bounds-checked
+- [ ] String buffers are null-terminated
+- [ ] Clear ownership documented for all heap allocations
+- [ ] Cleanup paths free all resources (use goto cleanup pattern)
+
+### Testing Requirements
+
+**All new code must:**
+1. Compile without warnings with `-Wall -Wextra -Werror`
+2. Pass under AddressSanitizer (`-fsanitize=address,undefined`)
+3. Have unit tests that verify correct memory management
+4. Be checked with Valgrind for leaks (zero leaks tolerated)
+
+**Continuous Integration:**
+- Run sanitizer builds in CI/CD pipeline
+- Integrate fuzzing for input-handling code
+- Maintain 100% of tests passing
+
+### Modern C Standards
+
+- Use C11 or later (project uses C11)
+- Prefer C23 features when widely supported
+- Use `_Static_assert()` for compile-time checks
+- Leverage `_Generic()` for type-safe interfaces where appropriate
+
 ## Building and Testing
 
 ### Build Commands
