@@ -1,6 +1,6 @@
 # Claude Code - Pure C Edition
 
-A lightweight, single-file implementation of a coding agent that interacts with Anthropic's Claude API. This is a pure C port of the core functionality from the TypeScript/Node.js Claude Code CLI.
+A lightweight, single-file implementation of a coding agent that interacts with an Open API compatible API. This is a pure C port of the core functionality from the TypeScript/Node.js Claude Code CLI.
 
 ## Features
 
