@@ -2167,8 +2167,8 @@ static void interactive_mode(ConversationState *state) {
     // Print intro with blue mascot featuring 'C'
     printf("\n");
     printf("             %sclaude-c%s v%s\n", ANSI_CYAN, ANSI_RESET, VERSION);
-    printf(" %s ▐▛███▜▌%s    Model: %s\n", ANSI_BLUE, ANSI_RESET, state->model);
-    printf("%s▝▜███████▛▘%s  Directory: %s\n", ANSI_BLUE, ANSI_RESET, state->working_dir);
+    printf(" %s ▐▛███▜▌%s    %s\n", ANSI_BLUE, ANSI_RESET, state->model);
+    printf("%s▝▜███████▛▘%s  %s\n", ANSI_BLUE, ANSI_RESET, state->working_dir);
     printf("%s  ▘▘   ▝▝%s\n", ANSI_BLUE, ANSI_RESET);
     printf("             Commands: /exit /quit /clear /help\n");
     printf("             Keybindings: Alt+b/f/d (word), Ctrl+a/e (line), Ctrl+n (newline)\n");
