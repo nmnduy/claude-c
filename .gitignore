@@ -1,0 +1,44 @@
+# Compiled binary
+claude
+
+# Object files
+*.o
+*.obj
+*.a
+*.so
+*.dylib
+
+# Debug files
+*.dSYM/
+*.su
+*.idb
+*.pdb
+
+# Build directories
+build/
+dist/
+
+# Core dumps
+core
+core.*
+
+# Editor/IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Dependency directories
+deps/
+
+# Test outputs
+test_output/
+*.log
+
+# Backup files
+*.bak
+*.tmp
+
+.envrc
