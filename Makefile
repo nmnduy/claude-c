@@ -1,8 +1,8 @@
 # Makefile for Claude Code - Pure C Edition
 
 CC = gcc
-CFLAGS = -Wall -Wextra -O2 -std=c11 -D_POSIX_C_SOURCE=200809L
-DEBUG_CFLAGS = -Wall -Wextra -g -O0 -std=c11 -D_POSIX_C_SOURCE=200809L -fsanitize=address -fno-omit-frame-pointer
+CFLAGS = -Wall -Wextra -Wpedantic -Wformat=2 -Wconversion -Wshadow -Wcast-qual -Wcast-align -Wstrict-prototypes -Wmissing-prototypes -Wmissing-declarations -Wuninitialized -Warray-bounds=2 -Wvla -Wwrite-strings -Wlogical-op -Wnull-dereference -Wduplicated-cond -Wduplicated-branches -Wjump-misses-init -Wimplicit-fallthrough=5 -O2 -std=c11 -D_POSIX_C_SOURCE=200809L
+DEBUG_CFLAGS = -Wall -Wextra -Wpedantic -Wformat=2 -Wconversion -Wshadow -Wcast-qual -Wcast-align -Wstrict-prototypes -Wmissing-prototypes -Wmissing-declarations -Wuninitialized -Warray-bounds=2 -Wvla -Wwrite-strings -Wlogical-op -Wnull-dereference -Wduplicated-cond -Wduplicated-branches -Wjump-misses-init -Wimplicit-fallthrough=5 -g -O0 -std=c11 -D_POSIX_C_SOURCE=200809L -fsanitize=address -fno-omit-frame-pointer
 LDFLAGS = -lcurl -lpthread -lsqlite3
 DEBUG_LDFLAGS = -lcurl -lpthread -lsqlite3 -fsanitize=address
 
