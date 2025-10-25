@@ -57,4 +57,15 @@ int commands_execute(ConversationState *state, const char *input);
  */
 const Command** commands_list(int *count);
 
+
+/**
+ * Tab completion dispatcher for commands
+ *
+ * @param line        Full input line
+ * @param cursor_pos  Cursor position in line
+ * @param ctx         ConversationState pointer
+ * @return            CompletionResult* or NULL
+ */
+CompletionResult* commands_tab_completer(const char *line, int cursor_pos, void *ctx);
+
 #endif // COMMANDS_H

@@ -2373,7 +2373,7 @@ static void interactive_mode(ConversationState *state) {
 
     // Initialize line editor
     LineEditor editor;
-    lineedit_init(&editor, NULL, state);  // NULL completer for now, state as context
+    lineedit_init(&editor, commands_tab_completer, state);  // NULL completer for now, state as context
 
     // Print intro with blue mascot featuring 'C'
     printf("\n");

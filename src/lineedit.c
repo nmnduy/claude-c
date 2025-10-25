@@ -374,6 +374,52 @@ char* lineedit_readline(LineEditor *ed, const char *prompt) {
                 printf("\n");
                 running = 0;
             }
+                } else if (c == '\t') {
+            // Tab completion
+            if (ed->completer) {
+                CompletionResult *res = ed->completer(ed->buffer, ed->cursor, ed->completer_ctx);
+                if (!res || res->count == 0) {
+                    // No completions, beep
+                    printf("\a");
+                    fflush(stdout);
+                    if (res) completion_free(res);
+                } else if (res->count == 1) {
+                    // Single completion: replace current word
+                    const char *opt = res->options[0];
+                    int optlen = strlen(opt);
+                    // Find start of current word
+                    int start = ed->cursor - 1;
+                    while (start >= 0 && ed->buffer[start] != ' ' && ed->buffer[start] != '\t') {
+                        start--;
+                    }
+                    start++;
+                    int tail_len = ed->length - ed->cursor;
+                    size_t needed = start + optlen + tail_len + 1;
+                    if (needed > ed->buffer_capacity) {
+                        ed->buffer = realloc(ed->buffer, needed);
+                        ed->buffer_capacity = needed;
+                    }
+                    // Move tail
+                    memmove(ed->buffer + start + optlen, ed->buffer + ed->cursor, tail_len + 1);
+                    // Copy completion
+                    memcpy(ed->buffer + start, opt, optlen);
+                    ed->cursor = start + optlen;
+                    ed->length = start + optlen + tail_len;
+                    completion_free(res);
+                    redraw_input_line(prompt, ed->buffer, ed->cursor);
+                } else {
+                    // Multiple completions: list them, then redraw
+                    printf("\n");
+                    for (int i = 0; i < res->count; i++) {
+                        printf("%s\t
+", res->options[i]);
+                    }
+                    completion_free(res);
+                    redraw_input_line(prompt, ed->buffer, ed->cursor);
+                }
+            } else {
+                printf("\a"); fflush(stdout);
+            }
         } else if (c >= 32 && c < 127) {
             // Printable character
             if (ed->length < (int)ed->buffer_capacity - 1) {
