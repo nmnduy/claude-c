@@ -79,6 +79,7 @@ static void persistence_log_api_call(
 // Retry configuration for rate limiting (429 errors)
 #define MAX_RETRIES 3                    // Maximum number of retry attempts
 #define INITIAL_BACKOFF_MS 1000          // Initial backoff delay in milliseconds
+#define MAX_BACKOFF_MS 10000             // Maximum backoff delay in milliseconds (10 seconds)
 #define BACKOFF_MULTIPLIER 2.0           // Exponential backoff multiplier
 
 // ANSI color codes (for non-TUI output)
@@ -1163,6 +1164,9 @@ static cJSON* call_api(ConversationState *state) {
                 // Sleep and retry
                 usleep(backoff_ms * 1000); // usleep takes microseconds
                 backoff_ms = (int)(backoff_ms * BACKOFF_MULTIPLIER);
+                if (backoff_ms > MAX_BACKOFF_MS) {
+                    backoff_ms = MAX_BACKOFF_MS;
+                }
                 retry_count++;
 
                 cJSON_Delete(json_response);
