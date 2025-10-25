@@ -38,11 +38,11 @@ static void log_set_rotation(int a, int b) { (void)a; (void)b; }
 static void log_set_level(int level) { (void)level; }
 static void log_shutdown(void) {}
 // Stub persistence types and functions
-typedef struct PersistenceDB { int dummy; } PersistenceDB;
-static PersistenceDB* persistence_init(const char *path) { (void)path; return NULL; }
-static void persistence_close(PersistenceDB *db) { (void)db; }
+struct PersistenceDB { int dummy; };
+static struct PersistenceDB* persistence_init(const char *path) { (void)path; return NULL; }
+static void persistence_close(struct PersistenceDB *db) { (void)db; }
 static void persistence_log_api_call(
-    PersistenceDB *db,
+    struct PersistenceDB *db,
     const char *session_id,
     const char *url,
     const char *request,
@@ -62,6 +62,13 @@ static void persistence_log_api_call(
 
 // Visual indicators for interactive mode
 #include "indicators.h"
+
+// Internal API for module access
+#include "claude_internal.h"
+
+// New input system modules
+#include "lineedit.h"
+#include "commands.h"
 
 #ifdef TEST_BUILD
 #define main claude_main
@@ -129,47 +136,8 @@ static void print_status(const char *text) {
 // Data Structures
 // ============================================================================
 
-typedef enum {
-    MSG_USER,
-    MSG_ASSISTANT,
-    MSG_SYSTEM
-} MessageRole;
-
-typedef enum {
-    CONTENT_TEXT,
-    CONTENT_TOOL_USE,
-    CONTENT_TOOL_RESULT
-} ContentType;
-
-typedef struct {
-    ContentType type;
-    char *text;              // For TEXT
-    char *tool_use_id;       // For TOOL_USE and TOOL_RESULT
-    char *tool_name;         // For TOOL_USE
-    cJSON *tool_input;       // For TOOL_USE
-    cJSON *tool_result;      // For TOOL_RESULT
-    int is_error;            // For TOOL_RESULT
-} ContentBlock;
-
-typedef struct {
-    MessageRole role;
-    ContentBlock *content;
-    int content_count;
-} Message;
-
-typedef struct {
-    Message messages[MAX_MESSAGES];
-    int count;
-    char *api_key;
-    char *api_url;
-    char *model;
-    char *working_dir;
-    char **additional_dirs;         // Array of additional working directory paths
-    int additional_dirs_count;      // Number of additional directories
-    int additional_dirs_capacity;   // Capacity of additional_dirs array
-    char *session_id;               // Unique session identifier for this conversation
-    PersistenceDB *persistence_db;  // For logging API calls to SQLite
-} ConversationState;
+// Note: MessageRole, ContentType, ContentBlock, Message, and ConversationState
+// are now defined in claude_internal.h for sharing across modules
 
 typedef struct {
     char *output;
@@ -253,7 +221,7 @@ static char* resolve_path(const char *path, const char *working_dir) {
 
 // Add a directory to the additional working directories list
 // Returns: 0 on success, -1 on error
-static int add_directory(ConversationState *state, const char *path) {
+int add_directory(ConversationState *state, const char *path) {
     // Validate that directory exists
     struct stat st;
     char *resolved_path = NULL;
@@ -1637,7 +1605,7 @@ static const char* get_platform(void) {
 }
 
 // Build complete system prompt with environment context
-static char* build_system_prompt(ConversationState *state) {
+char* build_system_prompt(ConversationState *state) {
     const char *working_dir = state->working_dir;
     char *date = get_current_date();
     const char *platform = get_platform();
@@ -1816,7 +1784,7 @@ static void add_tool_results(ConversationState *state, ContentBlock *results, in
 // Interactive Mode - Simple Terminal I/O
 // ============================================================================
 
-static void clear_conversation(ConversationState *state) {
+void clear_conversation(ConversationState *state) {
     // Keep the system message (first message)
     int system_msg_count = 0;
 
@@ -2312,6 +2280,13 @@ static int read_line_advanced(const char *prompt, char *buffer, size_t buffer_si
 }
 
 static void interactive_mode(ConversationState *state) {
+    // Initialize command system
+    commands_init();
+
+    // Initialize line editor
+    LineEditor editor;
+    lineedit_init(&editor, NULL, state);  // NULL completer for now, state as context
+
     // Print intro with blue mascot featuring 'C'
     printf("\n");
     printf("             %sclaude-c%s v%s\n", ANSI_CYAN, ANSI_RESET, VERSION);
@@ -2322,61 +2297,37 @@ static void interactive_mode(ConversationState *state) {
     printf("             Keybindings: Alt+b/f/d (word), Ctrl+a/e (line), Ctrl+n (newline)\n");
     printf("             Type Ctrl+D to exit\n\n");
 
-    char input_buffer[BUFFER_SIZE];
     int running = 1;
 
     while (running) {
         char prompt[64];
         snprintf(prompt, sizeof(prompt), "%s> %s", ANSI_GREEN, ANSI_RESET);
 
-        int result = read_line_advanced(prompt, input_buffer, sizeof(input_buffer));
-        if (result == 0) {
+        char *input = lineedit_readline(&editor, prompt);
+        if (!input) {
             // EOF (Ctrl+D)
-            break;
-        } else if (result < 0) {
-            // Error
-            fprintf(stderr, "Error reading input\n");
             break;
         }
 
         // Skip empty input
-        if (strlen(input_buffer) == 0) {
+        if (strlen(input) == 0) {
+            free(input);
             continue;
         }
 
         // Handle commands
-        if (strcmp(input_buffer, "/exit") == 0 || strcmp(input_buffer, "/quit") == 0) {
-            break;
-        }
+        if (input[0] == '/') {
+            int cmd_result = commands_execute(state, input);
 
-        if (strcmp(input_buffer, "/clear") == 0) {
-            clear_conversation(state);
-            print_status("Conversation cleared");
-            printf("\n");
-            continue;
-        }
-
-        if (strncmp(input_buffer, "/add-dir ", 9) == 0) {
-            // Extract directory path after "/add-dir "
-            const char *dir_path = input_buffer + 9;
-
-            // Trim leading whitespace
-            while (*dir_path == ' ' || *dir_path == '\t') {
-                dir_path++;
+            if (cmd_result == -2) {
+                // Exit command
+                free(input);
+                break;
             }
 
-            if (strlen(dir_path) == 0) {
-                print_error("Usage: /add-dir <directory-path>");
-                printf("\n");
-                continue;
-            }
-
-            if (add_directory(state, dir_path) == 0) {
-                char msg[PATH_MAX + 32];
-                snprintf(msg, sizeof(msg), "Added directory to context");
-                print_status(msg);
-
-                // Rebuild and update system message with new context
+            // After /add-dir command succeeds, update system message
+            // Check if we need to rebuild system prompt
+            if (strncmp(input, "/add-dir ", 9) == 0 && cmd_result == 0) {
                 char *new_system_prompt = build_system_prompt(state);
                 if (new_system_prompt) {
                     // Update the first message (system message) with new context
@@ -2385,31 +2336,19 @@ static void interactive_mode(ConversationState *state) {
                         state->messages[0].content[0].text = new_system_prompt;
                     }
                 }
-            } else {
-                char err_msg[PATH_MAX + 64];
-                snprintf(err_msg, sizeof(err_msg), "Failed to add directory: %s (not found, not a directory, or already added)", dir_path);
-                print_error(err_msg);
             }
-            printf("\n");
-            continue;
-        }
 
-        if (strcmp(input_buffer, "/help") == 0) {
-            printf("\n%sCommands:%s\n", ANSI_CYAN, ANSI_RESET);
-            printf("  /exit /quit        - Exit interactive mode\n");
-            printf("  /clear             - Clear conversation history\n");
-            printf("  /add-dir <path>    - Add directory to working directories\n");
-            printf("  /help              - Show this help\n");
-            printf("  Ctrl+D             - Exit\n\n");
+            free(input);
             continue;
         }
 
         // Display user message
-        print_user(input_buffer);
+        print_user(input);
         printf("\n");
 
         // Add to conversation
-        add_user_message(state, input_buffer);
+        add_user_message(state, input);
+        free(input);
 
         // Call API with spinner
         Spinner *api_spinner = spinner_start("Waiting for API response...", SPINNER_CYAN);
@@ -2438,6 +2377,7 @@ static void interactive_mode(ConversationState *state) {
         printf("\n");
     }
 
+    lineedit_free(&editor);
     printf("Goodbye!\n");
 }
 

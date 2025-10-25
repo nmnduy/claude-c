@@ -38,12 +38,18 @@ PERSISTENCE_SRC = src/persistence.c
 PERSISTENCE_OBJ = $(BUILD_DIR)/persistence.o
 MIGRATIONS_SRC = src/migrations.c
 MIGRATIONS_OBJ = $(BUILD_DIR)/migrations.o
+LINEEDIT_SRC = src/lineedit.c
+LINEEDIT_OBJ = $(BUILD_DIR)/lineedit.o
+COMMANDS_SRC = src/commands.c
+COMMANDS_OBJ = $(BUILD_DIR)/commands.o
+COMPLETION_SRC = src/completion.c
+COMPLETION_OBJ = $(BUILD_DIR)/completion.o
 TEST_EDIT_SRC = tests/test_edit.c
 TEST_INPUT_SRC = tests/test_input.c
 TEST_READ_SRC = tests/test_read.c
 QUERY_TOOL_SRC = tools/query_logs.c
 
-.PHONY: all clean install check-deps test test-edit test-input test-read query-tool debug
+.PHONY: all clean check-deps test test-edit test-input test-read query-tool debug analyze sanitize-ub sanitize-all sanitize-leak valgrind memscan
 
 all: check-deps $(TARGET)
 
@@ -71,22 +77,25 @@ test-read: check-deps $(TEST_READ_TARGET)
 	@echo ""
 	@./$(TEST_READ_TARGET)
 
-$(TARGET): $(SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ)
+$(TARGET): $(SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(LINEEDIT_OBJ) $(COMMANDS_OBJ) $(COMPLETION_OBJ)
 	@mkdir -p $(BUILD_DIR)
-	$(CC) $(CFLAGS) -o $(TARGET) $(SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $(TARGET) $(SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(LINEEDIT_OBJ) $(COMMANDS_OBJ) $(COMPLETION_OBJ) $(LDFLAGS)
 	@echo ""
 	@echo "✓ Build successful!"
 	@echo "Run: ./$(TARGET) \"your prompt here\""
 	@echo ""
 
 # Debug build with AddressSanitizer for finding memory bugs
-$(BUILD_DIR)/claude-debug: $(SRC) $(LOGGER_SRC) $(PERSISTENCE_SRC) $(MIGRATIONS_SRC)
+$(BUILD_DIR)/claude-debug: $(SRC) $(LOGGER_SRC) $(PERSISTENCE_SRC) $(MIGRATIONS_SRC) $(LINEEDIT_SRC) $(COMMANDS_SRC) $(COMPLETION_SRC)
 	@mkdir -p $(BUILD_DIR)
 	@echo "Building with AddressSanitizer (debug mode)..."
 	$(CC) $(DEBUG_CFLAGS) -c -o $(BUILD_DIR)/logger_debug.o $(LOGGER_SRC)
 	$(CC) $(DEBUG_CFLAGS) -c -o $(BUILD_DIR)/migrations_debug.o $(MIGRATIONS_SRC)
 	$(CC) $(DEBUG_CFLAGS) -c -o $(BUILD_DIR)/persistence_debug.o $(PERSISTENCE_SRC)
-	$(CC) $(DEBUG_CFLAGS) -o $(BUILD_DIR)/claude-debug $(SRC) $(BUILD_DIR)/logger_debug.o $(BUILD_DIR)/persistence_debug.o $(BUILD_DIR)/migrations_debug.o $(DEBUG_LDFLAGS)
+	$(CC) $(DEBUG_CFLAGS) -c -o $(BUILD_DIR)/lineedit_debug.o $(LINEEDIT_SRC)
+	$(CC) $(DEBUG_CFLAGS) -c -o $(BUILD_DIR)/commands_debug.o $(COMMANDS_SRC)
+	$(CC) $(DEBUG_CFLAGS) -c -o $(BUILD_DIR)/completion_debug.o $(COMPLETION_SRC)
+	$(CC) $(DEBUG_CFLAGS) -o $(BUILD_DIR)/claude-debug $(SRC) $(BUILD_DIR)/logger_debug.o $(BUILD_DIR)/persistence_debug.o $(BUILD_DIR)/migrations_debug.o $(BUILD_DIR)/lineedit_debug.o $(BUILD_DIR)/commands_debug.o $(BUILD_DIR)/completion_debug.o $(DEBUG_LDFLAGS)
 	@echo ""
 	@echo "✓ Debug build successful with AddressSanitizer!"
 	@echo "Run: ./$(BUILD_DIR)/claude-debug \"your prompt here\""
@@ -96,6 +105,103 @@ $(BUILD_DIR)/claude-debug: $(SRC) $(LOGGER_SRC) $(PERSISTENCE_SRC) $(MIGRATIONS_
 	@echo "  - Double-free"
 	@echo "  - Heap/stack buffer overflows"
 	@echo "  - Memory leaks"
+	@echo ""
+
+# Static analysis with compiler's built-in analyzer
+analyze: check-deps
+	@mkdir -p $(BUILD_DIR)
+	@echo "Running static analysis..."
+	@echo ""
+	@if command -v clang >/dev/null 2>&1; then \
+		echo "Using clang --analyze..."; \
+		clang --analyze -Xanalyzer -analyzer-output=text $(CFLAGS) $(SRC) $(LOGGER_SRC) $(PERSISTENCE_SRC) $(MIGRATIONS_SRC) 2>&1 | tee $(BUILD_DIR)/analyze.log; \
+	else \
+		echo "Using gcc -fanalyzer..."; \
+		gcc -fanalyzer $(CFLAGS) -c $(SRC) $(LOGGER_SRC) $(PERSISTENCE_SRC) $(MIGRATIONS_SRC) 2>&1 | tee $(BUILD_DIR)/analyze.log; \
+	fi
+	@echo ""
+	@echo "✓ Static analysis complete. Results saved to $(BUILD_DIR)/analyze.log"
+	@echo ""
+
+# Build with Undefined Behavior Sanitizer
+sanitize-ub: check-deps
+	@mkdir -p $(BUILD_DIR)
+	@echo "Building with Undefined Behavior Sanitizer..."
+	$(CC) $(CFLAGS) -g -O0 -fsanitize=undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/logger_ub.o $(LOGGER_SRC)
+	$(CC) $(CFLAGS) -g -O0 -fsanitize=undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/migrations_ub.o $(MIGRATIONS_SRC)
+	$(CC) $(CFLAGS) -g -O0 -fsanitize=undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/persistence_ub.o $(PERSISTENCE_SRC)
+	$(CC) $(CFLAGS) -g -O0 -fsanitize=undefined -fno-omit-frame-pointer -o $(BUILD_DIR)/claude-ubsan $(SRC) $(BUILD_DIR)/logger_ub.o $(BUILD_DIR)/persistence_ub.o $(BUILD_DIR)/migrations_ub.o $(LDFLAGS) -fsanitize=undefined
+	@echo ""
+	@echo "✓ Build successful with UBSan!"
+	@echo "Run: ./$(BUILD_DIR)/claude-ubsan \"your prompt here\""
+	@echo ""
+
+# Build with combined Address + Undefined Behavior Sanitizers (recommended)
+sanitize-all: check-deps
+	@mkdir -p $(BUILD_DIR)
+	@echo "Building with Address + Undefined Behavior Sanitizers (recommended for testing)..."
+	$(CC) $(CFLAGS) -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/logger_all.o $(LOGGER_SRC)
+	$(CC) $(CFLAGS) -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/migrations_all.o $(MIGRATIONS_SRC)
+	$(CC) $(CFLAGS) -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/persistence_all.o $(PERSISTENCE_SRC)
+	$(CC) $(CFLAGS) -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -o $(BUILD_DIR)/claude-allsan $(SRC) $(BUILD_DIR)/logger_all.o $(BUILD_DIR)/persistence_all.o $(BUILD_DIR)/migrations_all.o $(LDFLAGS) -fsanitize=address,undefined
+	@echo ""
+	@echo "✓ Build successful with combined sanitizers!"
+	@echo "Run: ./$(BUILD_DIR)/claude-allsan \"your prompt here\""
+	@echo ""
+	@echo "This build detects:"
+	@echo "  - Use-after-free, double-free, buffer overflows (AddressSanitizer)"
+	@echo "  - Undefined behavior, integer overflows, null dereferences (UBSan)"
+	@echo ""
+
+# Build with Leak Sanitizer only
+sanitize-leak: check-deps
+	@mkdir -p $(BUILD_DIR)
+	@echo "Building with Leak Sanitizer..."
+	$(CC) $(CFLAGS) -g -O0 -fsanitize=leak -fno-omit-frame-pointer -c -o $(BUILD_DIR)/logger_leak.o $(LOGGER_SRC)
+	$(CC) $(CFLAGS) -g -O0 -fsanitize=leak -fno-omit-frame-pointer -c -o $(BUILD_DIR)/migrations_leak.o $(MIGRATIONS_SRC)
+	$(CC) $(CFLAGS) -g -O0 -fsanitize=leak -fno-omit-frame-pointer -c -o $(BUILD_DIR)/persistence_leak.o $(PERSISTENCE_SRC)
+	$(CC) $(CFLAGS) -g -O0 -fsanitize=leak -fno-omit-frame-pointer -o $(BUILD_DIR)/claude-lsan $(SRC) $(BUILD_DIR)/logger_leak.o $(BUILD_DIR)/persistence_leak.o $(BUILD_DIR)/migrations_leak.o $(LDFLAGS) -fsanitize=leak
+	@echo ""
+	@echo "✓ Build successful with LeakSanitizer!"
+	@echo "Run: ./$(BUILD_DIR)/claude-lsan \"your prompt here\""
+	@echo ""
+
+# Run Valgrind memory checker on tests
+valgrind: test-edit test-input test-read
+	@echo ""
+	@echo "Running Valgrind on test suite..."
+	@echo ""
+	@command -v valgrind >/dev/null 2>&1 || { echo "Error: valgrind not found. Install with: brew install valgrind (macOS) or apt-get install valgrind (Linux)"; exit 1; }
+	@echo "=== Testing Edit tool with Valgrind ==="
+	valgrind --leak-check=full --show-leak-kinds=all --track-origins=yes --error-exitcode=1 ./$(TEST_EDIT_TARGET)
+	@echo ""
+	@echo "=== Testing Input handler with Valgrind ==="
+	valgrind --leak-check=full --show-leak-kinds=all --track-origins=yes --error-exitcode=1 ./$(TEST_INPUT_TARGET)
+	@echo ""
+	@echo "=== Testing Read tool with Valgrind ==="
+	valgrind --leak-check=full --show-leak-kinds=all --track-origins=yes --error-exitcode=1 ./$(TEST_READ_TARGET)
+	@echo ""
+	@echo "✓ Valgrind checks complete - no memory leaks detected!"
+	@echo ""
+
+# Comprehensive memory bug scan - runs all analysis tools
+memscan: analyze sanitize-all
+	@echo ""
+	@echo "=========================================="
+	@echo "Comprehensive Memory Bug Scan Complete"
+	@echo "=========================================="
+	@echo ""
+	@echo "Completed checks:"
+	@echo "  ✓ Static analysis (see $(BUILD_DIR)/analyze.log)"
+	@echo "  ✓ Built with combined sanitizers ($(BUILD_DIR)/claude-allsan)"
+	@echo ""
+	@echo "Next steps:"
+	@echo "  1. Review static analysis results: cat $(BUILD_DIR)/analyze.log"
+	@echo "  2. Test with sanitizers: ./$(BUILD_DIR)/claude-allsan \"test prompt\""
+	@echo "  3. Run Valgrind: make valgrind"
+	@echo ""
+	@echo "For production testing, run all test suites with sanitizers:"
+	@echo "  ./$(BUILD_DIR)/claude-allsan --help"
 	@echo ""
 
 $(LOGGER_OBJ): $(LOGGER_SRC) src/logger.h
@@ -109,6 +215,18 @@ $(PERSISTENCE_OBJ): $(PERSISTENCE_SRC) src/persistence.h src/migrations.h
 $(MIGRATIONS_OBJ): $(MIGRATIONS_SRC) src/migrations.h
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c -o $(MIGRATIONS_OBJ) $(MIGRATIONS_SRC)
+
+$(LINEEDIT_OBJ): $(LINEEDIT_SRC) src/lineedit.h
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c -o $(LINEEDIT_OBJ) $(LINEEDIT_SRC)
+
+$(COMMANDS_OBJ): $(COMMANDS_SRC) src/commands.h src/lineedit.h
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c -o $(COMMANDS_OBJ) $(COMMANDS_SRC)
+
+$(COMPLETION_OBJ): $(COMPLETION_SRC) src/completion.h src/lineedit.h
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c -o $(COMPLETION_OBJ) $(COMPLETION_SRC)
 
 # Query tool - utility to inspect API call logs
 $(QUERY_TOOL): $(QUERY_TOOL_SRC) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ)
@@ -164,12 +282,6 @@ $(TEST_READ_TARGET): $(SRC) $(TEST_READ_SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(
 clean:
 	rm -rf $(BUILD_DIR)
 
-install: $(TARGET)
-	@echo "Installing $(TARGET) to /usr/local/bin..."
-	@sudo cp $(TARGET) /usr/local/bin/
-	@echo "✓ Installed successfully!"
-	@echo "You can now run 'claude' from anywhere"
-
 check-deps:
 	@echo "Checking dependencies..."
 	@command -v $(CC) >/dev/null 2>&1 || { echo "Error: gcc not found. Please install gcc."; exit 1; }
@@ -189,8 +301,16 @@ help:
 	@echo "  make test-read - Build and run Read tool tests only"
 	@echo "  make query-tool - Build the API call log query utility"
 	@echo "  make clean     - Remove built files"
-	@echo "  make install   - Install to /usr/local/bin (requires sudo)"
+	@echo "  make install   - Install to \$$HOME/.local/bin"
 	@echo "  make check-deps - Check if all dependencies are installed"
+	@echo ""
+	@echo "Memory Bug Scanning:"
+	@echo "  make memscan      - Run comprehensive memory analysis (recommended)"
+	@echo "  make analyze      - Run static analysis (clang/gcc analyzer)"
+	@echo "  make sanitize-all - Build with Address + UB sanitizers (recommended)"
+	@echo "  make sanitize-ub  - Build with Undefined Behavior Sanitizer only"
+	@echo "  make sanitize-leak - Build with Leak Sanitizer only"
+	@echo "  make valgrind     - Run test suite under Valgrind"
 	@echo ""
 	@echo "Dependencies:"
 	@echo "  - gcc (or compatible C compiler)"
@@ -198,11 +318,12 @@ help:
 	@echo "  - cJSON"
 	@echo "  - sqlite3"
 	@echo "  - pthread (usually included with OS)"
+	@echo "  - valgrind (optional, for memory leak detection)"
 	@echo ""
 	@echo "macOS installation:"
-	@echo "  brew install curl cjson sqlite3"
+	@echo "  brew install curl cjson sqlite3 valgrind"
 	@echo ""
 	@echo "Linux installation:"
-	@echo "  apt-get install libcurl4-openssl-dev libcjson-dev libsqlite3-dev"
+	@echo "  apt-get install libcurl4-openssl-dev libcjson-dev libsqlite3-dev valgrind"
 	@echo "  or"
-	@echo "  yum install libcurl-devel cjson-devel sqlite-devel"
+	@echo "  yum install libcurl-devel cjson-devel sqlite-devel valgrind"
