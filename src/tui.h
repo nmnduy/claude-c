@@ -42,6 +42,7 @@ typedef struct {
     int conv_scroll_offset;  // Unused (kept for compatibility)
 
     int is_initialized;      // Whether TUI has been set up
+    int has_status_line;     // Whether a status line is currently displayed
 } TUIState;
 
 // Initialize the TUI
