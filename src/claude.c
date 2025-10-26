@@ -2018,7 +2018,7 @@ static void process_response(ConversationState *state, cJSON *response, TUIState
 
     // Display assistant's text content if present
     cJSON *content = cJSON_GetObjectItem(message, "content");
-    if (content && cJSON_IsString(content) && content->valuestring) {
+    if (content && cJSON_IsString(content) && content->valuestring && strlen(content->valuestring) > 0) {
         if (tui) {
             tui_add_conversation_line(tui, "[Assistant]", content->valuestring, COLOR_PAIR_ASSISTANT);
         } else {
@@ -2111,10 +2111,28 @@ static void process_response(ConversationState *state, cJSON *response, TUIState
             pthread_join(threads[i], NULL);
         }
 
+        // Check if any tools had errors
+        int has_error = 0;
+        for (int i = 0; i < tool_count; i++) {
+            if (results[i].is_error) {
+                has_error = 1;
+                break;
+            }
+        }
+
+        // Clear status on success, show message on error
         if (!tui) {
-            spinner_stop(tool_spinner, "Tools completed", 1);
+            if (has_error) {
+                spinner_stop(tool_spinner, "Tool execution completed with errors", 0);
+            } else {
+                spinner_stop(tool_spinner, NULL, 1);  // NULL = clear without message
+            }
         } else {
-            tui_update_status(tui, "Tools completed");
+            if (has_error) {
+                tui_update_status(tui, "Tool execution completed with errors");
+            } else {
+                tui_update_status(tui, "");  // Clear status on success
+            }
         }
         free(threads);
         free(args);
@@ -2129,10 +2147,11 @@ static void process_response(ConversationState *state, cJSON *response, TUIState
             tui_update_status(tui, "Processing tool results...");
         }
         cJSON *next_response = call_api(state);
+        // Clear status after API call completes
         if (!tui) {
-            spinner_stop(followup_spinner, NULL, 1);
+            spinner_stop(followup_spinner, NULL, 1);  // Clear without message
         } else {
-            tui_update_status(tui, "Ready");
+            tui_update_status(tui, "");  // Clear status
         }
         if (next_response) {
             process_response(state, next_response, tui);
@@ -2632,7 +2651,7 @@ static void interactive_mode(ConversationState *state) {
         // Call API with status update
         tui_update_status(&tui, "Waiting for API response...");
         cJSON *response = call_api(state);
-        tui_update_status(&tui, "Ready");
+        tui_update_status(&tui, "");  // Clear status after API response
 
         if (!response) {
             tui_add_conversation_line(&tui, "[Error]", "Failed to get response from API", COLOR_PAIR_ERROR);
