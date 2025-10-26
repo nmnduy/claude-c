@@ -28,6 +28,7 @@
 #include <dirent.h>
 #include <termios.h>
 #include <ctype.h>
+#include "colorscheme.h"
 
 #ifdef TEST_BUILD
 // Test build: stub out logging and persistence
@@ -88,7 +89,7 @@ static void persistence_log_api_call(
 #define API_BASE_URL "https://api.openai.com"
 #define DEFAULT_MODEL "o4-mini"
 #define MAX_TOKENS 16384
-#define MAX_MESSAGES 100
+#define MAX_MESSAGES 10000
 #define MAX_TOOLS 10
 #define BUFFER_SIZE 8192
 
@@ -2513,8 +2514,31 @@ static int read_line_advanced(const char *prompt, char *buffer, size_t buffer_si
 }
 
 static void interactive_mode(ConversationState *state) {
-    // Display startup banner BEFORE TUI init (so it's visible)
-    printf("\033[1;34m");  // Bold blue
+    // Initialize colorscheme FIRST (before any colored output)
+    const char *theme = getenv("CLAUDE_THEME");
+    if (theme && strlen(theme) > 0) {
+        char theme_path[512];
+        snprintf(theme_path, sizeof(theme_path), "colorschemes/%s.conf", theme);
+        if (init_colorscheme(theme_path) != 0) {
+            fprintf(stderr, "Warning: Failed to load colorscheme '%s', using default\n", theme);
+        }
+    } else {
+        // Try to load default theme
+        if (init_colorscheme("colorschemes/kitty-default.conf") != 0) {
+            fprintf(stderr, "Warning: Failed to load default colorscheme\n");
+        }
+    }
+
+    // Display startup banner with theme colors
+    char color_code[32];
+    const char *banner_color;
+    if (get_colorscheme_color(COLORSCHEME_ASSISTANT, color_code, sizeof(color_code)) == 0) {
+        banner_color = color_code;
+    } else {
+        banner_color = "\033[1;34m";  // Bold blue fallback
+    }
+
+    printf("%s", banner_color);
     printf(" ▐▛███▜▌   claude-c v%s\n", VERSION);
     printf("▝▜█████▛▘  %s\n", state->model);
     printf("  ▘▘ ▝▝    %s\n", state->working_dir);

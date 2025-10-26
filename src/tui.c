@@ -4,6 +4,8 @@
 
 #include "tui.h"
 #include "lineedit.h"
+#define COLORSCHEME_EXTERN
+#include "colorscheme.h"
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
@@ -156,25 +158,47 @@ void tui_cleanup(TUIState *tui) {
 void tui_add_conversation_line(TUIState *tui, const char *prefix, const char *text, TUIColorPair color_pair) {
     if (!tui || !tui->is_initialized) return;
 
-    // Map color pairs to ANSI escape codes
+    // Get color from colorscheme or fall back to defaults
     const char *color_start = "";
     const char *color_end = "\033[0m";
-
+    char color_code[32];
+    
+    // Try to get color from colorscheme first
     switch (color_pair) {
         case COLOR_PAIR_USER:
-            color_start = "\033[32m";  // Green
+            if (get_colorscheme_color(COLORSCHEME_USER, color_code, sizeof(color_code)) == 0) {
+                color_start = color_code;
+            } else {
+                color_start = "\033[32m";  // Green fallback
+            }
             break;
         case COLOR_PAIR_ASSISTANT:
-            color_start = "\033[34m";  // Blue
+            if (get_colorscheme_color(COLORSCHEME_ASSISTANT, color_code, sizeof(color_code)) == 0) {
+                color_start = color_code;
+            } else {
+                color_start = "\033[34m";  // Blue fallback
+            }
             break;
         case COLOR_PAIR_TOOL:
-            color_start = "\033[33m";  // Yellow
+            if (get_colorscheme_color(COLORSCHEME_TOOL, color_code, sizeof(color_code)) == 0) {
+                color_start = color_code;
+            } else {
+                color_start = "\033[33m";  // Yellow fallback
+            }
             break;
         case COLOR_PAIR_ERROR:
-            color_start = "\033[31m";  // Red
+            if (get_colorscheme_color(COLORSCHEME_ERROR, color_code, sizeof(color_code)) == 0) {
+                color_start = color_code;
+            } else {
+                color_start = "\033[31m";  // Red fallback
+            }
             break;
         case COLOR_PAIR_STATUS:
-            color_start = "\033[36m";  // Cyan
+            if (get_colorscheme_color(COLORSCHEME_STATUS, color_code, sizeof(color_code)) == 0) {
+                color_start = color_code;
+            } else {
+                color_start = "\033[36m";  // Cyan fallback
+            }
             break;
         default:
             color_start = "";
@@ -194,8 +218,16 @@ void tui_add_conversation_line(TUIState *tui, const char *prefix, const char *te
 void tui_update_status(TUIState *tui, const char *status_text) {
     if (!tui || !tui->is_initialized) return;
 
-    // Just print status to stdout with cyan color
-    printf("\033[36m[Status] %s\033[0m\n", status_text);
+    // Get status color from colorscheme or use default cyan
+    char color_code[32];
+    const char *color_start;
+    if (get_colorscheme_color(COLORSCHEME_STATUS, color_code, sizeof(color_code)) == 0) {
+        color_start = color_code;
+    } else {
+        color_start = "\033[36m";  // Cyan fallback
+    }
+
+    printf("%s[Status] %s\033[0m\n", color_start, status_text);
     fflush(stdout);
 }
 
@@ -206,9 +238,18 @@ char* tui_read_input(TUIState *tui, const char *prompt) {
     LineEditor editor;
     lineedit_init(&editor, NULL, NULL);  // No completion for now
 
+    // Get prompt color from colorscheme or use default green
+    char color_code[32];
+    const char *color_start;
+    if (get_colorscheme_color(COLORSCHEME_USER, color_code, sizeof(color_code)) == 0) {
+        color_start = color_code;
+    } else {
+        color_start = "\033[32m";  // Green fallback
+    }
+
     // Create colored prompt
     char colored_prompt[256];
-    snprintf(colored_prompt, sizeof(colored_prompt), "\033[32m%s\033[0m ", prompt);
+    snprintf(colored_prompt, sizeof(colored_prompt), "%s%s\033[0m ", color_start, prompt);
 
     // Read input
     char *input = lineedit_readline(&editor, colored_prompt);
@@ -227,8 +268,16 @@ void tui_refresh(TUIState *tui) {
 void tui_clear_conversation(TUIState *tui) {
     if (!tui || !tui->is_initialized) return;
 
-    // Just print a message - conversation is in terminal scrollback
-    printf("\033[36m[System] Conversation history cleared (kept in terminal scrollback)\033[0m\n");
+    // Get status color from colorscheme or use default cyan
+    char color_code[32];
+    const char *color_start;
+    if (get_colorscheme_color(COLORSCHEME_STATUS, color_code, sizeof(color_code)) == 0) {
+        color_start = color_code;
+    } else {
+        color_start = "\033[36m";  // Cyan fallback
+    }
+
+    printf("%s[System] Conversation history cleared (kept in terminal scrollback)\033[0m\n", color_start);
     fflush(stdout);
 }
 
