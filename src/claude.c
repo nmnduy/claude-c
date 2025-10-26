@@ -120,9 +120,102 @@ static void print_assistant(const char *text) {
     fflush(stdout);
 }
 
-static void print_tool(const char *tool_name) {
-    printf("%s[Tool: %s]%s\n", ANSI_YELLOW, tool_name, ANSI_RESET);
+static void print_tool(const char *tool_name, const char *details) {
+    printf("%s[Tool: %s]%s", ANSI_YELLOW, tool_name, ANSI_RESET);
+    if (details && strlen(details) > 0) {
+        printf(" %s", details);
+    }
+    printf("\n");
     fflush(stdout);
+}
+
+// Helper function to extract tool details from arguments
+static char* get_tool_details(const char *tool_name, cJSON *arguments) {
+    if (!arguments || !cJSON_IsObject(arguments)) {
+        return NULL;
+    }
+    
+    static char details[256]; // static buffer for thread safety
+    details[0] = '\0';
+    
+    if (strcmp(tool_name, "Bash") == 0) {
+        cJSON *command = cJSON_GetObjectItem(arguments, "command");
+        if (cJSON_IsString(command)) {
+            const char *cmd = command->valuestring;
+            // Truncate long commands to first 50 characters
+            if (strlen(cmd) > 50) {
+                snprintf(details, sizeof(details), "%.47s...", cmd);
+            } else {
+                strncpy(details, cmd, sizeof(details) - 1);
+                details[sizeof(details) - 1] = '\0';
+            }
+        }
+    } else if (strcmp(tool_name, "Read") == 0) {
+        cJSON *file_path = cJSON_GetObjectItem(arguments, "file_path");
+        cJSON *start_line = cJSON_GetObjectItem(arguments, "start_line");
+        cJSON *end_line = cJSON_GetObjectItem(arguments, "end_line");
+        
+        if (cJSON_IsString(file_path)) {
+            const char *path = file_path->valuestring;
+            // Extract just the filename from the path
+            const char *filename = strrchr(path, '/');
+            filename = filename ? filename + 1 : path;
+            
+            if (cJSON_IsNumber(start_line) && cJSON_IsNumber(end_line)) {
+                snprintf(details, sizeof(details), "%s:%d-%d", filename, 
+                        start_line->valueint, end_line->valueint);
+            } else if (cJSON_IsNumber(start_line)) {
+                snprintf(details, sizeof(details), "%s:%d", filename, start_line->valueint);
+            } else {
+                strncpy(details, filename, sizeof(details) - 1);
+                details[sizeof(details) - 1] = '\0';
+            }
+        }
+    } else if (strcmp(tool_name, "Write") == 0) {
+        cJSON *file_path = cJSON_GetObjectItem(arguments, "file_path");
+        if (cJSON_IsString(file_path)) {
+            const char *path = file_path->valuestring;
+            // Extract just the filename from the path
+            const char *filename = strrchr(path, '/');
+            filename = filename ? filename + 1 : path;
+            strncpy(details, filename, sizeof(details) - 1);
+            details[sizeof(details) - 1] = '\0';
+        }
+    } else if (strcmp(tool_name, "Edit") == 0) {
+        cJSON *file_path = cJSON_GetObjectItem(arguments, "file_path");
+        cJSON *use_regex = cJSON_GetObjectItem(arguments, "use_regex");
+        
+        if (cJSON_IsString(file_path)) {
+            const char *path = file_path->valuestring;
+            // Extract just the filename from the path
+            const char *filename = strrchr(path, '/');
+            filename = filename ? filename + 1 : path;
+            
+            const char *op_type = cJSON_IsTrue(use_regex) ? "(regex)" : "(string)";
+            snprintf(details, sizeof(details), "%s %s", filename, op_type);
+        }
+    } else if (strcmp(tool_name, "Glob") == 0) {
+        cJSON *pattern = cJSON_GetObjectItem(arguments, "pattern");
+        if (cJSON_IsString(pattern)) {
+            strncpy(details, pattern->valuestring, sizeof(details) - 1);
+            details[sizeof(details) - 1] = '\0';
+        }
+    } else if (strcmp(tool_name, "Grep") == 0) {
+        cJSON *pattern = cJSON_GetObjectItem(arguments, "pattern");
+        cJSON *path = cJSON_GetObjectItem(arguments, "path");
+        
+        if (cJSON_IsString(pattern)) {
+            if (cJSON_IsString(path) && strlen(path->valuestring) > 0 && 
+                strcmp(path->valuestring, ".") != 0) {
+                snprintf(details, sizeof(details), "\"%s\" in %s", 
+                        pattern->valuestring, path->valuestring);
+            } else {
+                snprintf(details, sizeof(details), "\"%s\"", pattern->valuestring);
+            }
+        }
+    }
+    
+    return strlen(details) > 0 ? details : NULL;
 }
 
 static void print_error(const char *text) {
@@ -1964,21 +2057,29 @@ static void process_response(ConversationState *state, cJSON *response, TUIState
             cJSON *name = cJSON_GetObjectItem(function, "name");
             cJSON *arguments = cJSON_GetObjectItem(function, "arguments");
 
-            if (tui) {
-                char tool_msg[128];
-                snprintf(tool_msg, sizeof(tool_msg), "%s", name->valuestring);
-                tui_add_conversation_line(tui, "[Tool:", tool_msg, COLOR_PAIR_TOOL);
-            } else {
-                print_tool(name->valuestring);
-            }
-
-            // Prepare thread arguments
+            // Parse arguments to get details
             cJSON *input = NULL;
             if (arguments && cJSON_IsString(arguments)) {
                 input = cJSON_Parse(arguments->valuestring);
             } else {
                 input = cJSON_CreateObject();
             }
+            
+            char *tool_details = get_tool_details(name->valuestring, input);
+            
+            if (tui) {
+                char tool_msg[256];
+                if (tool_details) {
+                    snprintf(tool_msg, sizeof(tool_msg), "%s] %s", name->valuestring, tool_details);
+                } else {
+                    snprintf(tool_msg, sizeof(tool_msg), "%s", name->valuestring);
+                }
+                tui_add_conversation_line(tui, "[Tool:", tool_msg, COLOR_PAIR_TOOL);
+            } else {
+                print_tool(name->valuestring, tool_details);
+            }
+
+            // Prepare thread arguments (input already parsed above)
             args[thread_count].tool_use_id = strdup(id->valuestring);
             args[thread_count].tool_name = name->valuestring;
             args[thread_count].input = input;
