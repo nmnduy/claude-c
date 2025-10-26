@@ -7,6 +7,7 @@
 #include <ctype.h>
 #include <ncurses.h>
 #include <math.h>
+#include "logger.h"
 
 // TUI color pair assignments
 #define PAIR_ASSISTANT  1  // Assistant text
@@ -75,7 +76,7 @@ static RGB parse_hex_color(const char *hex) {
         rgb.g = (int)strtol(g_str, NULL, 16);
         rgb.b = (int)strtol(b_str, NULL, 16);
 
-        fprintf(stderr, "[THEME]     Parsed hex %s -> RGB(%d, %d, %d)\n",
+        LOG_DEBUG("[THEME]     Parsed hex %s -> RGB(%d, %d, %d)",
                 hex - 1, rgb.r, rgb.g, rgb.b);
     }
 
@@ -110,7 +111,7 @@ static int rgb_to_ncurses_color(RGB rgb) {
             // Grayscale ramp: 232-255 (24 shades)
             int gray_index = (avg * 23) / 255;
             int color = 232 + gray_index;
-            fprintf(stderr, "[THEME]     RGB(%d,%d,%d) -> grayscale color %d\n",
+            LOG_DEBUG("[THEME]     RGB(%d,%d,%d) -> grayscale color %d",
                     rgb.r, rgb.g, rgb.b, color);
             return color;
         }
@@ -121,7 +122,7 @@ static int rgb_to_ncurses_color(RGB rgb) {
         int b_idx = (rgb.b * 5) / 255;
         int color = 16 + (36 * r_idx) + (6 * g_idx) + b_idx;
 
-        fprintf(stderr, "[THEME]     RGB(%d,%d,%d) -> 256-color %d\n",
+        LOG_DEBUG("[THEME]     RGB(%d,%d,%d) -> 256-color %d",
                 rgb.r, rgb.g, rgb.b, color);
         return color;
     }
@@ -132,7 +133,7 @@ static int rgb_to_ncurses_color(RGB rgb) {
     int b = rgb.b >= 128 ? 1 : 0;
     int color = r * COLOR_RED + g * COLOR_GREEN + b * COLOR_BLUE;
 
-    fprintf(stderr, "[THEME]     RGB(%d,%d,%d) -> basic color %d\n",
+    LOG_DEBUG("[THEME]     RGB(%d,%d,%d) -> basic color %d",
             rgb.r, rgb.g, rgb.b, color);
     return color;
 }
@@ -197,15 +198,15 @@ static int get_colorscheme_color(ColorschemeElement element, char *buf, size_t b
 
 // Load Kitty theme from file
 static int load_kitty_theme(const char *filepath, Theme *theme) {
-    fprintf(stderr, "[THEME] Loading Kitty theme from: %s\n", filepath);
+    LOG_INFO("[THEME] Loading Kitty theme from: %s", filepath);
 
     FILE *f = fopen(filepath, "r");
     if (!f) {
-        fprintf(stderr, "[THEME] ERROR: Failed to open file: %s\n", filepath);
+        LOG_ERROR("[THEME] ERROR: Failed to open file: %s", filepath);
         return 0;
     }
 
-    fprintf(stderr, "[THEME] File opened successfully\n");
+    LOG_DEBUG("[THEME] File opened successfully");
 
     // Initialize with defaults (will be overridden by theme)
     theme->assistant_fg = COLOR_BLUE;
@@ -238,7 +239,7 @@ static int load_kitty_theme(const char *filepath, Theme *theme) {
         // Parse key-value pair
         char key[64], value[32];
         if (sscanf(p, "%63s %31s", key, value) == 2) {
-            fprintf(stderr, "[THEME] Line %d: %s = %s\n", line_num, key, value);
+            LOG_DEBUG("[THEME] Line %d: %s = %s", line_num, key, value);
 
             RGB rgb = parse_hex_color(value);
             int color = rgb_to_ncurses_color(rgb);
@@ -248,55 +249,55 @@ static int load_kitty_theme(const char *filepath, Theme *theme) {
                 theme->assistant_fg = color;
                 theme->assistant_rgb = rgb;
                 parsed_count++;
-                fprintf(stderr, "[THEME]   -> Set assistant_fg = %d\n", color);
+                LOG_DEBUG("[THEME]   -> Set assistant_fg = %d", color);
             }
             else if (strcmp(key, "color2") == 0 || strcmp(key, "user_fg") == 0) {
                 theme->user_fg = color;
                 theme->user_rgb = rgb;
                 parsed_count++;
-                fprintf(stderr, "[THEME]   -> Set user_fg = %d\n", color);
+                LOG_DEBUG("[THEME]   -> Set user_fg = %d", color);
             }
             else if (strcmp(key, "color3") == 0 || strcmp(key, "status_bg") == 0) {
                 theme->status_bg = color;
                 theme->status_rgb = rgb;
                 parsed_count++;
-                fprintf(stderr, "[THEME]   -> Set status_bg = %d\n", color);
+                LOG_DEBUG("[THEME]   -> Set status_bg = %d", color);
             }
             else if (strcmp(key, "color1") == 0 || strcmp(key, "error_fg") == 0) {
                 theme->error_fg = color;
                 theme->error_rgb = rgb;
                 parsed_count++;
-                fprintf(stderr, "[THEME]   -> Set error_fg = %d\n", color);
+                LOG_DEBUG("[THEME]   -> Set error_fg = %d", color);
             }
             else if (strcmp(key, "color4") == 0 || strcmp(key, "color6") == 0 ||
                      strcmp(key, "header_fg") == 0) {
                 theme->header_fg = color;
                 theme->header_rgb = rgb;
                 parsed_count++;
-                fprintf(stderr, "[THEME]   -> Set header_fg = %d\n", color);
+                LOG_DEBUG("[THEME]   -> Set header_fg = %d", color);
             }
             else if (strcmp(key, "background") == 0) {
                 theme->background = color;
                 parsed_count++;
-                fprintf(stderr, "[THEME]   -> Set background = %d\n", color);
+                LOG_DEBUG("[THEME]   -> Set background = %d", color);
             }
         }
     }
 
     fclose(f);
-    fprintf(stderr, "[THEME] Parsed %d color mappings\n", parsed_count);
+    LOG_DEBUG("[THEME] Parsed %d color mappings", parsed_count);
 
     return parsed_count > 0;
 }
 
 // Apply theme to ncurses
 static void apply_theme(Theme *theme) {
-    fprintf(stderr, "[THEME] Applying theme to ncurses\n");
-    fprintf(stderr, "[THEME]   PAIR_ASSISTANT: fg=%d bg=%d\n", theme->assistant_fg, theme->background);
-    fprintf(stderr, "[THEME]   PAIR_USER: fg=%d bg=%d\n", theme->user_fg, theme->background);
-    fprintf(stderr, "[THEME]   PAIR_STATUS: fg=%d bg=%d\n", COLOR_BLACK, theme->status_bg);
-    fprintf(stderr, "[THEME]   PAIR_HEADER: fg=%d bg=%d\n", theme->header_fg, theme->background);
-    fprintf(stderr, "[THEME]   PAIR_ERROR: fg=%d bg=%d\n", theme->error_fg, theme->background);
+    LOG_DEBUG("[THEME] Applying theme to ncurses");
+    LOG_DEBUG("[THEME]   PAIR_ASSISTANT: fg=%d bg=%d", theme->assistant_fg, theme->background);
+    LOG_DEBUG("[THEME]   PAIR_USER: fg=%d bg=%d", theme->user_fg, theme->background);
+    LOG_DEBUG("[THEME]   PAIR_STATUS: fg=%d bg=%d", COLOR_BLACK, theme->status_bg);
+    LOG_DEBUG("[THEME]   PAIR_HEADER: fg=%d bg=%d", theme->header_fg, theme->background);
+    LOG_DEBUG("[THEME]   PAIR_ERROR: fg=%d bg=%d", theme->error_fg, theme->background);
 
     init_pair(PAIR_ASSISTANT, theme->assistant_fg, theme->background);
     init_pair(PAIR_USER, theme->user_fg, theme->background);
@@ -310,23 +311,23 @@ static void apply_theme(Theme *theme) {
 // Returns 0 on success, -1 on failure
 // Note: This doesn't require ncurses - works with raw ANSI codes
 static int init_colorscheme(const char *filepath) {
-    fprintf(stderr, "[THEME] Initializing colorscheme system\n");
+    LOG_DEBUG("[THEME] Initializing colorscheme system");
 
     // Try to load custom Kitty theme
     if (filepath) {
-        fprintf(stderr, "[THEME] Custom theme path provided: %s\n", filepath);
+        LOG_DEBUG("[THEME] Custom theme path provided: %s", filepath);
         if (load_kitty_theme(filepath, &g_theme)) {
-            fprintf(stderr, "[THEME] Successfully loaded custom theme\n");
+            LOG_DEBUG("[THEME] Successfully loaded custom theme");
             g_theme_loaded = 1;
             return 0;
         }
-        fprintf(stderr, "[THEME] Failed to load custom theme, falling back to defaults\n");
+        LOG_WARN("[THEME] Failed to load custom theme, falling back to defaults");
     } else {
-        fprintf(stderr, "[THEME] No custom theme path provided\n");
+        LOG_DEBUG("[THEME] No custom theme path provided");
     }
 
     // Fall back to default colors
-    fprintf(stderr, "[THEME] Using default colors\n");
+    LOG_DEBUG("[THEME] Using default colors");
 
     // Set default RGB values for ANSI codes
     g_theme.assistant_rgb = (RGB){100, 149, 237};   // Cornflower blue

@@ -5,6 +5,7 @@
  */
 
 #include "lineedit.h"
+#include "logger.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -176,7 +177,7 @@ static void redraw_input_line(const char *prompt, const char *buffer, int cursor
 void lineedit_init(LineEditor *ed, CompletionFn completer, void *ctx) {
     ed->buffer = malloc(INITIAL_BUFFER_SIZE);
     if (!ed->buffer) {
-        fprintf(stderr, "Failed to allocate line editor buffer\n");
+        LOG_ERROR("Failed to allocate line editor buffer");
         exit(1);
     }
     ed->buffer_capacity = INITIAL_BUFFER_SIZE;

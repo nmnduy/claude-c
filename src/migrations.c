@@ -6,6 +6,7 @@
 #include <string.h>
 #include <time.h>
 #include "migrations.h"
+#include "logger.h"
 
 // ============================================================================
 // Migration Functions
@@ -25,7 +26,7 @@ static int migration_001_add_session_id(sqlite3 *db) {
             sqlite3_free(err_msg);
             return 0;  // Column already exists, consider it success
         }
-        fprintf(stderr, "Migration 001 failed: %s\n", err_msg);
+        LOG_ERROR("Migration 001 failed: %s", err_msg);
         sqlite3_free(err_msg);
         return -1;
     }
@@ -36,7 +37,7 @@ static int migration_001_add_session_id(sqlite3 *db) {
 
     rc = sqlite3_exec(db, index_sql, NULL, NULL, &err_msg);
     if (rc != SQLITE_OK) {
-        fprintf(stderr, "Migration 001 index warning: %s\n", err_msg);
+        LOG_WARN("Migration 001 index warning: %s", err_msg);
         sqlite3_free(err_msg);
         // Non-fatal, continue
     }
@@ -113,7 +114,7 @@ static int migrations_set_version(sqlite3 *db, int version, const char *descript
     char *err_msg = NULL;
     int rc = sqlite3_exec(db, create_sql, NULL, NULL, &err_msg);
     if (rc != SQLITE_OK) {
-        fprintf(stderr, "Failed to create schema_version table: %s\n", err_msg);
+        LOG_ERROR("Failed to create schema_version table: %s", err_msg);
         sqlite3_free(err_msg);
         return -1;
     }
@@ -125,7 +126,7 @@ static int migrations_set_version(sqlite3 *db, int version, const char *descript
     sqlite3_stmt *stmt;
     rc = sqlite3_prepare_v2(db, insert_sql, -1, &stmt, NULL);
     if (rc != SQLITE_OK) {
-        fprintf(stderr, "Failed to prepare version insert: %s\n", sqlite3_errmsg(db));
+        LOG_ERROR("Failed to prepare version insert: %s", sqlite3_errmsg(db));
         return -1;
     }
 
@@ -137,7 +138,7 @@ static int migrations_set_version(sqlite3 *db, int version, const char *descript
     sqlite3_finalize(stmt);
 
     if (rc != SQLITE_DONE) {
-        fprintf(stderr, "Failed to insert version: %s\n", sqlite3_errmsg(db));
+        LOG_ERROR("Failed to insert version: %s", sqlite3_errmsg(db));
         return -1;
     }
 
@@ -151,7 +152,7 @@ static int migrations_set_version(sqlite3 *db, int version, const char *descript
 // Apply all pending migrations
 int migrations_apply(sqlite3 *db) {
     if (!db) {
-        fprintf(stderr, "migrations_apply: NULL database handle\n");
+        LOG_ERROR("migrations_apply: NULL database handle");
         return -1;
     }
 
@@ -166,13 +167,13 @@ int migrations_apply(sqlite3 *db) {
             continue;
         }
 
-        fprintf(stderr, "[Migration] Applying v%d: %s\n", m->version, m->description);
+        LOG_INFO("[Migration] Applying v%d: %s", m->version, m->description);
 
         // Begin transaction
         char *err_msg = NULL;
         int rc = sqlite3_exec(db, "BEGIN TRANSACTION;", NULL, NULL, &err_msg);
         if (rc != SQLITE_OK) {
-            fprintf(stderr, "Failed to begin transaction: %s\n", err_msg);
+            LOG_ERROR("Failed to begin transaction: %s", err_msg);
             sqlite3_free(err_msg);
             return -1;
         }
@@ -180,7 +181,7 @@ int migrations_apply(sqlite3 *db) {
         // Apply migration
         rc = m->up(db);
         if (rc != 0) {
-            fprintf(stderr, "Migration v%d failed, rolling back\n", m->version);
+            LOG_ERROR("Migration v%d failed, rolling back", m->version);
             sqlite3_exec(db, "ROLLBACK;", NULL, NULL, NULL);
             return -1;
         }
@@ -188,7 +189,7 @@ int migrations_apply(sqlite3 *db) {
         // Update version
         rc = migrations_set_version(db, m->version, m->description);
         if (rc != 0) {
-            fprintf(stderr, "Failed to update schema version, rolling back\n");
+            LOG_ERROR("Failed to update schema version, rolling back");
             sqlite3_exec(db, "ROLLBACK;", NULL, NULL, NULL);
             return -1;
         }
@@ -196,13 +197,13 @@ int migrations_apply(sqlite3 *db) {
         // Commit transaction
         rc = sqlite3_exec(db, "COMMIT;", NULL, NULL, &err_msg);
         if (rc != SQLITE_OK) {
-            fprintf(stderr, "Failed to commit migration: %s\n", err_msg);
+            LOG_ERROR("Failed to commit migration: %s", err_msg);
             sqlite3_free(err_msg);
             sqlite3_exec(db, "ROLLBACK;", NULL, NULL, NULL);
             return -1;
         }
 
-        fprintf(stderr, "[Migration] Successfully applied v%d\n", m->version);
+        LOG_INFO("[Migration] Successfully applied v%d", m->version);
         current_version = m->version;
     }
 
