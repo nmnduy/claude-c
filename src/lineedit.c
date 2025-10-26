@@ -310,6 +310,7 @@ char* lineedit_readline(LineEditor *ed, const char *prompt) {
         if (read(STDIN_FILENO, &c, 1) != 1) {
             // Error or EOF
             printf("\033[?2004l");  // Disable bracketed paste mode
+            printf("\033[?25h");    // Show cursor (restore visibility)
             fflush(stdout);
             tcsetattr(STDIN_FILENO, TCSANOW, &old_term);
             return NULL;
@@ -388,6 +389,7 @@ char* lineedit_readline(LineEditor *ed, const char *prompt) {
             // Ctrl+D: EOF only (always exits, even if buffer has content)
             printf("\n");
             printf("\033[?2004l");  // Disable bracketed paste mode
+            printf("\033[?25h");    // Show cursor (restore visibility)
             fflush(stdout);
             tcsetattr(STDIN_FILENO, TCSANOW, &old_term);
             return NULL;
@@ -495,8 +497,9 @@ char* lineedit_readline(LineEditor *ed, const char *prompt) {
         }
     }
 
-    // Disable bracketed paste mode
-    printf("\033[?2004l");
+    // Disable bracketed paste mode and ensure cursor is visible
+    printf("\033[?2004l");  // Disable bracketed paste
+    printf("\033[?25h");    // Show cursor (restore visibility)
     fflush(stdout);
 
     // Restore terminal settings
