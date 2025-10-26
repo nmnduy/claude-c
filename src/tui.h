@@ -26,20 +26,20 @@ typedef enum {
 
 // TUI State
 typedef struct {
-    WINDOW *conv_win;        // Conversation window (scrollable)
-    WINDOW *status_win;      // Status line window
-    WINDOW *input_win;       // Input window
+    WINDOW *conv_win;        // Unused (kept for compatibility)
+    WINDOW *status_win;      // Unused (kept for compatibility)
+    WINDOW *input_win;       // Input window at bottom
 
     int screen_height;       // Terminal height
     int screen_width;        // Terminal width
 
-    int conv_height;         // Height of conversation window
-    int input_height;        // Height of input window (fixed at 4 lines)
+    int conv_height;         // Unused (kept for compatibility)
+    int input_height;        // Height of input window (fixed at 3 lines)
 
-    char **conv_lines;       // Array of conversation lines
-    int conv_lines_count;    // Number of lines in conversation
-    int conv_lines_capacity; // Allocated capacity
-    int conv_scroll_offset;  // Current scroll position (0 = bottom)
+    char **conv_lines;       // Unused (kept for compatibility)
+    int conv_lines_count;    // Unused (kept for compatibility)
+    int conv_lines_capacity; // Unused (kept for compatibility)
+    int conv_scroll_offset;  // Unused (kept for compatibility)
 
     int is_initialized;      // Whether TUI has been set up
 } TUIState;
