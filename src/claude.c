@@ -220,8 +220,8 @@ static char* get_tool_details(const char *tool_name, cJSON *arguments) {
 }
 
 static void print_error(const char *text) {
-    fprintf(stderr, "%s[Error]%s %s\n", ANSI_RED, ANSI_RESET, text);
-    fflush(stderr);
+    // Log to file only (no stderr output)
+    LOG_ERROR("%s", text);
 }
 
 static void print_status(const char *text) {
@@ -259,7 +259,7 @@ static size_t write_callback(void *contents, size_t size, size_t nmemb, void *us
 
     char *ptr = realloc(mem->output, mem->size + realsize + 1);
     if (!ptr) {
-        fprintf(stderr, "Not enough memory (realloc returned NULL)\n");
+        LOG_ERROR("Not enough memory (realloc returned NULL)");
         return 0;
     }
 
@@ -1327,7 +1327,7 @@ static cJSON* call_api(ConversationState *state) {
 
         curl = curl_easy_init();
         if (!curl) {
-            fprintf(stderr, "Failed to initialize CURL\n");
+            LOG_ERROR("Failed to initialize CURL");
             free(json_str);
             free(request_copy);
             return NULL;
@@ -1369,7 +1369,7 @@ static cJSON* call_api(ConversationState *state) {
         // Handle CURL errors
         if (res != CURLE_OK) {
             const char *error_msg = curl_easy_strerror(res);
-            fprintf(stderr, "CURL request failed: %s\n", error_msg);
+            LOG_ERROR("CURL request failed: %s", error_msg);
 
             // Log failed request to persistence
             if (state->persistence_db) {
@@ -1397,7 +1397,7 @@ static cJSON* call_api(ConversationState *state) {
         // Parse response
         cJSON *json_response = cJSON_Parse(response.output);
         if (!json_response) {
-            fprintf(stderr, "Failed to parse JSON response\n");
+            LOG_ERROR("Failed to parse JSON response");
 
             // Log parsing error
             if (state->persistence_db) {
@@ -1777,7 +1777,7 @@ char* build_system_prompt(ConversationState *state) {
 
 static void add_system_message(ConversationState *state, const char *text) {
     if (state->count >= MAX_MESSAGES) {
-        fprintf(stderr, "Maximum message count reached\n");
+        LOG_ERROR("Maximum message count reached");
         return;
     }
 
@@ -1785,7 +1785,7 @@ static void add_system_message(ConversationState *state, const char *text) {
     msg->role = MSG_SYSTEM;
     msg->content = calloc(1, sizeof(ContentBlock));
     if (!msg->content) {
-        fprintf(stderr, "Failed to allocate memory for message content\n");
+        LOG_ERROR("Failed to allocate memory for message content");
         state->count--;
         return;
     }
@@ -1800,7 +1800,7 @@ static void add_system_message(ConversationState *state, const char *text) {
 
     msg->content[0].text = strdup(text);
     if (!msg->content[0].text) {
-        fprintf(stderr, "Failed to duplicate message text\n");
+        LOG_ERROR("Failed to duplicate message text");
         free(msg->content);
         msg->content = NULL;
         state->count--;
@@ -1810,7 +1810,7 @@ static void add_system_message(ConversationState *state, const char *text) {
 
 static void add_user_message(ConversationState *state, const char *text) {
     if (state->count >= MAX_MESSAGES) {
-        fprintf(stderr, "Maximum message count reached\n");
+        LOG_ERROR("Maximum message count reached");
         return;
     }
 
@@ -1818,7 +1818,7 @@ static void add_user_message(ConversationState *state, const char *text) {
     msg->role = MSG_USER;
     msg->content = calloc(1, sizeof(ContentBlock));
     if (!msg->content) {
-        fprintf(stderr, "Failed to allocate memory for message content\n");
+        LOG_ERROR("Failed to allocate memory for message content");
         state->count--; // Rollback count increment
         return;
     }
@@ -1833,7 +1833,7 @@ static void add_user_message(ConversationState *state, const char *text) {
 
     msg->content[0].text = strdup(text);
     if (!msg->content[0].text) {
-        fprintf(stderr, "Failed to duplicate message text\n");
+        LOG_ERROR("Failed to duplicate message text");
         free(msg->content);
         msg->content = NULL;
         state->count--; // Rollback count increment
@@ -1844,7 +1844,7 @@ static void add_user_message(ConversationState *state, const char *text) {
 // Parse OpenAI message format and add to conversation
 static void add_assistant_message_openai(ConversationState *state, cJSON *message) {
     if (state->count >= MAX_MESSAGES) {
-        fprintf(stderr, "Maximum message count reached\n");
+        LOG_ERROR("Maximum message count reached");
         return;
     }
 
@@ -1868,14 +1868,14 @@ static void add_assistant_message_openai(ConversationState *state, cJSON *messag
 
     // Ensure we have at least some content
     if (content_count == 0) {
-        fprintf(stderr, "Warning: Assistant message has no content\n");
+        LOG_WARN("Assistant message has no content");
         state->count--; // Rollback count increment
         return;
     }
 
     msg->content = calloc(content_count, sizeof(ContentBlock));
     if (!msg->content) {
-        fprintf(stderr, "Failed to allocate memory for message content\n");
+        LOG_ERROR("Failed to allocate memory for message content");
         state->count--; // Rollback count increment
         return;
     }
@@ -1888,7 +1888,7 @@ static void add_assistant_message_openai(ConversationState *state, cJSON *messag
         msg->content[idx].type = CONTENT_TEXT;
         msg->content[idx].text = strdup(content->valuestring);
         if (!msg->content[idx].text) {
-            fprintf(stderr, "Failed to duplicate message text\n");
+            LOG_ERROR("Failed to duplicate message text");
             free(msg->content);
             msg->content = NULL;
             state->count--;
@@ -1911,7 +1911,7 @@ static void add_assistant_message_openai(ConversationState *state, cJSON *messag
                 msg->content[idx].type = CONTENT_TOOL_USE;
                 msg->content[idx].tool_use_id = strdup(id->valuestring);
                 if (!msg->content[idx].tool_use_id) {
-                    fprintf(stderr, "Failed to duplicate tool use ID\n");
+                    LOG_ERROR("Failed to duplicate tool use ID");
                     // Cleanup previously allocated content
                     for (int j = 0; j < idx; j++) {
                         free(msg->content[j].text);
@@ -1925,7 +1925,7 @@ static void add_assistant_message_openai(ConversationState *state, cJSON *messag
                 }
                 msg->content[idx].tool_name = strdup(name->valuestring);
                 if (!msg->content[idx].tool_name) {
-                    fprintf(stderr, "Failed to duplicate tool name\n");
+                    LOG_ERROR("Failed to duplicate tool name");
                     free(msg->content[idx].tool_use_id);
                     // Cleanup previously allocated content
                     for (int j = 0; j < idx; j++) {
@@ -1953,7 +1953,7 @@ static void add_assistant_message_openai(ConversationState *state, cJSON *messag
 
 static void add_tool_results(ConversationState *state, ContentBlock *results, int count) {
     if (state->count >= MAX_MESSAGES) {
-        fprintf(stderr, "Maximum message count reached\n");
+        LOG_ERROR("Maximum message count reached");
         return;
     }
 
@@ -2520,12 +2520,12 @@ static void interactive_mode(ConversationState *state) {
         char theme_path[512];
         snprintf(theme_path, sizeof(theme_path), "colorschemes/%s.conf", theme);
         if (init_colorscheme(theme_path) != 0) {
-            fprintf(stderr, "Warning: Failed to load colorscheme '%s', using default\n", theme);
+            LOG_WARN("Failed to load colorscheme '%s', using default", theme);
         }
     } else {
         // Try to load default theme
         if (init_colorscheme("colorschemes/kitty-default.conf") != 0) {
-            fprintf(stderr, "Warning: Failed to load default colorscheme\n");
+            LOG_WARN("Failed to load default colorscheme");
         }
     }
 
@@ -2548,6 +2548,7 @@ static void interactive_mode(ConversationState *state) {
     // Initialize TUI
     TUIState tui = {0};
     if (tui_init(&tui) != 0) {
+        LOG_ERROR("Failed to initialize TUI");
         fprintf(stderr, "Failed to initialize TUI. Exiting.\n");
         return;
     }
@@ -2732,6 +2733,7 @@ int main(int argc, char *argv[]) {
 
     // Initialize logging system
     if (log_init() != 0) {
+        // Can't use LOG_* macros yet since logging isn't initialized
         fprintf(stderr, "Warning: Failed to initialize logging system\n");
     }
 
@@ -2765,7 +2767,7 @@ int main(int argc, char *argv[]) {
     // Generate unique session ID for this conversation
     char *session_id = generate_session_id();
     if (!session_id) {
-        fprintf(stderr, "Warning: Failed to generate session ID\n");
+        LOG_WARN("Failed to generate session ID");
     }
     LOG_INFO("Session ID: %s", session_id ? session_id : "none");
 
@@ -2779,7 +2781,7 @@ int main(int argc, char *argv[]) {
     state.persistence_db = persistence_db;
 
     if (!state.working_dir) {
-        fprintf(stderr, "Failed to get current working directory\n");
+        LOG_ERROR("Failed to get current working directory");
         free(state.api_key);
         free(state.api_url);
         free(state.model);
