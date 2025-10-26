@@ -6,6 +6,7 @@
 #include "lineedit.h"
 #define COLORSCHEME_EXTERN
 #include "colorscheme.h"
+#include "indicators.h"
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
@@ -16,6 +17,9 @@
 
 #define INITIAL_CONV_CAPACITY 1000
 #define INPUT_BUFFER_SIZE 8192
+
+// Global spinner for TUI status updates
+static Spinner *g_tui_spinner = NULL;
 
 // Helper: Duplicate a string
 static char* str_dup(const char *str) {
@@ -148,6 +152,12 @@ int tui_init(TUIState *tui) {
 void tui_cleanup(TUIState *tui) {
     if (!tui) return;
 
+    // Stop any running spinner
+    if (g_tui_spinner) {
+        spinner_stop(g_tui_spinner, NULL, 1);
+        g_tui_spinner = NULL;
+    }
+
     tui->is_initialized = 0;
 
     // Print a newline to ensure clean exit
@@ -158,11 +168,17 @@ void tui_cleanup(TUIState *tui) {
 void tui_add_conversation_line(TUIState *tui, const char *prefix, const char *text, TUIColorPair color_pair) {
     if (!tui || !tui->is_initialized) return;
 
+    // Stop any running spinner before printing conversation lines
+    if (g_tui_spinner) {
+        spinner_stop(g_tui_spinner, NULL, 1);
+        g_tui_spinner = NULL;
+    }
+
     // Get color from colorscheme or fall back to defaults
     const char *color_start = "";
     const char *color_end = "\033[0m";
     char color_code[32];
-    
+
     // Try to get color from colorscheme first
     switch (color_pair) {
         case COLOR_PAIR_USER:
@@ -218,21 +234,32 @@ void tui_add_conversation_line(TUIState *tui, const char *prefix, const char *te
 void tui_update_status(TUIState *tui, const char *status_text) {
     if (!tui || !tui->is_initialized) return;
 
-    // Get status color from colorscheme or use default cyan
-    char color_code[32];
-    const char *color_start;
-    if (get_colorscheme_color(COLORSCHEME_STATUS, color_code, sizeof(color_code)) == 0) {
-        color_start = color_code;
-    } else {
-        color_start = "\033[36m";  // Cyan fallback
+    // If status text is empty, stop any running spinner and clear the line
+    if (!status_text || strlen(status_text) == 0) {
+        if (g_tui_spinner) {
+            spinner_stop(g_tui_spinner, NULL, 1);  // Clear without message
+            g_tui_spinner = NULL;
+        }
+        return;
     }
 
-    printf("%s[Status] %s\033[0m\n", color_start, status_text);
-    fflush(stdout);
+    // If we have a running spinner, update its message
+    if (g_tui_spinner) {
+        spinner_update(g_tui_spinner, status_text);
+    } else {
+        // Start a new spinner with the status message
+        g_tui_spinner = spinner_start(status_text, SPINNER_CYAN);
+    }
 }
 
 char* tui_read_input(TUIState *tui, const char *prompt) {
     if (!tui || !tui->is_initialized) return NULL;
+
+    // Stop any running spinner before showing input prompt
+    if (g_tui_spinner) {
+        spinner_stop(g_tui_spinner, NULL, 1);
+        g_tui_spinner = NULL;
+    }
 
     // Use lineedit for input handling - simple and works with terminal scrolling
     LineEditor editor;
