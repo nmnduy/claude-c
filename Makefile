@@ -30,6 +30,7 @@ TARGET = $(BUILD_DIR)/claude
 TEST_EDIT_TARGET = $(BUILD_DIR)/test_edit
 TEST_INPUT_TARGET = $(BUILD_DIR)/test_input
 TEST_READ_TARGET = $(BUILD_DIR)/test_read
+TEST_LINEEDIT_TARGET = $(BUILD_DIR)/test_lineedit
 QUERY_TOOL = $(BUILD_DIR)/query_logs
 SRC = src/claude.c
 LOGGER_SRC = src/logger.c
@@ -49,9 +50,10 @@ TUI_OBJ = $(BUILD_DIR)/tui.o
 TEST_EDIT_SRC = tests/test_edit.c
 TEST_INPUT_SRC = tests/test_input.c
 TEST_READ_SRC = tests/test_read.c
+TEST_LINEEDIT_SRC = tests/test_lineedit.c
 QUERY_TOOL_SRC = tools/query_logs.c
 
-.PHONY: all clean check-deps test test-edit test-input test-read query-tool debug analyze sanitize-ub sanitize-all sanitize-leak valgrind memscan
+.PHONY: all clean check-deps test test-edit test-input test-read test-lineedit query-tool debug analyze sanitize-ub sanitize-all sanitize-leak valgrind memscan
 
 all: check-deps $(TARGET)
 
@@ -59,7 +61,7 @@ debug: check-deps $(BUILD_DIR)/claude-debug
 
 query-tool: check-deps $(QUERY_TOOL)
 
-test: test-edit test-input test-read
+test: test-edit test-input test-read test-lineedit
 
 test-edit: check-deps $(TEST_EDIT_TARGET)
 	@echo ""
@@ -78,6 +80,12 @@ test-read: check-deps $(TEST_READ_TARGET)
 	@echo "Running Read tool tests..."
 	@echo ""
 	@./$(TEST_READ_TARGET)
+
+test-lineedit: check-deps $(TEST_LINEEDIT_TARGET)
+	@echo ""
+	@echo "Running Line Editor wrapping tests..."
+	@echo ""
+	@./$(TEST_LINEEDIT_TARGET)
 
 $(TARGET): $(SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(LINEEDIT_OBJ) $(COMMANDS_OBJ) $(COMPLETION_OBJ) $(TUI_OBJ)
 	@mkdir -p $(BUILD_DIR)
@@ -286,6 +294,19 @@ $(TEST_READ_TARGET): $(SRC) $(TEST_READ_SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(
 	@echo "✓ Read tool test build successful!"
 	@echo ""
 
+# Test target for Line Editor - tests wrapping calculation logic
+$(TEST_LINEEDIT_TARGET): $(LINEEDIT_SRC) $(TEST_LINEEDIT_SRC) $(LOGGER_OBJ)
+	@mkdir -p $(BUILD_DIR)
+	@echo "Compiling lineedit.c for testing..."
+	@$(CC) $(CFLAGS) -DTEST_BUILD -c -o $(BUILD_DIR)/lineedit_test.o $(LINEEDIT_SRC)
+	@echo "Compiling Line Editor test suite..."
+	@$(CC) $(CFLAGS) -c -o $(BUILD_DIR)/test_lineedit.o $(TEST_LINEEDIT_SRC)
+	@echo "Linking test executable..."
+	@$(CC) -o $(TEST_LINEEDIT_TARGET) $(BUILD_DIR)/lineedit_test.o $(BUILD_DIR)/test_lineedit.o $(LOGGER_OBJ) $(LDFLAGS)
+	@echo ""
+	@echo "✓ Line Editor test build successful!"
+	@echo ""
+
 clean:
 	rm -rf $(BUILD_DIR)
 
@@ -307,6 +328,7 @@ help:
 	@echo "  make test-edit - Build and run Edit tool tests only"
 	@echo "  make test-input - Build and run Input handler tests only"
 	@echo "  make test-read - Build and run Read tool tests only"
+	@echo "  make test-lineedit - Build and run Line Editor wrapping tests only"
 	@echo "  make query-tool - Build the API call log query utility"
 	@echo "  make clean     - Remove built files"
 	@echo "  make install   - Install to \$$HOME/.local/bin"
