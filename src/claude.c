@@ -2412,6 +2412,14 @@ static int read_line_advanced(const char *prompt, char *buffer, size_t buffer_si
 }
 
 static void interactive_mode(ConversationState *state) {
+    // Display startup banner BEFORE TUI init (so it's visible)
+    printf("\033[1;34m");  // Bold blue
+    printf(" ▐▛███▜▌   claude-c v%s\n", VERSION);
+    printf("▝▜█████▛▘  %s\n", state->model);
+    printf("  ▘▘ ▝▝    %s\n", state->working_dir);
+    printf("\033[0m\n");  // Reset color and add blank line
+    fflush(stdout);
+
     // Initialize TUI
     TUIState tui = {0};
     if (tui_init(&tui) != 0) {
@@ -2421,9 +2429,6 @@ static void interactive_mode(ConversationState *state) {
 
     // Initialize command system
     commands_init();
-
-    // Display startup banner with blue mascot
-    tui_show_startup_banner(&tui, VERSION, state->model, state->working_dir);
 
     // Build initial status line
     char status_msg[256];

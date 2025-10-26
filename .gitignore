@@ -1,6 +1,8 @@
 # Compiled binary
 claude
 
+tags
+
 # Object files
 *.o
 *.obj
