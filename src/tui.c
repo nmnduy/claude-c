@@ -137,7 +137,6 @@ int tui_init(TUIState *tui) {
     tui->conv_lines_count = 0;
     tui->conv_lines_capacity = 0;
     tui->conv_scroll_offset = 0;
-    tui->has_status_line = 0;
 
     tui->is_initialized = 1;
 
@@ -190,34 +189,14 @@ void tui_add_conversation_line(TUIState *tui, const char *prefix, const char *te
         printf("%s%s%s\n", color_start, text, color_end);
     }
     fflush(stdout);
-
-    // Reset status line flag since we've printed new content
-    tui->has_status_line = 0;
 }
 
 void tui_update_status(TUIState *tui, const char *status_text) {
     if (!tui || !tui->is_initialized) return;
 
-    // If there's a previous status line, clear it
-    if (tui->has_status_line) {
-        // Move cursor up one line and clear it
-        printf("\033[A\033[2K\r");
-    }
-
-    // Check if this is a "completed" status to add a checkmark
-    const char *checkmark = "";
-    if (strstr(status_text, "completed") != NULL ||
-        strstr(status_text, "Ready") != NULL ||
-        strstr(status_text, "done") != NULL) {
-        checkmark = " ✓";
-    }
-
-    // Print status to stdout with cyan color
-    printf("\033[36m[Status] %s%s\033[0m\n", status_text, checkmark);
+    // Just print status to stdout with cyan color
+    printf("\033[36m[Status] %s\033[0m\n", status_text);
     fflush(stdout);
-
-    // Mark that we have a status line displayed
-    tui->has_status_line = 1;
 }
 
 char* tui_read_input(TUIState *tui, const char *prompt) {
@@ -236,9 +215,6 @@ char* tui_read_input(TUIState *tui, const char *prompt) {
 
     lineedit_free(&editor);
 
-    // Reset status line flag since user input has been displayed
-    tui->has_status_line = 0;
-
     return input;
 }
 
@@ -254,9 +230,6 @@ void tui_clear_conversation(TUIState *tui) {
     // Just print a message - conversation is in terminal scrollback
     printf("\033[36m[System] Conversation history cleared (kept in terminal scrollback)\033[0m\n");
     fflush(stdout);
-
-    // Reset status line flag
-    tui->has_status_line = 0;
 }
 
 void tui_handle_resize(TUIState *tui) {
@@ -280,7 +253,4 @@ void tui_show_startup_banner(TUIState *tui, const char *version, const char *mod
     printf("  ▘▘ ▝▝    %s\n", working_dir);
     printf("\033[0m\n");  // Reset color and add blank line
     fflush(stdout);
-
-    // Reset status line flag
-    tui->has_status_line = 0;
 }
