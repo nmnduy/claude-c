@@ -4,6 +4,7 @@
 
 #include "commands.h"
 #include "claude_internal.h"
+#include "logger.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -163,7 +164,7 @@ void commands_register(const Command *cmd) {
     if (command_count < MAX_COMMANDS) {
         command_registry[command_count++] = cmd;
     } else {
-        fprintf(stderr, "Warning: Command registry full, cannot register '%s'\n", cmd->name);
+        LOG_WARN("Command registry full, cannot register '%s'", cmd->name);
     }
 }
 

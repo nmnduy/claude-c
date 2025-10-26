@@ -2549,7 +2549,6 @@ static void interactive_mode(ConversationState *state) {
     TUIState tui = {0};
     if (tui_init(&tui) != 0) {
         LOG_ERROR("Failed to initialize TUI");
-        fprintf(stderr, "Failed to initialize TUI. Exiting.\n");
         return;
     }
 
@@ -2705,15 +2704,14 @@ int main(int argc, char *argv[]) {
 
     // Check that no extra arguments were provided
     if (argc > 1) {
-        fprintf(stderr, "Error: Unexpected arguments\n");
-        fprintf(stderr, "Usage: %s [-h|--help]\n", argv[0]);
+        LOG_ERROR("Unexpected arguments provided");
         return 1;
     }
 
     // Check for API key
     const char *api_key = getenv("OPENAI_API_KEY");
     if (!api_key) {
-        fprintf(stderr, "Error: OPENAI_API_KEY environment variable not set\n");
+        LOG_ERROR("OPENAI_API_KEY environment variable not set");
         return 1;
     }
 
@@ -2733,8 +2731,7 @@ int main(int argc, char *argv[]) {
 
     // Initialize logging system
     if (log_init() != 0) {
-        // Can't use LOG_* macros yet since logging isn't initialized
-        fprintf(stderr, "Warning: Failed to initialize logging system\n");
+        LOG_ERROR("Warning: Failed to initialize logging system");
     }
 
     // Configure log rotation: 10MB max size, keep 5 backups

@@ -13,6 +13,7 @@
 #include <unistd.h>
 #include "persistence.h"
 #include "migrations.h"
+#include "logger.h"
 
 // SQL schema for the api_calls table
 static const char *SCHEMA_SQL =
@@ -110,7 +111,7 @@ static int mkdir_recursive(const char *path) {
 PersistenceDB* persistence_init(const char *db_path) {
     PersistenceDB *pdb = calloc(1, sizeof(PersistenceDB));
     if (!pdb) {
-        fprintf(stderr, "Failed to allocate PersistenceDB\n");
+        LOG_ERROR("Failed to allocate PersistenceDB");
         return NULL;
     }
 
@@ -122,7 +123,7 @@ PersistenceDB* persistence_init(const char *db_path) {
     }
 
     if (!pdb->db_path) {
-        fprintf(stderr, "Failed to determine database path\n");
+        LOG_ERROR("Failed to determine database path");
         free(pdb);
         return NULL;
     }
@@ -134,8 +135,7 @@ PersistenceDB* persistence_init(const char *db_path) {
     if (last_slash) {
         *last_slash = '\0';
         if (mkdir_recursive(dir_path) != 0) {
-            fprintf(stderr, "Warning: Failed to create directory %s: %s\n",
-                    dir_path, strerror(errno));
+            LOG_WARN("Failed to create directory %s: %s", dir_path, strerror(errno));
             // Continue anyway - maybe the directory exists or the path is valid
         }
     }
@@ -143,8 +143,7 @@ PersistenceDB* persistence_init(const char *db_path) {
     // Open/create database
     int rc = sqlite3_open(pdb->db_path, &pdb->db);
     if (rc != SQLITE_OK) {
-        fprintf(stderr, "Failed to open database %s: %s\n",
-                pdb->db_path, sqlite3_errmsg(pdb->db));
+        LOG_ERROR("Failed to open database %s: %s", pdb->db_path, sqlite3_errmsg(pdb->db));
         free(pdb->db_path);
         free(pdb);
         return NULL;
@@ -154,7 +153,7 @@ PersistenceDB* persistence_init(const char *db_path) {
     char *err_msg = NULL;
     rc = sqlite3_exec(pdb->db, SCHEMA_SQL, NULL, NULL, &err_msg);
     if (rc != SQLITE_OK) {
-        fprintf(stderr, "Failed to create schema: %s\n", err_msg);
+        LOG_ERROR("Failed to create schema: %s", err_msg);
         sqlite3_free(err_msg);
         sqlite3_close(pdb->db);
         free(pdb->db_path);
@@ -165,14 +164,14 @@ PersistenceDB* persistence_init(const char *db_path) {
     // Create index
     rc = sqlite3_exec(pdb->db, INDEX_SQL, NULL, NULL, &err_msg);
     if (rc != SQLITE_OK) {
-        fprintf(stderr, "Warning: Failed to create index: %s\n", err_msg);
+        LOG_WARN("Failed to create index: %s", err_msg);
         sqlite3_free(err_msg);
         // Non-fatal, continue
     }
 
     // Apply any pending migrations
     if (migrations_apply(pdb->db) != 0) {
-        fprintf(stderr, "Failed to apply migrations\n");
+        LOG_ERROR("Failed to apply migrations");
         sqlite3_close(pdb->db);
         free(pdb->db_path);
         free(pdb);
@@ -209,14 +208,14 @@ int persistence_log_api_call(
     int tool_count
 ) {
     if (!db || !db->db || !api_base_url || !request_json || !model || !status) {
-        fprintf(stderr, "Invalid parameters to persistence_log_api_call\n");
+        LOG_ERROR("Invalid parameters to persistence_log_api_call");
         return -1;
     }
 
     // Get timestamp
     char *timestamp = get_iso_timestamp();
     if (!timestamp) {
-        fprintf(stderr, "Failed to get timestamp\n");
+        LOG_ERROR("Failed to get timestamp");
         return -1;
     }
 
@@ -230,7 +229,7 @@ int persistence_log_api_call(
     sqlite3_stmt *stmt;
     int rc = sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL);
     if (rc != SQLITE_OK) {
-        fprintf(stderr, "Failed to prepare statement: %s\n", sqlite3_errmsg(db->db));
+        LOG_ERROR("Failed to prepare statement: %s", sqlite3_errmsg(db->db));
         free(timestamp);
         return -1;
     }
@@ -271,7 +270,7 @@ int persistence_log_api_call(
     // Execute
     rc = sqlite3_step(stmt);
     if (rc != SQLITE_DONE) {
-        fprintf(stderr, "Failed to insert record: %s\n", sqlite3_errmsg(db->db));
+        LOG_ERROR("Failed to insert record: %s", sqlite3_errmsg(db->db));
         sqlite3_finalize(stmt);
         free(timestamp);
         return -1;
