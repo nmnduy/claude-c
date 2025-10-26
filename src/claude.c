@@ -2018,11 +2018,17 @@ static void process_response(ConversationState *state, cJSON *response, TUIState
 
     // Display assistant's text content if present
     cJSON *content = cJSON_GetObjectItem(message, "content");
-    if (content && cJSON_IsString(content) && content->valuestring && strlen(content->valuestring) > 0) {
-        if (tui) {
-            tui_add_conversation_line(tui, "[Assistant]", content->valuestring, COLOR_PAIR_ASSISTANT);
-        } else {
-            print_assistant(content->valuestring);
+    if (content && cJSON_IsString(content) && content->valuestring) {
+        // Skip whitespace-only content
+        const char *p = content->valuestring;
+        while (*p && isspace((unsigned char)*p)) p++;
+
+        if (*p != '\0') {  // Has non-whitespace content
+            if (tui) {
+                tui_add_conversation_line(tui, "[Assistant]", content->valuestring, COLOR_PAIR_ASSISTANT);
+            } else {
+                print_assistant(content->valuestring);
+            }
         }
     }
 
