@@ -2422,28 +2422,21 @@ static void interactive_mode(ConversationState *state) {
     // Initialize command system
     commands_init();
 
+    // Display startup banner with blue mascot
+    tui_show_startup_banner(&tui, VERSION, state->model, state->working_dir);
+
     // Build initial status line
     char status_msg[256];
     snprintf(status_msg, sizeof(status_msg), "Model: %s | Session: %s | Commands: /exit /quit /clear /add-dir /help | Ctrl+D to exit",
              state->model, state->session_id ? state->session_id : "none");
     tui_update_status(&tui, status_msg);
 
-    // Add welcome message
-    char welcome[512];
-    snprintf(welcome, sizeof(welcome), "claude-c v%s", VERSION);
-    tui_add_conversation_line(&tui, "[System]", welcome, COLOR_PAIR_STATUS);
-    snprintf(welcome, sizeof(welcome), "Working directory: %s", state->working_dir);
-    tui_add_conversation_line(&tui, "[System]", welcome, COLOR_PAIR_STATUS);
-
     int running = 1;
 
     while (running) {
-        // Update status to show ready
-        tui_update_status(&tui, "Ready - Type your message...");
-
         char *input = tui_read_input(&tui, ">");
         if (!input) {
-            // EOF (Ctrl+D) or resize
+            // EOF (Ctrl+D)
             break;
         }
 

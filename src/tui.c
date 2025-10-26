@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include <locale.h>
 
 #define INITIAL_CONV_CAPACITY 1000
 #define INPUT_BUFFER_SIZE 8192
@@ -105,6 +106,9 @@ static char** word_wrap(const char *text, int width, int *line_count) {
 
 int tui_init(TUIState *tui) {
     if (!tui) return -1;
+
+    // Set locale for UTF-8 support
+    setlocale(LC_ALL, "");
 
     // Initialize ncurses
     initscr();
@@ -241,22 +245,32 @@ void tui_add_conversation_line(TUIState *tui, const char *prefix, const char *te
 
     // Draw lines
     for (int i = start_line; i < end_line; i++) {
+        const char *line = tui->conv_lines[i];
+
+        // Special handling for banner lines
+        if (strncmp(line, "[BANNER]", 8) == 0) {
+            wattron(tui->conv_win, COLOR_PAIR(COLOR_PAIR_ASSISTANT) | A_BOLD);
+            mvwprintw(tui->conv_win, i - start_line, 0, "%s", line + 8);
+            wattroff(tui->conv_win, COLOR_PAIR(COLOR_PAIR_ASSISTANT) | A_BOLD);
+            continue;
+        }
+
         // Determine color based on line content
         TUIColorPair line_color = COLOR_PAIR_DEFAULT;
-        if (strstr(tui->conv_lines[i], "[User]")) {
+        if (strstr(line, "[User]")) {
             line_color = COLOR_PAIR_USER;
-        } else if (strstr(tui->conv_lines[i], "[Assistant]")) {
+        } else if (strstr(line, "[Assistant]")) {
             line_color = COLOR_PAIR_ASSISTANT;
-        } else if (strstr(tui->conv_lines[i], "[Tool:")) {
+        } else if (strstr(line, "[Tool:")) {
             line_color = COLOR_PAIR_TOOL;
-        } else if (strstr(tui->conv_lines[i], "[Error]")) {
+        } else if (strstr(line, "[Error]")) {
             line_color = COLOR_PAIR_ERROR;
-        } else if (strstr(tui->conv_lines[i], "[Status]")) {
+        } else if (strstr(line, "[Status]")) {
             line_color = COLOR_PAIR_STATUS;
         }
 
         wattron(tui->conv_win, COLOR_PAIR(line_color));
-        mvwprintw(tui->conv_win, i - start_line, 0, "%s", tui->conv_lines[i]);
+        mvwprintw(tui->conv_win, i - start_line, 0, "%s", line);
         wattroff(tui->conv_win, COLOR_PAIR(line_color));
     }
 
@@ -316,10 +330,19 @@ char* tui_read_input(TUIState *tui, const char *prompt) {
 
         switch (ch) {
             case KEY_RESIZE:
-                // Handle terminal resize
+                // Handle terminal resize and continue reading input
                 tui_handle_resize(tui);
-                free(buffer);
-                return NULL;
+
+                // Redraw input area with current buffer content
+                werase(tui->input_win);
+                box(tui->input_win, 0, 0);
+                wattron(tui->input_win, COLOR_PAIR(COLOR_PAIR_PROMPT));
+                mvwprintw(tui->input_win, base_y, 2, "%s", prompt);
+                wattroff(tui->input_win, COLOR_PAIR(COLOR_PAIR_PROMPT));
+                mvwprintw(tui->input_win, base_y, base_x, "%s", buffer);
+                wmove(tui->input_win, base_y, base_x + cursor_pos);
+                wrefresh(tui->input_win);
+                break;
 
             case 4: // Ctrl+D (EOF)
                 free(buffer);
@@ -475,6 +498,85 @@ void tui_handle_resize(TUIState *tui) {
     scrollok(tui->conv_win, TRUE);
     idlok(tui->conv_win, TRUE);
 
-    // Redraw everything
+    // Redraw conversation content from buffer
+    werase(tui->conv_win);
+    int start_line = tui->conv_lines_count - tui->conv_height + tui->conv_scroll_offset;
+    if (start_line < 0) start_line = 0;
+
+    int end_line = start_line + tui->conv_height;
+    if (end_line > tui->conv_lines_count) end_line = tui->conv_lines_count;
+
+    for (int i = start_line; i < end_line; i++) {
+        const char *line = tui->conv_lines[i];
+
+        // Special handling for banner lines
+        if (strncmp(line, "[BANNER]", 8) == 0) {
+            wattron(tui->conv_win, COLOR_PAIR(COLOR_PAIR_ASSISTANT) | A_BOLD);
+            mvwprintw(tui->conv_win, i - start_line, 0, "%s", line + 8);
+            wattroff(tui->conv_win, COLOR_PAIR(COLOR_PAIR_ASSISTANT) | A_BOLD);
+            continue;
+        }
+
+        // Determine color based on line content
+        TUIColorPair line_color = COLOR_PAIR_DEFAULT;
+        if (strstr(line, "[User]")) {
+            line_color = COLOR_PAIR_USER;
+        } else if (strstr(line, "[Assistant]")) {
+            line_color = COLOR_PAIR_ASSISTANT;
+        } else if (strstr(line, "[Tool:")) {
+            line_color = COLOR_PAIR_TOOL;
+        } else if (strstr(line, "[Error]")) {
+            line_color = COLOR_PAIR_ERROR;
+        } else if (strstr(line, "[Status]")) {
+            line_color = COLOR_PAIR_STATUS;
+        }
+
+        wattron(tui->conv_win, COLOR_PAIR(line_color));
+        mvwprintw(tui->conv_win, i - start_line, 0, "%s", line);
+        wattroff(tui->conv_win, COLOR_PAIR(line_color));
+    }
+
+    // Refresh all windows
     tui_refresh(tui);
+}
+
+void tui_show_startup_banner(TUIState *tui, const char *version, const char *model, const char *working_dir) {
+    if (!tui || !tui->is_initialized) return;
+
+    // Use special marker for banner lines that the drawing code will recognize
+    char line1[512], line2[512], line3[512];
+
+    // Try Unicode first (will work with proper locale/UTF-8 terminal)
+    // Fallback: If your terminal doesn't support these characters,
+    // you can change to simple ASCII art like:
+    //   "  ___"
+    //   " /   \\"
+    //   " \\___/"
+    snprintf(line1, sizeof(line1), "[BANNER] ▐▛███▜▌   claude-c v%s", version);
+    snprintf(line2, sizeof(line2), "[BANNER]▝▜█████▛▘  %s", model);
+    snprintf(line3, sizeof(line3), "[BANNER]  ▘▘ ▝▝    %s", working_dir);
+
+    // Add lines to conversation buffer
+    if (tui->conv_lines_count + 4 < tui->conv_lines_capacity) {
+        tui->conv_lines[tui->conv_lines_count++] = str_dup(line1);
+        tui->conv_lines[tui->conv_lines_count++] = str_dup(line2);
+        tui->conv_lines[tui->conv_lines_count++] = str_dup(line3);
+        tui->conv_lines[tui->conv_lines_count++] = str_dup("");  // Blank line
+    }
+
+    // Redraw conversation window with proper colors
+    werase(tui->conv_win);
+    for (int i = 0; i < tui->conv_lines_count && i < tui->conv_height; i++) {
+        const char *line = tui->conv_lines[i];
+
+        // Check for banner marker
+        if (strncmp(line, "[BANNER]", 8) == 0) {
+            wattron(tui->conv_win, COLOR_PAIR(COLOR_PAIR_ASSISTANT) | A_BOLD);
+            mvwprintw(tui->conv_win, i, 0, "%s", line + 8);  // Skip the [BANNER] prefix
+            wattroff(tui->conv_win, COLOR_PAIR(COLOR_PAIR_ASSISTANT) | A_BOLD);
+        } else {
+            mvwprintw(tui->conv_win, i, 0, "%s", line);
+        }
+    }
+    wrefresh(tui->conv_win);
 }
