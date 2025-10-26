@@ -70,6 +70,9 @@ static void persistence_log_api_call(
 #include "lineedit.h"
 #include "commands.h"
 
+// TUI module
+#include "tui.h"
+
 #ifdef TEST_BUILD
 #define main claude_main
 #endif
@@ -1896,25 +1899,37 @@ void clear_conversation(ConversationState *state) {
     state->count = system_msg_count;
 }
 
-static void process_response(ConversationState *state, cJSON *response) {
+static void process_response(ConversationState *state, cJSON *response, TUIState *tui) {
     // OpenAI response format
     cJSON *choices = cJSON_GetObjectItem(response, "choices");
     if (!choices || !cJSON_IsArray(choices) || cJSON_GetArraySize(choices) == 0) {
-        print_error("Invalid response format: no choices");
+        if (tui) {
+            tui_add_conversation_line(tui, "[Error]", "Invalid response format: no choices", COLOR_PAIR_ERROR);
+        } else {
+            print_error("Invalid response format: no choices");
+        }
         return;
     }
 
     cJSON *choice = cJSON_GetArrayItem(choices, 0);
     cJSON *message = cJSON_GetObjectItem(choice, "message");
     if (!message) {
-        print_error("Invalid response format: no message");
+        if (tui) {
+            tui_add_conversation_line(tui, "[Error]", "Invalid response format: no message", COLOR_PAIR_ERROR);
+        } else {
+            print_error("Invalid response format: no message");
+        }
         return;
     }
 
     // Display assistant's text content if present
     cJSON *content = cJSON_GetObjectItem(message, "content");
     if (content && cJSON_IsString(content) && content->valuestring) {
-        print_assistant(content->valuestring);
+        if (tui) {
+            tui_add_conversation_line(tui, "[Assistant]", content->valuestring, COLOR_PAIR_ASSISTANT);
+        } else {
+            print_assistant(content->valuestring);
+        }
     }
 
     // Add to conversation history
@@ -1928,7 +1943,9 @@ static void process_response(ConversationState *state, cJSON *response) {
     }
 
     if (tool_count > 0) {
-        printf("\n");
+        if (!tui) {
+            printf("\n");
+        }
 
         // Parallel tool execution
         ContentBlock *results = calloc(tool_count, sizeof(ContentBlock));
@@ -1947,7 +1964,13 @@ static void process_response(ConversationState *state, cJSON *response) {
             cJSON *name = cJSON_GetObjectItem(function, "name");
             cJSON *arguments = cJSON_GetObjectItem(function, "arguments");
 
-            print_tool(name->valuestring);
+            if (tui) {
+                char tool_msg[128];
+                snprintf(tool_msg, sizeof(tool_msg), "%s", name->valuestring);
+                tui_add_conversation_line(tui, "[Tool:", tool_msg, COLOR_PAIR_TOOL);
+            } else {
+                print_tool(name->valuestring);
+            }
 
             // Prepare thread arguments
             cJSON *input = NULL;
@@ -1967,29 +1990,50 @@ static void process_response(ConversationState *state, cJSON *response) {
             thread_count++;
         }
 
-        // Show spinner while waiting for tools to complete
-        char spinner_msg[128];
-        snprintf(spinner_msg, sizeof(spinner_msg), "Running %d tool%s...",
-                 thread_count, thread_count > 1 ? "s" : "");
-        Spinner *tool_spinner = spinner_start(spinner_msg, SPINNER_YELLOW);
+        // Show spinner or status while waiting for tools to complete
+        Spinner *tool_spinner = NULL;
+        if (!tui) {
+            char spinner_msg[128];
+            snprintf(spinner_msg, sizeof(spinner_msg), "Running %d tool%s...",
+                     thread_count, thread_count > 1 ? "s" : "");
+            tool_spinner = spinner_start(spinner_msg, SPINNER_YELLOW);
+        } else {
+            char status_msg[128];
+            snprintf(status_msg, sizeof(status_msg), "Running %d tool%s...",
+                     thread_count, thread_count > 1 ? "s" : "");
+            tui_update_status(tui, status_msg);
+        }
 
         // Wait for all tool threads to complete
         for (int i = 0; i < thread_count; i++) {
             pthread_join(threads[i], NULL);
         }
-        
-        spinner_stop(tool_spinner, "Tools completed", 1);
+
+        if (!tui) {
+            spinner_stop(tool_spinner, "Tools completed", 1);
+        } else {
+            tui_update_status(tui, "Tools completed");
+        }
         free(threads);
         free(args);
 
         // Add tool results and continue conversation
         add_tool_results(state, results, tool_count);
 
-        Spinner *followup_spinner = spinner_start("Processing tool results...", SPINNER_CYAN);
+        Spinner *followup_spinner = NULL;
+        if (!tui) {
+            followup_spinner = spinner_start("Processing tool results...", SPINNER_CYAN);
+        } else {
+            tui_update_status(tui, "Processing tool results...");
+        }
         cJSON *next_response = call_api(state);
-        spinner_stop(followup_spinner, NULL, 1);
+        if (!tui) {
+            spinner_stop(followup_spinner, NULL, 1);
+        } else {
+            tui_update_status(tui, "Ready");
+        }
         if (next_response) {
-            process_response(state, next_response);
+            process_response(state, next_response, tui);
             cJSON_Delete(next_response);
         }
 
@@ -2368,32 +2412,38 @@ static int read_line_advanced(const char *prompt, char *buffer, size_t buffer_si
 }
 
 static void interactive_mode(ConversationState *state) {
+    // Initialize TUI
+    TUIState tui = {0};
+    if (tui_init(&tui) != 0) {
+        fprintf(stderr, "Failed to initialize TUI. Exiting.\n");
+        return;
+    }
+
     // Initialize command system
     commands_init();
 
-    // Initialize line editor
-    LineEditor editor;
-    lineedit_init(&editor, commands_tab_completer, state);  // NULL completer for now, state as context
+    // Build initial status line
+    char status_msg[256];
+    snprintf(status_msg, sizeof(status_msg), "Model: %s | Session: %s | Commands: /exit /quit /clear /add-dir /help | Ctrl+D to exit",
+             state->model, state->session_id ? state->session_id : "none");
+    tui_update_status(&tui, status_msg);
 
-    // Print intro with blue mascot featuring 'C'
-    printf("\n");
-    printf("             %sclaude-c%s v%s\n", ANSI_CYAN, ANSI_RESET, VERSION);
-    printf(" %s ▐▛███▜▌%s    %s\n", ANSI_BLUE, ANSI_RESET, state->model);
-    printf("%s▝▜███████▛▘%s  %s\n", ANSI_BLUE, ANSI_RESET, state->working_dir);
-    printf("%s  ▘▘   ▝▝%s\n", ANSI_BLUE, ANSI_RESET);
-    printf("             Commands: /exit /quit /clear /add-dir /help\n");
-    printf("             Keybindings: Alt+b/f/d (word), Ctrl+a/e (line), Ctrl+n (newline)\n");
-    printf("             Type Ctrl+D to exit\n\n");
+    // Add welcome message
+    char welcome[512];
+    snprintf(welcome, sizeof(welcome), "claude-c v%s", VERSION);
+    tui_add_conversation_line(&tui, "[System]", welcome, COLOR_PAIR_STATUS);
+    snprintf(welcome, sizeof(welcome), "Working directory: %s", state->working_dir);
+    tui_add_conversation_line(&tui, "[System]", welcome, COLOR_PAIR_STATUS);
 
     int running = 1;
 
     while (running) {
-        char prompt[64];
-        snprintf(prompt, sizeof(prompt), "%s> %s", ANSI_GREEN, ANSI_RESET);
+        // Update status to show ready
+        tui_update_status(&tui, "Ready - Type your message...");
 
-        char *input = lineedit_readline(&editor, prompt);
+        char *input = tui_read_input(&tui, ">");
         if (!input) {
-            // EOF (Ctrl+D)
+            // EOF (Ctrl+D) or resize
             break;
         }
 
@@ -2405,47 +2455,64 @@ static void interactive_mode(ConversationState *state) {
 
         // Handle commands
         if (input[0] == '/') {
-            int cmd_result = commands_execute(state, input);
+            // Show command in conversation
+            tui_add_conversation_line(&tui, "[User]", input, COLOR_PAIR_USER);
 
-            if (cmd_result == -2) {
-                // Exit command
+            if (strcmp(input, "/exit") == 0 || strcmp(input, "/quit") == 0) {
                 free(input);
                 break;
-            }
-
-            // After /add-dir command succeeds, update system message
-            // Check if we need to rebuild system prompt
-            if (strncmp(input, "/add-dir ", 9) == 0 && cmd_result == 0) {
-                char *new_system_prompt = build_system_prompt(state);
-                if (new_system_prompt) {
-                    // Update the first message (system message) with new context
-                    if (state->count > 0 && state->messages[0].role == MSG_SYSTEM) {
-                        free(state->messages[0].content[0].text);
-                        state->messages[0].content[0].text = new_system_prompt;
+            } else if (strcmp(input, "/clear") == 0) {
+                clear_conversation(state);
+                tui_clear_conversation(&tui);
+                tui_add_conversation_line(&tui, "[System]", "Conversation cleared", COLOR_PAIR_STATUS);
+                free(input);
+                continue;
+            } else if (strncmp(input, "/add-dir ", 9) == 0) {
+                const char *path = input + 9;
+                if (add_directory(state, path) == 0) {
+                    tui_add_conversation_line(&tui, "[System]", "Directory added successfully", COLOR_PAIR_STATUS);
+                    // Update system message
+                    char *new_system_prompt = build_system_prompt(state);
+                    if (new_system_prompt) {
+                        if (state->count > 0 && state->messages[0].role == MSG_SYSTEM) {
+                            free(state->messages[0].content[0].text);
+                            state->messages[0].content[0].text = new_system_prompt;
+                        }
                     }
+                } else {
+                    tui_add_conversation_line(&tui, "[Error]", "Failed to add directory", COLOR_PAIR_ERROR);
                 }
+                free(input);
+                continue;
+            } else if (strcmp(input, "/help") == 0) {
+                tui_add_conversation_line(&tui, "[System]", "Available commands:", COLOR_PAIR_STATUS);
+                tui_add_conversation_line(&tui, "[System]", "  /exit, /quit - Exit the program", COLOR_PAIR_STATUS);
+                tui_add_conversation_line(&tui, "[System]", "  /clear - Clear conversation history", COLOR_PAIR_STATUS);
+                tui_add_conversation_line(&tui, "[System]", "  /add-dir <path> - Add additional working directory", COLOR_PAIR_STATUS);
+                tui_add_conversation_line(&tui, "[System]", "  /help - Show this help message", COLOR_PAIR_STATUS);
+                free(input);
+                continue;
+            } else {
+                tui_add_conversation_line(&tui, "[Error]", "Unknown command. Type /help for available commands.", COLOR_PAIR_ERROR);
+                free(input);
+                continue;
             }
-
-            free(input);
-            continue;
         }
 
         // Display user message
-        print_user(input);
-        printf("\n");
+        tui_add_conversation_line(&tui, "[User]", input, COLOR_PAIR_USER);
 
         // Add to conversation
         add_user_message(state, input);
         free(input);
 
-        // Call API with spinner
-        Spinner *api_spinner = spinner_start("Waiting for API response...", SPINNER_CYAN);
+        // Call API with status update
+        tui_update_status(&tui, "Waiting for API response...");
         cJSON *response = call_api(state);
-        spinner_stop(api_spinner, NULL, 1);
+        tui_update_status(&tui, "Ready");
 
         if (!response) {
-            print_error("Failed to get response from API");
-            printf("\n");
+            tui_add_conversation_line(&tui, "[Error]", "Failed to get response from API", COLOR_PAIR_ERROR);
             continue;
         }
 
@@ -2454,18 +2521,17 @@ static void interactive_mode(ConversationState *state) {
         if (error) {
             cJSON *error_message = cJSON_GetObjectItem(error, "message");
             const char *error_msg = error_message ? error_message->valuestring : "Unknown error";
-            print_error(error_msg);
+            tui_add_conversation_line(&tui, "[Error]", error_msg, COLOR_PAIR_ERROR);
             cJSON_Delete(response);
-            printf("\n");
             continue;
         }
 
-        process_response(state, response);
+        process_response(state, response, &tui);
         cJSON_Delete(response);
-        printf("\n");
     }
 
-    lineedit_free(&editor);
+    // Cleanup TUI
+    tui_cleanup(&tui);
     printf("Goodbye!\n");
 }
 
