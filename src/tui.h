@@ -74,4 +74,10 @@ void tui_clear_conversation(TUIState *tui);
 // Handle window resize
 void tui_handle_resize(TUIState *tui);
 
+// Display startup banner with blue mascot
+// version: Version string (e.g., "0.0.1")
+// model: Model name
+// working_dir: Current working directory
+void tui_show_startup_banner(TUIState *tui, const char *version, const char *model, const char *working_dir);
+
 #endif // TUI_H
