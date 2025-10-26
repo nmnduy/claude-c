@@ -12,6 +12,7 @@
 #include <unistd.h>
 #include <termios.h>
 #include <ctype.h>
+#include <sys/ioctl.h>
 
 #define INITIAL_BUFFER_SIZE 4096
 
@@ -107,18 +108,95 @@ static int visible_strlen(const char *str) {
     return visible_len;
 }
 
+// Get terminal width
+static int get_terminal_width(void) {
+    struct winsize ws;
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_col > 0) {
+        return ws.ws_col;
+    }
+    return 80;  // Default fallback
+}
+
+// Calculate cursor position accounting for wrapping
+// Returns cursor line and column via output parameters
+// This function is extracted for testing
+#ifdef TEST_BUILD
+void
+#else
+static void
+#endif
+calculate_cursor_position(
+    const char *buffer,
+    int buffer_len,
+    int cursor_pos,
+    int prompt_len,
+    int term_width,
+    int *out_cursor_line,
+    int *out_cursor_col,
+    int *out_total_lines
+) {
+    int col = prompt_len;  // Start with prompt on first line
+    int line = 0;
+    int cursor_line = 0;
+    int cursor_col = 0;
+    int past_cursor = 0;
+
+    for (int i = 0; i < buffer_len; i++) {
+        // Check if we're at the cursor position
+        if (i == cursor_pos && !past_cursor) {
+            cursor_line = line;
+            cursor_col = col;
+            past_cursor = 1;
+        }
+
+        if (buffer[i] == '\n') {
+            // Manual newline: move to next line, reset column
+            line++;
+            col = 0;
+        } else {
+            // Regular character
+            col++;
+            // Check for automatic wrapping at terminal edge
+            // Wrap happens when we exceed the width, not when we reach it
+            if (col > term_width) {
+                line++;
+                col = 1;  // Already printed one char on new line
+            }
+        }
+    }
+
+    // Handle case where cursor is at end of buffer
+    if (cursor_pos >= buffer_len) {
+        cursor_line = line;
+        cursor_col = col;
+    }
+
+    *out_cursor_line = cursor_line;
+    *out_cursor_col = cursor_col;
+    *out_total_lines = line;
+}
+
 // Redraw the input line with cursor at correct position
-// Handles multiline input by displaying newlines as actual line breaks
+// Handles both manual newlines and automatic terminal wrapping
 static void redraw_input_line(const char *prompt, const char *buffer, int cursor_pos) {
-    static int previous_cursor_line = 0;  // Which line (0-indexed) the cursor was on
+    static int previous_lines_total = 0;  // Total lines occupied by previous input
+    static int previous_term_width = 0;   // Terminal width from previous draw
 
-    int buffer_len = strlen(buffer);
+    int buffer_len = (int)strlen(buffer);
     int prompt_len = visible_strlen(prompt);
+    int term_width = get_terminal_width();
 
-    // Move cursor up to start of previous input
-    // Cursor was left on previous_cursor_line, so move up by that amount
-    if (previous_cursor_line > 0) {
-        printf("\033[%dA", previous_cursor_line);
+    // Detect terminal resize - if width changed, we need to redraw from current position
+    // because the line wrapping has changed and our saved position is invalid
+    int terminal_resized = (previous_term_width != 0 && previous_term_width != term_width);
+
+    // Move cursor up to start of previous input (unless terminal was resized)
+    if (previous_lines_total > 0 && !terminal_resized) {
+        printf("\033[%dA", previous_lines_total);
+    } else if (terminal_resized) {
+        // Terminal was resized: can't rely on old position, so move to start of line
+        // and clear everything from here down before redrawing
+        printf("\r");
     }
 
     // Clear from here down and move to start of line
@@ -130,44 +208,28 @@ static void redraw_input_line(const char *prompt, const char *buffer, int cursor
         putchar(buffer[i]);  // Prints \n naturally
     }
 
-    // Calculate cursor position in the buffer (column within current line)
-    // Also track which line (0-indexed) the cursor is on
-    int col_position = 0;
-    int cursor_on_first_line = 1;
-    int cursor_line = 0;  // 0 = first line, 1 = second line, etc.
-    for (int i = 0; i < cursor_pos; i++) {
-        if (buffer[i] == '\n') {
-            col_position = 0;
-            cursor_on_first_line = 0;  // We've seen a newline, so not on first line
-            cursor_line++;
-        } else {
-            col_position++;
-        }
+    // Calculate cursor position accounting for wrapping
+    int cursor_line, cursor_col, total_lines;
+    calculate_cursor_position(buffer, buffer_len, cursor_pos, prompt_len, term_width,
+                             &cursor_line, &cursor_col, &total_lines);
+
+    // Reposition cursor: move up from bottom, then position horizontally
+    int lines_to_move_up = total_lines - cursor_line;
+    if (lines_to_move_up > 0) {
+        printf("\033[%dA", lines_to_move_up);
     }
 
-    // Calculate lines after cursor
-    int lines_after_cursor = 0;
-    for (int i = cursor_pos; i < buffer_len; i++) {
-        if (buffer[i] == '\n') lines_after_cursor++;
-    }
-
-    // Reposition cursor: move up to cursor's line, then position horizontally
-    if (lines_after_cursor > 0) {
-        printf("\033[%dA", lines_after_cursor);
-    }
-    printf("\r");  // Start of line
-
-    // Move right to cursor position
-    // Only add prompt length if cursor is on the first line
-    int target_col = (cursor_on_first_line ? prompt_len : 0) + col_position;
-    if (target_col > 0) {
-        printf("\033[%dC", target_col);
+    // Move to start of line, then to cursor column
+    printf("\r");
+    if (cursor_col > 0) {
+        printf("\033[%dC", cursor_col);
     }
 
     fflush(stdout);
 
-    // Store cursor line for next redraw
-    previous_cursor_line = cursor_line;
+    // Store state for next redraw
+    previous_lines_total = cursor_line;
+    previous_term_width = term_width;
 }
 
 // ============================================================================
