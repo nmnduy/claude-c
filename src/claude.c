@@ -89,10 +89,7 @@ static void persistence_log_api_call(
 // Output Helpers
 // ============================================================================
 
-static void print_user(const char *text) {
-    printf("%s[User]%s %s\n", ANSI_GREEN, ANSI_RESET, text);
-    fflush(stdout);
-}
+
 
 static void print_assistant(const char *text) {
     printf("%s[Assistant]%s %s\n", ANSI_BLUE, ANSI_RESET, text);
@@ -202,10 +199,7 @@ static void print_error(const char *text) {
     LOG_ERROR("%s", text);
 }
 
-static void print_status(const char *text) {
-    printf("%s[Status]%s %s\n", ANSI_CYAN, ANSI_RESET, text);
-    fflush(stdout);
-}
+
 
 // ============================================================================
 // Data Structures
@@ -226,14 +220,7 @@ typedef struct {
 // Global interrupt flag - set to 1 when ESC is pressed
 static volatile sig_atomic_t interrupt_requested = 0;
 
-// Check if interrupt was requested and clear the flag
-static int check_and_clear_interrupt(void) {
-    if (interrupt_requested) {
-        interrupt_requested = 0;
-        return 1;
-    }
-    return 0;
-}
+
 
 // Check for ESC key press without blocking
 // Returns: 1 if ESC was pressed, 0 otherwise
@@ -2521,370 +2508,19 @@ static void process_response(ConversationState *state, cJSON *response, TUIState
 // Advanced Input Handler (readline-like)
 // ============================================================================
 
-// Helper: Check if character is word boundary
-#ifdef TEST_BUILD
-int is_word_boundary(char c) {
-#else
-static int is_word_boundary(char c) {
-#endif
-    return !isalnum(c) && c != '_';
-}
 
-// Helper: Move cursor backward by one word
-#ifdef TEST_BUILD
-int move_backward_word(const char *buffer, int cursor_pos) {
-#else
-static int move_backward_word(const char *buffer, int cursor_pos) {
-#endif
-    if (cursor_pos <= 0) return 0;
 
-    int pos = cursor_pos - 1;
 
-    // Skip trailing whitespace/punctuation
-    while (pos > 0 && is_word_boundary(buffer[pos])) {
-        pos--;
-    }
 
-    // Skip the word characters
-    while (pos > 0 && !is_word_boundary(buffer[pos])) {
-        pos--;
-    }
 
-    // If we stopped at a boundary (not at start), move one forward
-    if (pos > 0 && is_word_boundary(buffer[pos])) {
-        pos++;
-    }
 
-    return pos;
-}
 
-// Helper: Move cursor forward by one word
-#ifdef TEST_BUILD
-int move_forward_word(const char *buffer, int cursor_pos, int buffer_len) {
-#else
-static int move_forward_word(const char *buffer, int cursor_pos, int buffer_len) {
-#endif
-    if (cursor_pos >= buffer_len) return buffer_len;
 
-    int pos = cursor_pos;
 
-    // Skip current word characters
-    while (pos < buffer_len && !is_word_boundary(buffer[pos])) {
-        pos++;
-    }
 
-    // Skip trailing whitespace/punctuation
-    while (pos < buffer_len && is_word_boundary(buffer[pos])) {
-        pos++;
-    }
 
-    return pos;
-}
-
-// Helper: Delete the next word
-#ifdef TEST_BUILD
-int delete_next_word(char *buffer, int *cursor_pos, int *buffer_len) {
-#else
-static int delete_next_word(char *buffer, int *cursor_pos, int *buffer_len) {
-#endif
-    if (*cursor_pos >= *buffer_len) return 0;
-
-    int start_pos = *cursor_pos;
-    int end_pos = move_forward_word(buffer, start_pos, *buffer_len);
-
-    if (end_pos > start_pos) {
-        // Delete characters from start_pos to end_pos
-        memmove(&buffer[start_pos], &buffer[end_pos], *buffer_len - end_pos + 1);
-        *buffer_len -= (end_pos - start_pos);
-        return end_pos - start_pos; // Return number of characters deleted
-    }
-
-    return 0;
-}
-
-// Helper: Calculate visible length of string (excluding ANSI escape sequences)
-#ifdef TEST_BUILD
-int visible_strlen(const char *str) {
-#else
-static int visible_strlen(const char *str) {
-#endif
-    int visible_len = 0;
-    int in_escape = 0;
-
-    for (int i = 0; str[i] != '\0'; i++) {
-        if (str[i] == '\033') {
-            // Start of ANSI escape sequence
-            in_escape = 1;
-        } else if (in_escape) {
-            // Check if this ends the escape sequence
-            if ((str[i] >= 'A' && str[i] <= 'Z') || (str[i] >= 'a' && str[i] <= 'z')) {
-                in_escape = 0;
-            }
-        } else {
-            // Regular visible character
-            visible_len++;
-        }
-    }
-
-    return visible_len;
-}
-
-// Helper: Redraw the input line with cursor at correct position
-// Handles multiline input by displaying newlines as actual line breaks
-static void redraw_input_line(const char *prompt, const char *buffer, int cursor_pos) {
-    static int previous_cursor_line = 0;  // Which line (0-indexed) the cursor was on
-
-    int buffer_len = strlen(buffer);
-    int prompt_len = visible_strlen(prompt);
-
-    // Move cursor up to start of previous input
-    // Cursor was left on previous_cursor_line, so move up by that amount
-    if (previous_cursor_line > 0) {
-        printf("\033[%dA", previous_cursor_line);
-    }
-
-    // Clear from here down and move to start of line
-    printf("\r\033[J");
-
-    // Print prompt and entire buffer once
-    printf("%s", prompt);
-    for (int i = 0; i < buffer_len; i++) {
-        putchar(buffer[i]);  // Prints \n naturally
-    }
-
-    // Calculate cursor position in the buffer (column within current line)
-    // Also track which line (0-indexed) the cursor is on
-    int col_position = 0;
-    int cursor_on_first_line = 1;
-    int cursor_line = 0;  // 0 = first line, 1 = second line, etc.
-    for (int i = 0; i < cursor_pos; i++) {
-        if (buffer[i] == '\n') {
-            col_position = 0;
-            cursor_on_first_line = 0;  // We've seen a newline, so not on first line
-            cursor_line++;
-        } else {
-            col_position++;
-        }
-    }
-
-    // Calculate lines after cursor
-    int lines_after_cursor = 0;
-    for (int i = cursor_pos; i < buffer_len; i++) {
-        if (buffer[i] == '\n') lines_after_cursor++;
-    }
-
-    // Reposition cursor: move up to cursor's line, then position horizontally
-    if (lines_after_cursor > 0) {
-        printf("\033[%dA", lines_after_cursor);
-    }
-    printf("\r");  // Start of line
-
-    // Move right to cursor position
-    // Only add prompt length if cursor is on the first line
-    int target_col = (cursor_on_first_line ? prompt_len : 0) + col_position;
-    if (target_col > 0) {
-        printf("\033[%dC", target_col);
-    }
-
-    fflush(stdout);
-
-    // Store cursor line for next redraw
-    previous_cursor_line = cursor_line;
-}
 
 // Advanced input handler with readline-like keybindings
-// Returns: 1 on success, 0 on EOF, -1 on error
-static int read_line_advanced(const char *prompt, char *buffer, size_t buffer_size) {
-    struct termios old_term, new_term;
-
-    // Save terminal settings
-    if (tcgetattr(STDIN_FILENO, &old_term) < 0) {
-        // Fall back to fgets if we can't set raw mode
-        printf("%s", prompt);
-        fflush(stdout);
-        if (fgets(buffer, buffer_size, stdin) == NULL) {
-            return 0;  // EOF
-        }
-        buffer[strcspn(buffer, "\n")] = 0;
-        return 1;
-    }
-
-    // Set up raw mode
-    new_term = old_term;
-    new_term.c_lflag &= ~(ICANON | ECHO);  // Disable canonical mode and echo
-    new_term.c_cc[VMIN] = 1;
-    new_term.c_cc[VTIME] = 0;
-    tcsetattr(STDIN_FILENO, TCSANOW, &new_term);
-
-    // Enable bracketed paste mode
-    printf("\033[?2004h");
-    fflush(stdout);
-
-    // Initialize buffer
-    memset(buffer, 0, buffer_size);
-    int len = 0;
-    int cursor_pos = 0;
-    int in_paste_mode = 0;  // Track if we're receiving pasted text
-
-    // Print initial prompt
-    printf("%s", prompt);
-    fflush(stdout);
-
-    int running = 1;
-    while (running) {
-        unsigned char c;
-        if (read(STDIN_FILENO, &c, 1) != 1) {
-            // Error or EOF
-            printf("\033[?2004l");  // Disable bracketed paste mode
-            fflush(stdout);
-            tcsetattr(STDIN_FILENO, TCSANOW, &old_term);
-            return 0;
-        }
-
-        if (c == 27) {  // ESC sequence
-            unsigned char seq[2];
-
-            // Read next two bytes
-            if (read(STDIN_FILENO, &seq[0], 1) != 1) {
-                continue;
-            }
-
-            if (seq[0] == 'b' || seq[0] == 'B') {
-                // Alt+b: backward word
-                cursor_pos = move_backward_word(buffer, cursor_pos);
-                redraw_input_line(prompt, buffer, cursor_pos);
-            } else if (seq[0] == 'f' || seq[0] == 'F') {
-                // Alt+f: forward word
-                cursor_pos = move_forward_word(buffer, cursor_pos, len);
-                redraw_input_line(prompt, buffer, cursor_pos);
-            } else if (seq[0] == 'd' || seq[0] == 'D') {
-                // Alt+d: delete next word
-                if (delete_next_word(buffer, &cursor_pos, &len)) {
-                    redraw_input_line(prompt, buffer, cursor_pos);
-                }
-            } else if (seq[0] == '[') {
-                // Arrow keys and other escape sequences
-                if (read(STDIN_FILENO, &seq[1], 1) != 1) {
-                    continue;
-                }
-
-                if (seq[1] == '2') {
-                    // Possible bracketed paste sequence: \e[200~ or \e[201~
-                    unsigned char paste_seq[3];
-                    if (read(STDIN_FILENO, paste_seq, 3) == 3) {
-                        if (paste_seq[0] == '0' && paste_seq[1] == '0' && paste_seq[2] == '~') {
-                            in_paste_mode = 1;  // Start of paste
-                        } else if (paste_seq[0] == '0' && paste_seq[1] == '1' && paste_seq[2] == '~') {
-                            in_paste_mode = 0;  // End of paste
-                        }
-                    }
-                } else if (seq[1] == 'D') {
-                    // Left arrow
-                    if (cursor_pos > 0) {
-                        cursor_pos--;
-                        printf("\033[D");  // Move cursor left
-                        fflush(stdout);
-                    }
-                } else if (seq[1] == 'C') {
-                    // Right arrow
-                    if (cursor_pos < len) {
-                        cursor_pos++;
-                        printf("\033[C");  // Move cursor right
-                        fflush(stdout);
-                    }
-                } else if (seq[1] == 'H') {
-                    // Home
-                    cursor_pos = 0;
-                    redraw_input_line(prompt, buffer, cursor_pos);
-                } else if (seq[1] == 'F') {
-                    // End
-                    cursor_pos = len;
-                    redraw_input_line(prompt, buffer, cursor_pos);
-                }
-            }
-        } else if (c == 1) {
-            // Ctrl+A: beginning of line
-            cursor_pos = 0;
-            redraw_input_line(prompt, buffer, cursor_pos);
-        } else if (c == 5) {
-            // Ctrl+E: end of line
-            cursor_pos = len;
-            redraw_input_line(prompt, buffer, cursor_pos);
-        } else if (c == 4) {
-            // Ctrl+D: EOF only (always exits, even if buffer has content)
-            printf("\n");
-            printf("\033[?2004l");  // Disable bracketed paste mode
-            fflush(stdout);
-            tcsetattr(STDIN_FILENO, TCSANOW, &old_term);
-            return 0;
-        } else if (c == 11) {
-            // Ctrl+K: kill to end of line
-            buffer[cursor_pos] = 0;
-            len = cursor_pos;
-            redraw_input_line(prompt, buffer, cursor_pos);
-        } else if (c == 21) {
-            // Ctrl+U: kill to beginning of line
-            if (cursor_pos > 0) {
-                memmove(buffer, &buffer[cursor_pos], len - cursor_pos + 1);
-                len -= cursor_pos;
-                cursor_pos = 0;
-                redraw_input_line(prompt, buffer, cursor_pos);
-            }
-        } else if (c == 127 || c == 8) {
-            // Backspace
-            if (cursor_pos > 0) {
-                memmove(&buffer[cursor_pos - 1], &buffer[cursor_pos], len - cursor_pos + 1);
-                len--;
-                cursor_pos--;
-                redraw_input_line(prompt, buffer, cursor_pos);
-            }
-        } else if (c == 14) {
-            // Ctrl+N (ASCII 14): Insert newline character
-            if (len < (int)buffer_size - 1) {
-                memmove(&buffer[cursor_pos + 1], &buffer[cursor_pos], len - cursor_pos + 1);
-                buffer[cursor_pos] = '\n';
-                len++;
-                cursor_pos++;
-                redraw_input_line(prompt, buffer, cursor_pos);
-            }
-        } else if (c == '\r' || c == '\n') {
-            // Enter: Submit, unless we're in paste mode
-            if (in_paste_mode) {
-                // In paste mode, insert newline as a regular character
-                if (len < (int)buffer_size - 1) {
-                    memmove(&buffer[cursor_pos + 1], &buffer[cursor_pos], len - cursor_pos + 1);
-                    buffer[cursor_pos] = '\n';
-                    len++;
-                    cursor_pos++;
-                    redraw_input_line(prompt, buffer, cursor_pos);
-                }
-            } else {
-                // Normal mode: submit on Enter
-                printf("\n");
-                running = 0;
-            }
-        } else if (c >= 32 && c < 127) {
-            // Printable character
-            if (len < (int)buffer_size - 1) {
-                // Insert character at cursor position
-                memmove(&buffer[cursor_pos + 1], &buffer[cursor_pos], len - cursor_pos + 1);
-                buffer[cursor_pos] = c;
-                len++;
-                cursor_pos++;
-                redraw_input_line(prompt, buffer, cursor_pos);
-            }
-        }
-    }
-
-    // Disable bracketed paste mode
-    printf("\033[?2004l");
-    fflush(stdout);
-
-    // Restore terminal settings
-    tcsetattr(STDIN_FILENO, TCSANOW, &old_term);
-    return 1;
-}
-
 static void interactive_mode(ConversationState *state) {
     // Initialize colorscheme FIRST (before any colored output)
     const char *theme = getenv("CLAUDE_THEME");
