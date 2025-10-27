@@ -390,10 +390,46 @@ static char* resolve_path(const char *path, const char *working_dir) {
         snprintf(resolved, PATH_MAX, "%s/%s", working_dir, path);
     }
 
-    // Realpath for cleaning up the path
+    // Try realpath first (works if file exists)
     char *clean = realpath(resolved, NULL);
+    if (clean) {
+        free(resolved);
+        return clean;
+    }
+
+    // If realpath failed, the file might not exist yet (e.g., Write tool)
+    // Resolve the parent directory and append the filename
+    char *last_slash = strrchr(resolved, '/');
+    if (!last_slash) {
+        // No slash found - shouldn't happen since we added working_dir
+        free(resolved);
+        return NULL;
+    }
+
+    // Split into directory and filename
+    *last_slash = '\0';
+    char *filename = last_slash + 1;
+
+    // Resolve parent directory
+    char *clean_dir = realpath(resolved, NULL);
+    if (!clean_dir) {
+        // Parent directory doesn't exist either
+        free(resolved);
+        return NULL;
+    }
+
+    // Combine resolved directory with filename
+    char *result = malloc(PATH_MAX);
+    if (!result) {
+        free(clean_dir);
+        free(resolved);
+        return NULL;
+    }
+    snprintf(result, PATH_MAX, "%s/%s", clean_dir, filename);
+
+    free(clean_dir);
     free(resolved);
-    return clean;
+    return result;
 }
 
 // Add a directory to the additional working directories list
