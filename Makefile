@@ -32,6 +32,7 @@ TEST_INPUT_TARGET = $(BUILD_DIR)/test_input
 TEST_READ_TARGET = $(BUILD_DIR)/test_read
 TEST_LINEEDIT_TARGET = $(BUILD_DIR)/test_lineedit
 TEST_TODO_TARGET = $(BUILD_DIR)/test_todo
+TEST_TIMING_TARGET = $(BUILD_DIR)/test_tool_timing
 QUERY_TOOL = $(BUILD_DIR)/query_logs
 SRC = src/claude.c
 LOGGER_SRC = src/logger.c
@@ -65,7 +66,7 @@ debug: check-deps $(BUILD_DIR)/claude-debug
 
 query-tool: check-deps $(QUERY_TOOL)
 
-test: test-edit test-input test-read test-lineedit test-todo
+test: test-edit test-input test-read test-lineedit test-todo test-timing
 
 test-edit: check-deps $(TEST_EDIT_TARGET)
 	@echo ""
@@ -96,6 +97,12 @@ test-todo: check-deps $(TEST_TODO_TARGET)
 	@echo "Running TODO list tests..."
 	@echo ""
 	@./$(TEST_TODO_TARGET)
+
+test-timing: check-deps $(TEST_TIMING_TARGET)
+	@echo ""
+	@echo "Running tool timing tests..."
+	@echo ""
+	@./$(TEST_TIMING_TARGET)
 
 $(TARGET): $(SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(LINEEDIT_OBJ) $(COMMANDS_OBJ) $(COMPLETION_OBJ) $(TUI_OBJ) $(TODO_OBJ)
 	@mkdir -p $(BUILD_DIR)
@@ -332,6 +339,15 @@ $(TEST_TODO_TARGET): $(TODO_SRC) $(TEST_TODO_SRC)
 	@$(CC) -o $(TEST_TODO_TARGET) $(BUILD_DIR)/todo_test.o $(BUILD_DIR)/test_todo.o
 	@echo ""
 	@echo "✓ TODO list test build successful!"
+	@echo ""
+
+# Test target for tool timing - ensures no 60-second delays
+$(TEST_TIMING_TARGET): tests/test_tool_timing.c
+	@mkdir -p $(BUILD_DIR)
+	@echo "Compiling tool timing test suite..."
+	@$(CC) $(CFLAGS) -o $(TEST_TIMING_TARGET) tests/test_tool_timing.c -lpthread
+	@echo ""
+	@echo "✓ Tool timing test build successful!"
 	@echo ""
 
 clean:

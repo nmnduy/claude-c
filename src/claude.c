@@ -1049,6 +1049,22 @@ static Tool tools[] = {
 
 static const int num_tools = sizeof(tools) / sizeof(Tool);
 
+// Thread monitor for ESC checking during tool execution
+typedef struct {
+    pthread_t *threads;
+    int thread_count;
+    volatile int *done_flag;
+} MonitorArg;
+
+static void *tool_monitor_func(void *arg) {
+    MonitorArg *ma = (MonitorArg *)arg;
+    for (int i = 0; i < ma->thread_count; i++) {
+        pthread_join(ma->threads[i], NULL);
+    }
+    *ma->done_flag = 1;
+    return NULL;
+}
+
 static cJSON* execute_tool(const char *tool_name, cJSON *input, ConversationState *state) {
     // Time the tool execution
     struct timespec start, end;
@@ -2362,11 +2378,17 @@ static void process_response(ConversationState *state, cJSON *response, TUIState
         }
 
         // Wait for all tool threads to complete, checking for ESC periodically
+        // Use a helper thread to monitor tool completion
         int interrupted = 0;
+        volatile int all_tools_done = 0;
 
-        // Periodically check for ESC while tools are running
-        // We'll check every 100ms for up to a reasonable time
-        for (int checks = 0; checks < 600; checks++) {  // Up to 60 seconds of checking
+        // Create a monitor thread that joins all tool threads
+        pthread_t monitor_thread;
+        MonitorArg monitor_arg = {threads, thread_count, &all_tools_done};
+        pthread_create(&monitor_thread, NULL, tool_monitor_func, &monitor_arg);
+
+        // Now check for ESC while waiting for tools to complete
+        while (!all_tools_done) {
             if (check_for_esc()) {
                 LOG_INFO("Tool execution interrupted by user (ESC pressed)");
                 interrupted = 1;
@@ -2380,13 +2402,11 @@ static void process_response(ConversationState *state, cJSON *response, TUIState
                 }
                 break;
             }
-            usleep(100000);  // 100ms
+            usleep(50000);  // Check every 50ms
         }
 
-        // Now wait for all threads to actually complete
-        for (int i = 0; i < thread_count; i++) {
-            pthread_join(threads[i], NULL);
-        }
+        // Wait for monitor thread to complete (this ensures all tool threads are joined)
+        pthread_join(monitor_thread, NULL);
 
         clock_gettime(CLOCK_MONOTONIC, &tool_end);
         long tool_exec_ms = (tool_end.tv_sec - tool_start.tv_sec) * 1000 +
