@@ -676,6 +676,7 @@ static void *tool_thread_func(void *arg) {
     // Populate result block
     t->result_block->type = CONTENT_TOOL_RESULT;
     t->result_block->tool_use_id = t->tool_use_id;
+    t->result_block->tool_name = strdup(t->tool_name);  // Store tool name for error reporting
     t->result_block->tool_result = res;
     t->result_block->is_error = cJSON_HasObjectItem(res, "error");
     return NULL;
@@ -2542,12 +2543,32 @@ static void process_response(ConversationState *state, cJSON *response, TUIState
             return;  // Exit without continuing conversation
         }
 
-        // Check if any tools had errors
+        // Check if any tools had errors and display error messages
         int has_error = 0;
         for (int i = 0; i < tool_count; i++) {
             if (results[i].is_error) {
                 has_error = 1;
-                break;
+
+                // Extract and display the error message
+                cJSON *error_obj = cJSON_GetObjectItem(results[i].tool_result, "error");
+                const char *error_msg = error_obj && cJSON_IsString(error_obj)
+                    ? error_obj->valuestring
+                    : "Unknown error";
+
+                // Get tool name for better context
+                const char *tool_name = results[i].tool_name ? results[i].tool_name : "tool";
+
+                // Display error next to/below the tool execution
+                if (tui) {
+                    char error_display[512];
+                    snprintf(error_display, sizeof(error_display), "%s failed: %s", tool_name, error_msg);
+                    tui_add_conversation_line(tui, "[Error]", error_display, COLOR_PAIR_ERROR);
+                } else {
+                    char error_display[512];
+                    snprintf(error_display, sizeof(error_display), "[Error] %s failed: %s", tool_name, error_msg);
+                    printf("%s%s%s\n", ANSI_RED, error_display, ANSI_RESET);
+                    fflush(stdout);
+                }
             }
         }
 
