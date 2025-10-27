@@ -1065,7 +1065,10 @@ static cJSON* execute_tool(const char *tool_name, cJSON *input, ConversationStat
 // Tool Definitions for API
 // ============================================================================
 
-static cJSON* get_tool_definitions() {
+// Forward declaration for cache_control helper
+static void add_cache_control(cJSON *obj);
+
+static cJSON* get_tool_definitions(int enable_caching) {
     cJSON *tool_array = cJSON_CreateArray();
 
     // Bash tool
@@ -1229,6 +1232,13 @@ static cJSON* get_tool_definitions() {
     cJSON_AddItemToObject(grep_params, "required", grep_req);
     cJSON_AddItemToObject(grep_func, "parameters", grep_params);
     cJSON_AddItemToObject(grep_tool, "function", grep_func);
+
+    // Add cache_control to the last tool (Grep) if caching is enabled
+    // This is the second cache breakpoint (tool definitions)
+    if (enable_caching) {
+        add_cache_control(grep_tool);
+    }
+
     cJSON_AddItemToArray(tool_array, grep_tool);
 
     return tool_array;
@@ -1238,12 +1248,34 @@ static cJSON* get_tool_definitions() {
 // API Client
 // ============================================================================
 
+// Helper: Check if prompt caching is enabled
+static int is_prompt_caching_enabled(void) {
+    const char *disable_cache = getenv("DISABLE_PROMPT_CACHING");
+    if (disable_cache && (strcmp(disable_cache, "1") == 0 ||
+                          strcmp(disable_cache, "true") == 0 ||
+                          strcmp(disable_cache, "TRUE") == 0)) {
+        return 0;
+    }
+    return 1;
+}
+
+// Helper: Add cache_control to a JSON object (for content blocks)
+static void add_cache_control(cJSON *obj) {
+    cJSON *cache_ctrl = cJSON_CreateObject();
+    cJSON_AddStringToObject(cache_ctrl, "type", "ephemeral");
+    cJSON_AddItemToObject(obj, "cache_control", cache_ctrl);
+}
+
 static cJSON* call_api(ConversationState *state) {
     int retry_count = 0;
     int backoff_ms = INITIAL_BACKOFF_MS;
 
     // Debug: Log API URL to detect corruption
     LOG_DEBUG("call_api: api_url=%s", state->api_url ? state->api_url : "(NULL)");
+
+    // Check if prompt caching is enabled
+    int enable_caching = is_prompt_caching_enabled();
+    LOG_DEBUG("Prompt caching: %s", enable_caching ? "enabled" : "disabled");
 
     // Build request body once (used for all retries)
     cJSON *request = cJSON_CreateObject();
@@ -1266,12 +1298,30 @@ static cJSON* call_api(ConversationState *state) {
         }
         cJSON_AddStringToObject(msg, "role", role);
 
+        // Determine if this is one of the last 3 messages (for cache breakpoint)
+        // We want to cache the last few messages to speed up subsequent turns
+        int is_recent_message = (i >= state->count - 3) && enable_caching;
+
         // Build content based on message type
         if (state->messages[i].role == MSG_SYSTEM) {
-            // System messages: just plain text
+            // System messages: use content array with cache_control if enabled
             if (state->messages[i].content_count > 0 &&
                 state->messages[i].content[0].type == CONTENT_TEXT) {
-                cJSON_AddStringToObject(msg, "content", state->messages[i].content[0].text);
+
+                // For system messages, use content array to support cache_control
+                cJSON *content_array = cJSON_CreateArray();
+                cJSON *text_block = cJSON_CreateObject();
+                cJSON_AddStringToObject(text_block, "type", "text");
+                cJSON_AddStringToObject(text_block, "text", state->messages[i].content[0].text);
+
+                // Add cache_control to system message if caching is enabled
+                // This is the first cache breakpoint (system prompt)
+                if (enable_caching) {
+                    add_cache_control(text_block);
+                }
+
+                cJSON_AddItemToArray(content_array, text_block);
+                cJSON_AddItemToObject(msg, "content", content_array);
             }
         } else if (state->messages[i].role == MSG_USER) {
             // User messages: check if it's tool results or plain text
@@ -1303,7 +1353,25 @@ static cJSON* call_api(ConversationState *state) {
                 // Regular user text message
                 if (state->messages[i].content_count > 0 &&
                     state->messages[i].content[0].type == CONTENT_TEXT) {
-                    cJSON_AddStringToObject(msg, "content", state->messages[i].content[0].text);
+
+                    // Use content array for recent messages to support cache_control
+                    if (is_recent_message) {
+                        cJSON *content_array = cJSON_CreateArray();
+                        cJSON *text_block = cJSON_CreateObject();
+                        cJSON_AddStringToObject(text_block, "type", "text");
+                        cJSON_AddStringToObject(text_block, "text", state->messages[i].content[0].text);
+
+                        // Add cache_control to the last user message
+                        if (i == state->count - 1) {
+                            add_cache_control(text_block);
+                        }
+
+                        cJSON_AddItemToArray(content_array, text_block);
+                        cJSON_AddItemToObject(msg, "content", content_array);
+                    } else {
+                        // For older messages, use simple string content
+                        cJSON_AddStringToObject(msg, "content", state->messages[i].content[0].text);
+                    }
                 }
             }
         } else {
@@ -1350,8 +1418,8 @@ static cJSON* call_api(ConversationState *state) {
 
     cJSON_AddItemToObject(request, "messages", messages_array);
 
-    // Add tools
-    cJSON *tool_defs = get_tool_definitions();
+    // Add tools with cache_control support
+    cJSON *tool_defs = get_tool_definitions(enable_caching);
     cJSON_AddItemToObject(request, "tools", tool_defs);
 
     char *json_str = cJSON_PrintUnformatted(request);

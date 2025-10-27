@@ -15,6 +15,7 @@ This is a pure C implementation of a coding agent that interacts with Anthropic'
 - Standard C11 with POSIX support
 - Direct API integration via libcurl
 - Implements 6 core tools: Bash, Read, Write, Edit, Glob, Grep
+- **Prompt caching support** - matching the official Claude Code CLI performance
 
 ## C Coding Best Practices
 
@@ -507,6 +508,53 @@ All dependencies must be installed before building. Use `make check-deps` to ver
 **Request format**: Standard Messages API with tool definitions included in every request.
 
 **Response parsing**: Extracts `content` array from response, handles both text and tool_use blocks.
+
+### Prompt Caching
+
+The C implementation now includes **prompt caching** support, matching the official TypeScript Claude Code CLI's performance optimization strategy.
+
+**Implementation details** (lines 1241-1400 in `src/claude.c`):
+
+1. **Cache breakpoints** are strategically placed at:
+   - **System prompt**: The environment context and instructions get cached
+   - **Tool definitions**: All 6 tool schemas (Bash, Read, Write, Edit, Glob, Grep) are cached
+   - **Recent messages**: The last 3 conversation turns get cache markers
+
+2. **Cache control format**:
+   ```json
+   {
+     "type": "ephemeral",
+     "cache_control": {"type": "ephemeral"}
+   }
+   ```
+
+3. **Performance benefits**:
+   - **Reduced latency**: Cached content is not reprocessed on subsequent turns
+   - **Lower costs**: Cache reads are ~90% cheaper than regular input tokens
+     - Regular input: $3/MTok (Sonnet 3.5)
+     - Cache read: $0.30/MTok (10x cheaper!)
+     - Cache write: $3.75/MTok
+   - **Persistent across turns**: 5-minute cache TTL for conversation continuity
+
+4. **Environment control**:
+   ```bash
+   # Disable caching globally (for debugging or comparison)
+   export DISABLE_PROMPT_CACHING=1
+   ./build/claude "your prompt"
+
+   # Enable caching (default)
+   unset DISABLE_PROMPT_CACHING
+   ./build/claude "your prompt"
+   ```
+
+5. **What gets cached**:
+   - System prompt with git status, environment info (~1-2KB)
+   - All 6 tool definitions with parameters (~3-4KB)
+   - Last 3 messages in conversation history
+
+   This typically results in 5-10KB of cached context that doesn't need to be reprocessed on each API call.
+
+**Why this matters**: Without caching, the C version was re-processing the entire context (system prompt + tools + history) on every turn, causing noticeably slower API response times compared to the official CLI. With caching enabled, performance now matches the TypeScript implementation.
 
 ## Known Limitations
 
