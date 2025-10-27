@@ -89,7 +89,6 @@ static void persistence_log_api_call(
 #define API_BASE_URL "https://api.openai.com"
 #define DEFAULT_MODEL "o4-mini"
 #define MAX_TOKENS 16384
-#define MAX_MESSAGES 10000
 #define MAX_TOOLS 10
 #define BUFFER_SIZE 8192
 
