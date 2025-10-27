@@ -13,8 +13,59 @@
 #include <termios.h>
 #include <ctype.h>
 #include <sys/ioctl.h>
+#include <signal.h>
 
 #define INITIAL_BUFFER_SIZE 4096
+
+// ============================================================================
+// Terminal State Management - Ensures terminal is always restored
+// ============================================================================
+
+static struct termios g_original_termios;
+static int g_terminal_modified = 0;
+static int g_cleanup_registered = 0;
+
+// Restore terminal to original state
+static void restore_terminal(void) {
+    if (g_terminal_modified) {
+        // Disable bracketed paste mode
+        printf("\033[?2004l");
+        // Show cursor (restore visibility)
+        printf("\033[?25h");
+        fflush(stdout);
+
+        // Restore terminal settings
+        tcsetattr(STDIN_FILENO, TCSANOW, &g_original_termios);
+        g_terminal_modified = 0;
+    }
+}
+
+// Signal handler for Ctrl+C, SIGTERM, etc.
+static void signal_handler(int signum) {
+    restore_terminal();
+
+    // Re-raise the signal with default handler to allow proper exit
+    signal(signum, SIG_DFL);
+    raise(signum);
+}
+
+// Register cleanup handlers (called once)
+static void register_cleanup_handlers(void) {
+    if (g_cleanup_registered) {
+        return;  // Already registered
+    }
+
+    // Register atexit handler
+    atexit(restore_terminal);
+
+    // Register signal handlers for common termination signals
+    signal(SIGINT, signal_handler);   // Ctrl+C
+    signal(SIGTERM, signal_handler);  // kill command
+    signal(SIGHUP, signal_handler);   // Terminal hangup
+    signal(SIGQUIT, signal_handler);  // Ctrl+\
+
+    g_cleanup_registered = 1;
+}
 
 // ============================================================================
 // Helper Functions
@@ -269,10 +320,13 @@ void completion_free(CompletionResult *result) {
 }
 
 char* lineedit_readline(LineEditor *ed, const char *prompt) {
-    struct termios old_term, new_term;
+    struct termios new_term;
 
-    // Save terminal settings
-    if (tcgetattr(STDIN_FILENO, &old_term) < 0) {
+    // Register cleanup handlers (only done once)
+    register_cleanup_handlers();
+
+    // Save terminal settings to global variable for signal handlers
+    if (tcgetattr(STDIN_FILENO, &g_original_termios) < 0) {
         // Fall back to fgets if we can't set raw mode
         printf("%s", prompt);
         fflush(stdout);
@@ -284,11 +338,12 @@ char* lineedit_readline(LineEditor *ed, const char *prompt) {
     }
 
     // Set up raw mode
-    new_term = old_term;
+    new_term = g_original_termios;
     new_term.c_lflag &= ~(ICANON | ECHO);  // Disable canonical mode and echo
     new_term.c_cc[VMIN] = 1;
     new_term.c_cc[VTIME] = 0;
     tcsetattr(STDIN_FILENO, TCSANOW, &new_term);
+    g_terminal_modified = 1;  // Mark that terminal needs restoration
 
     // Enable bracketed paste mode
     printf("\033[?2004h");
@@ -308,11 +363,8 @@ char* lineedit_readline(LineEditor *ed, const char *prompt) {
     while (running) {
         unsigned char c;
         if (read(STDIN_FILENO, &c, 1) != 1) {
-            // Error or EOF
-            printf("\033[?2004l");  // Disable bracketed paste mode
-            printf("\033[?25h");    // Show cursor (restore visibility)
-            fflush(stdout);
-            tcsetattr(STDIN_FILENO, TCSANOW, &old_term);
+            // Error or EOF - cleanup handled by restore_terminal()
+            restore_terminal();
             return NULL;
         }
 
@@ -388,10 +440,7 @@ char* lineedit_readline(LineEditor *ed, const char *prompt) {
         } else if (c == 4) {
             // Ctrl+D: EOF only (always exits, even if buffer has content)
             printf("\n");
-            printf("\033[?2004l");  // Disable bracketed paste mode
-            printf("\033[?25h");    // Show cursor (restore visibility)
-            fflush(stdout);
-            tcsetattr(STDIN_FILENO, TCSANOW, &old_term);
+            restore_terminal();
             return NULL;
         } else if (c == 11) {
             // Ctrl+K: kill to end of line
@@ -497,13 +546,8 @@ char* lineedit_readline(LineEditor *ed, const char *prompt) {
         }
     }
 
-    // Disable bracketed paste mode and ensure cursor is visible
-    printf("\033[?2004l");  // Disable bracketed paste
-    printf("\033[?25h");    // Show cursor (restore visibility)
-    fflush(stdout);
-
-    // Restore terminal settings
-    tcsetattr(STDIN_FILENO, TCSANOW, &old_term);
+    // Restore terminal to normal state
+    restore_terminal();
 
     return strdup(ed->buffer);
 }
