@@ -355,6 +355,21 @@ STATIC char* read_file(const char *path) {
 }
 
 STATIC int write_file(const char *path, const char *content) {
+    // Create parent directories if they don't exist
+    char *path_copy = strdup(path);
+    if (!path_copy) return -1;
+    
+    // Extract directory path
+    char *dir_path = dirname(path_copy);
+    
+    // Create directory recursively (ignore errors if directory already exists)
+    char mkdir_cmd[PATH_MAX];
+    snprintf(mkdir_cmd, sizeof(mkdir_cmd), "mkdir -p '%s' 2>/dev/null", dir_path);
+    system(mkdir_cmd);
+    
+    free(path_copy);
+    
+    // Now try to open/create the file
     FILE *f = fopen(path, "wb");
     if (!f) return -1;
 
@@ -2457,7 +2472,7 @@ static void process_response(ConversationState *state, cJSON *response, TUIState
     }
 
     if (tool_count > 0) {
-        if (!tui) {
+        if (1) { // Force non-TUI spinner path for testing
             printf("\n");
         }
 
@@ -2621,10 +2636,12 @@ static void process_response(ConversationState *state, cJSON *response, TUIState
 
         // Clear status on success, show message on error
         if (!tui) {
+            printf("DEBUG: has_error = %d\n", has_error);
             if (has_error) {
                 spinner_stop(tool_spinner, "Tool execution completed with errors", 0);
             } else {
-                spinner_stop(tool_spinner, NULL, 1);  // NULL = clear without message
+                printf("DEBUG: Stopping tool spinner with success message\n");
+                spinner_stop(tool_spinner, "Tool execution completed successfully", 1);
             }
         } else {
             if (has_error) {
