@@ -1200,6 +1200,9 @@ static cJSON* call_api(ConversationState *state) {
     int retry_count = 0;
     int backoff_ms = INITIAL_BACKOFF_MS;
 
+    // Debug: Log API URL to detect corruption
+    LOG_DEBUG("call_api: api_url=%s", state->api_url ? state->api_url : "(NULL)");
+
     // Build request body once (used for all retries)
     cJSON *request = cJSON_CreateObject();
     cJSON_AddStringToObject(request, "model", state->model);
@@ -1314,6 +1317,15 @@ static cJSON* call_api(ConversationState *state) {
 
     // Keep copy of request for persistence logging
     char *request_copy = strdup(json_str);
+
+    // Validate API URL before proceeding
+    if (!state->api_url || state->api_url[0] == '\0') {
+        LOG_ERROR("API URL is not set or has been corrupted");
+        print_error("Internal error: API URL is missing or corrupted");
+        free(request_copy);
+        free(json_str);
+        return NULL;
+    }
 
     // Build full API URL by appending endpoint to base
     char full_url[512];
@@ -2146,6 +2158,20 @@ static void process_response(ConversationState *state, cJSON *response, TUIState
         // Add tool results and continue conversation
         add_tool_results(state, results, tool_count);
 
+        // Debug: Verify API URL is still valid after tool execution
+        LOG_DEBUG("After tool execution: api_url=%s", state->api_url ? state->api_url : "(NULL)");
+        if (!state->api_url || state->api_url[0] == '\0') {
+            LOG_ERROR("API URL corrupted after tool execution!");
+            const char *error_msg = "Internal error: API URL was corrupted during tool execution";
+            if (tui) {
+                tui_add_conversation_line(tui, "[Error]", error_msg, COLOR_PAIR_ERROR);
+            } else {
+                print_error(error_msg);
+            }
+            free(results);
+            return;
+        }
+
         Spinner *followup_spinner = NULL;
         if (!tui) {
             followup_spinner = spinner_start("Processing tool results...", SPINNER_CYAN);
@@ -2162,6 +2188,15 @@ static void process_response(ConversationState *state, cJSON *response, TUIState
         if (next_response) {
             process_response(state, next_response, tui);
             cJSON_Delete(next_response);
+        } else {
+            // API call failed - show error to user
+            const char *error_msg = "API call failed after executing tools. Check logs for details.";
+            if (tui) {
+                tui_add_conversation_line(tui, "[Error]", error_msg, COLOR_PAIR_ERROR);
+            } else {
+                print_error(error_msg);
+            }
+            LOG_ERROR("API call returned NULL after tool execution");
         }
 
         // Free results array; content of results will be freed in cleanup
@@ -2802,6 +2837,18 @@ int main(int argc, char *argv[]) {
     state.session_id = session_id;
     state.persistence_db = persistence_db;
 
+    // Check for allocation failures
+    if (!state.api_key || !state.api_url || !state.model) {
+        LOG_ERROR("Failed to allocate memory for conversation state");
+        fprintf(stderr, "Error: Memory allocation failed\n");
+        free(state.api_key);
+        free(state.api_url);
+        free(state.model);
+        free(state.working_dir);
+        curl_global_cleanup();
+        return 1;
+    }
+
     if (!state.working_dir) {
         LOG_ERROR("Failed to get current working directory");
         free(state.api_key);
@@ -2810,6 +2857,8 @@ int main(int argc, char *argv[]) {
         curl_global_cleanup();
         return 1;
     }
+
+    LOG_INFO("API URL initialized: %s", state.api_url);
 
     // Build and add system prompt with environment context
     char *system_prompt = build_system_prompt(&state);
