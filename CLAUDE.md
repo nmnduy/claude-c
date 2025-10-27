@@ -215,12 +215,17 @@ export ANTHROPIC_API_KEY="your-api-key"
 
 ### Color Theme System
 
-The TUI uses **Kitty terminal's theme format** - a simple key-value configuration system with zero dependencies.
+The TUI uses **Kitty terminal's theme format** - a simple key-value configuration system with zero dependencies. The project includes several pre-built themes in the `colorschemes/` directory and supports any Kitty theme from the 300+ available themes.
 
 **Configuration:**
 ```bash
-export CLAUDE_THEME="/path/to/theme.conf"
-./build/claude "your prompt"
+# Use a built-in theme
+export CLAUDE_THEME="./colorschemes/dracula.conf"
+./build/claude
+
+# Use an absolute path
+export CLAUDE_THEME="/Users/username/code/claude-c/colorschemes/gruvbox-dark.conf"
+./build/claude
 ```
 
 **Default locations (checked in order):**
@@ -231,8 +236,48 @@ export CLAUDE_THEME="/path/to/theme.conf"
 
 **Implementation location:** `src/colorscheme.h` (will be refactored to `src/theme.h`)
 
-**Theme File Format:**
-Kitty's dead-simple key-value format:
+#### Available Themes
+
+**Kitty Default** (`kitty-default.conf`)
+- **Background:** Black (#000000)
+- **Foreground:** Light gray (#dddddd)
+- **Style:** Classic, high contrast
+- **Best for:** Traditional terminal experience
+
+**Dracula** (`dracula.conf`)
+- **Background:** Dark purple (#1e1f28 → color 234)
+- **Foreground:** Off-white (#f8f8f2)
+- **Accent:** Cyan (#8ae9fc → color 116)
+- **Status:** Pale yellow (#f0fa8b → color 186)
+- **User:** Bright green (#50fa7b → color 78)
+- **Error:** Pink-red (#ff5555 → color 203)
+- **Style:** Modern, vibrant, purple tones
+- **Best for:** Long coding sessions, eye comfort
+
+**Gruvbox Dark** (`gruvbox-dark.conf`)
+- **Background:** Dark brown (#282828 → color 235)
+- **Foreground:** Warm beige (#ebdbb2 → color 187)
+- **Accent:** Muted teal (#689d6a → color 108)
+- **Status:** Orange (#d79921 → color 178)
+- **User:** Yellow-green (#98971a → color 100)
+- **Error:** Red (#cc241d)
+- **Style:** Warm, retro, low contrast
+- **Best for:** Reduced eye strain, vintage aesthetic
+
+**Solarized Dark** (`solarized-dark.conf`)
+- **Background:** Deep blue-black (#001e26 → color 16)
+- **Foreground:** Blue-gray (#708183 → color 102)
+- **Accent:** Teal (#259185 → color 30)
+- **Status:** Brown-gold (#a57705 → color 136)
+- **User:** Yellow-green (#728905 → color 100)
+- **Error:** Red (#d01b24)
+- **Style:** Scientific, balanced, blue-tinted
+- **Best for:** Professional work, color theory enthusiasts
+
+#### Theme File Format
+
+Themes use Kitty's simple key-value format:
+
 ```conf
 # Comments start with #
 background #282a36
@@ -242,7 +287,8 @@ cursor #bbbbbb
 # 16 ANSI colors (color0-15)
 color0 #000000
 color1 #ff5555
-# ...
+color2 #50fa7b
+# ... etc
 
 # Optional TUI-specific overrides
 assistant_fg #8be9fd
@@ -251,16 +297,43 @@ status_bg #44475a
 error_fg #ff5555
 ```
 
+#### Color Mappings
+
+The TUI maps Kitty colors to UI elements:
+
+| TUI Element | Kitty Key (Primary) | Kitty Key (Fallback) |
+|-------------|---------------------|----------------------|
+| Assistant text | `foreground` | `assistant_fg` |
+| User text | `color2` (green) | `user_fg` |
+| Status bar | `color3` (yellow) | `status_bg` |
+| Headers | `color6` (cyan) | `color4` (blue), `header_fg` |
+| Errors | `color1` (red) | `error_fg` |
+| Background | `background` | - |
+
+#### Adding New Themes
+
+1. Download any Kitty theme from [kitty-themes](https://github.com/dexpota/kitty-themes)
+2. Save to `colorschemes/` directory with `.conf` extension
+3. Use with `CLAUDE_THEME` environment variable
+
+Example:
+```bash
+# Download Nord theme
+curl -O https://raw.githubusercontent.com/dexpota/kitty-themes/master/themes/Nord.conf
+mv Nord.conf colorschemes/nord.conf
+
+# Use it
+export CLAUDE_THEME="./colorschemes/nord.conf"
+./build/claude
+```
+
+#### Technical Implementation
+
 **How it works:**
 1. Opens theme file and reads line by line
 2. Parses each line with simple `sscanf(line, "%s %s", key, value)`
 3. Skips comments (`#`) and empty lines
-4. Maps color keys to TUI elements:
-   - `foreground` or `assistant_fg` → Assistant text
-   - `color2` or `user_fg` → User text (green)
-   - `color3` or `status_bg` → Status bar (yellow)
-   - `color1` or `error_fg` → Error messages (red)
-   - `color4` or `header_fg` → Headers (blue/cyan)
+4. Maps color keys to TUI elements using the table above
 5. Converts hex colors to RGB, then to ncurses color numbers
 6. Initializes ncurses color pairs
 
@@ -292,6 +365,13 @@ Theme load_theme(const char *path) {
 }
 ```
 
+**Technical Details:**
+- Supports 256-color terminals (automatically detects terminal capability)
+- Hex colors (#RRGGBB) converted to ncurses color numbers
+- Grayscale colors (232-255) for subtle backgrounds
+- RGB cube (16-231) for full color spectrum
+- Fallback to 8-color mode for legacy terminals
+
 **Why Kitty's format:**
 - ✅ Zero dependencies - no parser library (TOML/YAML) needed
 - ✅ Trivial C implementation - just `fgets()` + `sscanf()`
@@ -302,7 +382,7 @@ Theme load_theme(const char *path) {
 - ✅ Aligns with project philosophy: minimal dependencies, simple C
 
 **Compatibility:**
-Most Kitty themes work without modification. The TUI maps standard Kitty color keys to UI elements automatically.
+Most Kitty themes work without modification. The TUI maps standard Kitty color keys to UI elements automatically using the fallback hierarchy shown in the color mappings table.
 
 ### TODO List System
 
