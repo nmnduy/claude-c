@@ -2454,9 +2454,9 @@ static void process_response(ConversationState *state, cJSON *response, TUIState
 
         if (*p != '\0') {  // Has non-whitespace content
             if (tui) {
-                tui_add_conversation_line(tui, "[Assistant]", content->valuestring, COLOR_PAIR_ASSISTANT);
+                tui_add_conversation_line(tui, "[Assistant]", p, COLOR_PAIR_ASSISTANT);
             } else {
-                print_assistant(content->valuestring);
+                print_assistant(p);
             }
         }
     }
@@ -2841,8 +2841,8 @@ static void interactive_mode(ConversationState *state) {
             }
         }
 
-        // Display user message
-        tui_add_conversation_line(&tui, "[User]", input, COLOR_PAIR_USER);
+        // Display user message - skip since it's already shown when typing
+        // tui_add_conversation_line(&tui, "[User]", input, COLOR_PAIR_USER);
 
         // Add to conversation
         add_user_message(state, input);
