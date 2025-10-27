@@ -21,6 +21,7 @@ static pthread_mutex_t g_log_mutex = PTHREAD_MUTEX_INITIALIZER;
 static char g_log_path[512] = {0};
 static long g_max_size_bytes = 10 * 1024 * 1024;  // 10 MB default
 static int g_max_backups = 5;  // Keep 5 backup files
+static char g_session_id[64] = {0};  // Session ID for log tagging
 
 // Level names for output
 static const char *level_names[] = {
@@ -226,6 +227,17 @@ void log_set_rotation(int max_size_mb, int max_backups) {
     pthread_mutex_unlock(&g_log_mutex);
 }
 
+void log_set_session_id(const char *session_id) {
+    pthread_mutex_lock(&g_log_mutex);
+    if (session_id) {
+        strncpy(g_session_id, session_id, sizeof(g_session_id) - 1);
+        g_session_id[sizeof(g_session_id) - 1] = '\0';
+    } else {
+        g_session_id[0] = '\0';
+    }
+    pthread_mutex_unlock(&g_log_mutex);
+}
+
 void log_message(LogLevel level, const char *file, int line,
                 const char *func, const char *fmt, ...) {
     // Quick check without lock for performance
@@ -252,13 +264,24 @@ void log_message(LogLevel level, const char *file, int line,
     char timestamp[64];
     get_timestamp(timestamp, sizeof(timestamp));
 
-    // Format: [TIMESTAMP] LEVEL [file:line] function: message
-    fprintf(g_log_file, "[%s] %-5s [%s:%d] %s: ",
-            timestamp,
-            level_names[level],
-            get_filename(file),
-            line,
-            func);
+    // Format: [TIMESTAMP] [SESSION_ID] LEVEL [file:line] function: message
+    if (g_session_id[0] != '\0') {
+        fprintf(g_log_file, "[%s] [%s] %-5s [%s:%d] %s: ",
+                timestamp,
+                g_session_id,
+                level_names[level],
+                get_filename(file),
+                line,
+                func);
+    } else {
+        // Fallback format without session ID
+        fprintf(g_log_file, "[%s] %-5s [%s:%d] %s: ",
+                timestamp,
+                level_names[level],
+                get_filename(file),
+                line,
+                func);
+    }
 
     // Write the actual log message
     va_list args;

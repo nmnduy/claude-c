@@ -47,6 +47,12 @@ void log_set_level(LogLevel level);
 void log_set_rotation(int max_size_mb, int max_backups);
 
 /**
+ * Set the session ID for logging
+ * All subsequent log messages will include this session ID
+ */
+void log_set_session_id(const char *session_id);
+
+/**
  * Core logging function (use macros instead of calling directly)
  */
 void log_message(LogLevel level, const char *file, int line,

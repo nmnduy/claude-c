@@ -2994,6 +2994,11 @@ int main(int argc, char *argv[]) {
     }
     LOG_INFO("Session ID: %s", session_id ? session_id : "none");
 
+    // Set session ID for logging
+    if (session_id) {
+        log_set_session_id(session_id);
+    }
+
     // Initialize conversation state
     ConversationState state = {0};
     state.api_key = strdup(api_key);
