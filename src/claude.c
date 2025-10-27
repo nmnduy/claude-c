@@ -18,6 +18,7 @@
 #include <pthread.h>
 #include <sys/wait.h>
 #include <sys/stat.h>
+#include <sys/select.h>
 #include <errno.h>
 #include <glob.h>
 #include <regex.h>
@@ -28,6 +29,7 @@
 #include <dirent.h>
 #include <termios.h>
 #include <ctype.h>
+#include <signal.h>
 #include "colorscheme.h"
 
 #ifdef TEST_BUILD
@@ -216,6 +218,70 @@ typedef struct {
     char *output;
     size_t size;
 } MemoryBuffer;
+
+// ============================================================================
+// ESC Key Interrupt Handling
+// ============================================================================
+
+// Global interrupt flag - set to 1 when ESC is pressed
+static volatile sig_atomic_t interrupt_requested = 0;
+
+// Check if interrupt was requested and clear the flag
+static int check_and_clear_interrupt(void) {
+    if (interrupt_requested) {
+        interrupt_requested = 0;
+        return 1;
+    }
+    return 0;
+}
+
+// Check for ESC key press without blocking
+// Returns: 1 if ESC was pressed, 0 otherwise
+static int check_for_esc(void) {
+    struct termios old_term, new_term;
+    int esc_pressed = 0;
+
+    // Save current terminal settings
+    if (tcgetattr(STDIN_FILENO, &old_term) < 0) {
+        return 0;  // Can't check, assume no ESC
+    }
+
+    // Set terminal to non-blocking mode
+    new_term = old_term;
+    new_term.c_lflag &= ~(ICANON | ECHO);
+    new_term.c_cc[VMIN] = 0;   // Non-blocking
+    new_term.c_cc[VTIME] = 0;  // No timeout
+    tcsetattr(STDIN_FILENO, TCSANOW, &new_term);
+
+    // Check if there's input available
+    fd_set readfds;
+    struct timeval timeout;
+    FD_ZERO(&readfds);
+    FD_SET(STDIN_FILENO, &readfds);
+    timeout.tv_sec = 0;
+    timeout.tv_usec = 0;
+
+    int ready = select(STDIN_FILENO + 1, &readfds, NULL, NULL, &timeout);
+    if (ready > 0) {
+        unsigned char c;
+        if (read(STDIN_FILENO, &c, 1) == 1) {
+            if (c == 27) {  // ESC key
+                esc_pressed = 1;
+                interrupt_requested = 1;
+
+                // Drain any following characters (like [, etc. from arrow keys)
+                while (read(STDIN_FILENO, &c, 1) == 1) {
+                    // Keep draining
+                }
+            }
+        }
+    }
+
+    // Restore terminal settings
+    tcsetattr(STDIN_FILENO, TCSANOW, &old_term);
+
+    return esc_pressed;
+}
 
 
 // ============================================================================
@@ -1340,6 +1406,16 @@ static cJSON* call_api(ConversationState *state) {
         struct timespec start, end;
         clock_gettime(CLOCK_MONOTONIC, &start);
 
+        // Check for ESC before making request
+        if (check_for_esc()) {
+            curl_slist_free_all(headers);
+            curl_easy_cleanup(curl);
+            free(request_copy);
+            free(json_str);
+            LOG_INFO("API call interrupted by user (ESC pressed)");
+            return NULL;
+        }
+
         // Perform request
         res = curl_easy_perform(curl);
 
@@ -2100,9 +2176,47 @@ static void process_response(ConversationState *state, cJSON *response, TUIState
             tui_update_status(tui, status_msg);
         }
 
-        // Wait for all tool threads to complete
+        // Wait for all tool threads to complete, checking for ESC periodically
+        int interrupted = 0;
+
+        // Periodically check for ESC while tools are running
+        // We'll check every 100ms for up to a reasonable time
+        for (int checks = 0; checks < 600; checks++) {  // Up to 60 seconds of checking
+            if (check_for_esc()) {
+                LOG_INFO("Tool execution interrupted by user (ESC pressed)");
+                interrupted = 1;
+
+                // Notify user immediately
+                if (!tui) {
+                    spinner_stop(tool_spinner, "Interrupted by user (ESC) - waiting for tools to finish...", 0);
+                    tool_spinner = NULL;  // Mark as stopped
+                } else {
+                    tui_update_status(tui, "Interrupted by user (ESC) - waiting for tools to finish...");
+                }
+                break;
+            }
+            usleep(100000);  // 100ms
+        }
+
+        // Now wait for all threads to actually complete
         for (int i = 0; i < thread_count; i++) {
             pthread_join(threads[i], NULL);
+        }
+
+        // If interrupted, clean up and return
+        if (interrupted) {
+            if (!tui) {
+                if (tool_spinner) {
+                    spinner_stop(tool_spinner, "Interrupted by user (ESC)", 0);
+                }
+            } else {
+                tui_update_status(tui, "Interrupted by user (ESC)");
+            }
+
+            free(threads);
+            free(args);
+            free(results);
+            return;  // Exit without continuing conversation
         }
 
         // Check if any tools had errors
