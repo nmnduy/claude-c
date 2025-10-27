@@ -55,7 +55,7 @@ typedef struct {
     int content_count;
 } Message;
 
-#define MAX_MESSAGES 100
+#define MAX_MESSAGES 10000
 
 typedef struct ConversationState {
     Message messages[MAX_MESSAGES];
