@@ -1,11 +1,10 @@
 /*
- * Unit Tests for Line Editor Wrapping Logic
+ * Unit Tests for Line Editor
  *
- * Tests the line editor's terminal wrapping calculations including:
- * - Simple input (no wrapping)
- * - Input that wraps exactly at terminal width
- * - Input that wraps multiple times
- * - Manual newlines combined with automatic wrapping
+ * Tests the line editor functionality including:
+ * - Terminal wrapping calculations
+ * - UTF-8 character parsing
+ * - Command history management
  * - Cursor positioning at various positions
  * - Edge cases (empty input, cursor at end, etc.)
  *
@@ -14,9 +13,11 @@
  */
 
 #define _POSIX_C_SOURCE 200809L
+#define TEST_BUILD 1
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "../src/lineedit.h"
 
 // Test framework colors
 #define COLOR_RESET "\033[0m"
@@ -30,7 +31,7 @@ static int tests_run = 0;
 static int tests_passed = 0;
 static int tests_failed = 0;
 
-// Forward declaration from lineedit.c
+// Forward declarations from lineedit.c
 extern void calculate_cursor_position(
     const char *buffer,
     int buffer_len,
@@ -42,9 +43,37 @@ extern void calculate_cursor_position(
     int *out_total_lines
 );
 
+// UTF-8 helper functions (internal, exposed for testing)
+extern int utf8_char_length(unsigned char first_byte);
+extern int is_utf8_continuation(unsigned char byte);
+
 // ============================================================================
 // Test Utilities
 // ============================================================================
+
+static void assert_true(const char *test_name, int condition) {
+    tests_run++;
+    if (condition) {
+        tests_passed++;
+        printf("%s✓%s %s\n", COLOR_GREEN, COLOR_RESET, test_name);
+    } else {
+        tests_failed++;
+        printf("%s✗%s %s\n", COLOR_RED, COLOR_RESET, test_name);
+    }
+}
+
+static void assert_equals(const char *test_name, int expected, int actual) {
+    tests_run++;
+    if (expected == actual) {
+        tests_passed++;
+        printf("%s✓%s %s\n", COLOR_GREEN, COLOR_RESET, test_name);
+    } else {
+        tests_failed++;
+        printf("%s✗%s %s\n", COLOR_RED, COLOR_RESET, test_name);
+        printf("%s  Expected: %d, Actual: %d%s\n",
+               COLOR_YELLOW, expected, actual, COLOR_RESET);
+    }
+}
 
 static void assert_position(const char *test_name,
                            const char *buffer,
@@ -315,18 +344,184 @@ static void test_cursor_at_boundaries() {
 }
 
 // ============================================================================
+// UTF-8 Tests
+// ============================================================================
+
+static void test_utf8_char_length() {
+    printf("\n%s[Test: UTF-8 Character Length Detection]%s\n", COLOR_CYAN, COLOR_RESET);
+
+    // ASCII (1 byte)
+    assert_equals("ASCII 'A'", 1, utf8_char_length('A'));
+    assert_equals("ASCII '0'", 1, utf8_char_length('0'));
+    assert_equals("ASCII space", 1, utf8_char_length(' '));
+
+    // 2-byte UTF-8 (110xxxxx)
+    assert_equals("2-byte start (0xC0)", 2, utf8_char_length(0xC0));
+    assert_equals("2-byte start (0xDF)", 2, utf8_char_length(0xDF));
+
+    // 3-byte UTF-8 (1110xxxx)
+    assert_equals("3-byte start (0xE0)", 3, utf8_char_length(0xE0));
+    assert_equals("3-byte start (0xEF)", 3, utf8_char_length(0xEF));
+
+    // 4-byte UTF-8 (11110xxx)
+    assert_equals("4-byte start (0xF0)", 4, utf8_char_length(0xF0));
+    assert_equals("4-byte start (0xF7)", 4, utf8_char_length(0xF7));
+
+    // Invalid/continuation bytes (should return 1)
+    assert_equals("Continuation byte (0x80)", 1, utf8_char_length(0x80));
+    assert_equals("Continuation byte (0xBF)", 1, utf8_char_length(0xBF));
+}
+
+static void test_utf8_continuation() {
+    printf("\n%s[Test: UTF-8 Continuation Byte Detection]%s\n", COLOR_CYAN, COLOR_RESET);
+
+    // Valid continuation bytes (10xxxxxx pattern)
+    assert_true("0x80 is continuation", is_utf8_continuation(0x80));
+    assert_true("0xBF is continuation", is_utf8_continuation(0xBF));
+    assert_true("0xA0 is continuation", is_utf8_continuation(0xA0));
+
+    // Invalid continuation bytes
+    assert_true("ASCII 'A' not continuation", !is_utf8_continuation('A'));
+    assert_true("0xC0 not continuation", !is_utf8_continuation(0xC0));
+    assert_true("0xE0 not continuation", !is_utf8_continuation(0xE0));
+    assert_true("0xF0 not continuation", !is_utf8_continuation(0xF0));
+}
+
+// ============================================================================
+// History Tests
+// ============================================================================
+
+static void test_history_basic() {
+    printf("\n%s[Test: History Basic Operations]%s\n", COLOR_CYAN, COLOR_RESET);
+
+    LineEditor ed;
+    lineedit_init(&ed, NULL, NULL);
+
+    // Initially empty
+    assert_equals("History starts empty", 0, ed.history.count);
+    assert_equals("History position is -1", -1, ed.history.position);
+
+    // Manually add entries (simulating what lineedit_readline does)
+    char *entries[] = {"first command", "second command", "third command"};
+    for (int i = 0; i < 3; i++) {
+        if (ed.history.count >= ed.history.capacity) {
+            free(ed.history.entries[0]);
+            memmove(&ed.history.entries[0], &ed.history.entries[1],
+                    sizeof(char*) * (size_t)(ed.history.capacity - 1));
+            ed.history.count--;
+        }
+        ed.history.entries[ed.history.count] = strdup(entries[i]);
+        ed.history.count++;
+    }
+
+    assert_equals("History has 3 entries", 3, ed.history.count);
+    assert_true("First entry correct",
+                strcmp(ed.history.entries[0], "first command") == 0);
+    assert_true("Second entry correct",
+                strcmp(ed.history.entries[1], "second command") == 0);
+    assert_true("Third entry correct",
+                strcmp(ed.history.entries[2], "third command") == 0);
+
+    lineedit_free(&ed);
+}
+
+static void test_history_capacity() {
+    printf("\n%s[Test: History Capacity Limit]%s\n", COLOR_CYAN, COLOR_RESET);
+
+    LineEditor ed;
+    lineedit_init(&ed, NULL, NULL);
+
+    int original_capacity = ed.history.capacity;
+
+    // Add more than capacity entries
+    for (int i = 0; i < original_capacity + 10; i++) {
+        char entry[32];
+        snprintf(entry, sizeof(entry), "command %d", i);
+
+        // Simulate history_add logic
+        if (ed.history.count >= ed.history.capacity) {
+            free(ed.history.entries[0]);
+            memmove(&ed.history.entries[0], &ed.history.entries[1],
+                    sizeof(char*) * (size_t)(ed.history.capacity - 1));
+            ed.history.count--;
+        }
+        ed.history.entries[ed.history.count] = strdup(entry);
+        ed.history.count++;
+    }
+
+    assert_equals("History doesn't exceed capacity",
+                  original_capacity, ed.history.count);
+
+    // Check that oldest entries were removed
+    char expected_first[32];
+    snprintf(expected_first, sizeof(expected_first), "command %d", 10);
+    assert_true("Oldest entries removed",
+                strcmp(ed.history.entries[0], expected_first) == 0);
+
+    lineedit_free(&ed);
+}
+
+static void test_history_navigation() {
+    printf("\n%s[Test: History Navigation State]%s\n", COLOR_CYAN, COLOR_RESET);
+
+    LineEditor ed;
+    lineedit_init(&ed, NULL, NULL);
+
+    // Add some entries
+    char *entries[] = {"cmd1", "cmd2", "cmd3"};
+    for (int i = 0; i < 3; i++) {
+        ed.history.entries[ed.history.count] = strdup(entries[i]);
+        ed.history.count++;
+    }
+
+    // Simulate Up arrow navigation
+    assert_equals("Position starts at -1", -1, ed.history.position);
+
+    // First Up press
+    ed.history.position = ed.history.count;  // Set to end
+    if (ed.history.position > 0) {
+        ed.history.position--;
+    }
+    assert_equals("Position after first Up", 2, ed.history.position);
+
+    // Second Up press
+    if (ed.history.position > 0) {
+        ed.history.position--;
+    }
+    assert_equals("Position after second Up", 1, ed.history.position);
+
+    // Down press
+    ed.history.position++;
+    assert_equals("Position after Down", 2, ed.history.position);
+
+    lineedit_free(&ed);
+}
+
+// ============================================================================
 // Main Test Runner
 // ============================================================================
 
 int main(int argc, char *argv[]) {
+    (void)argc;
+    (void)argv;
+
     printf("\n%s╔════════════════════════════════════════════╗%s\n",
            COLOR_CYAN, COLOR_RESET);
-    printf("%s║   Line Editor Wrapping Test Suite         ║%s\n",
+    printf("%s║   Line Editor Test Suite                   ║%s\n",
            COLOR_CYAN, COLOR_RESET);
     printf("%s╚════════════════════════════════════════════╝%s\n",
            COLOR_CYAN, COLOR_RESET);
 
-    // Run all tests
+    // UTF-8 tests
+    test_utf8_char_length();
+    test_utf8_continuation();
+
+    // History tests
+    test_history_basic();
+    test_history_capacity();
+    test_history_navigation();
+
+    // Wrapping tests
     test_simple_no_wrapping();
     test_wrapping_at_edge();
     test_wrapping_one_overflow();

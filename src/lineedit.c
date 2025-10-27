@@ -133,7 +133,12 @@ static void register_cleanup_handlers(void) {
 // - 4 bytes: 11110xxx 10xxxxxx 10xxxxxx 10xxxxxx (0xF0-0xF7 start)
 
 // Get the number of bytes in a UTF-8 character from its first byte
-static int utf8_char_length(unsigned char first_byte) {
+#ifdef TEST_BUILD
+int
+#else
+static int
+#endif
+utf8_char_length(unsigned char first_byte) {
     if ((first_byte & 0x80) == 0) return 1;  // 0xxxxxxx
     if ((first_byte & 0xE0) == 0xC0) return 2;  // 110xxxxx
     if ((first_byte & 0xF0) == 0xE0) return 3;  // 1110xxxx
@@ -142,7 +147,12 @@ static int utf8_char_length(unsigned char first_byte) {
 }
 
 // Check if a byte is a UTF-8 continuation byte (10xxxxxx)
-static int is_utf8_continuation(unsigned char byte) {
+#ifdef TEST_BUILD
+int
+#else
+static int
+#endif
+is_utf8_continuation(unsigned char byte) {
     return (byte & 0xC0) == 0x80;
 }
 
