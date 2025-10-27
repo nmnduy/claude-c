@@ -867,14 +867,8 @@ char* lineedit_readline(LineEditor *ed, const char *prompt) {
             if (buffer_backspace(ed) > 0) {
                 redraw_input_line(prompt, ed->buffer, ed->cursor);
             }
-        } else if (c == 14) {
-            // Ctrl+N (ASCII 14): Insert newline character
-            unsigned char newline = '\n';
-            if (buffer_insert_char(ed, &newline, 1) == 0) {
-                redraw_input_line(prompt, ed->buffer, ed->cursor);
-            }
-        } else if (c == '\r' || c == '\n') {
-            // Enter: Submit, unless we're in paste mode
+        } else if (c == '\n') {
+            // Ctrl+J (ASCII 10): Insert newline character for multiline input
             if (in_paste_mode) {
                 // In paste mode, insert newline as a regular character
                 unsigned char newline = '\n';
@@ -882,10 +876,16 @@ char* lineedit_readline(LineEditor *ed, const char *prompt) {
                     redraw_input_line(prompt, ed->buffer, ed->cursor);
                 }
             } else {
-                // Normal mode: submit on Enter
-                printf("\n");
-                running = 0;
+                // Normal mode: Ctrl+J inserts newline
+                unsigned char newline = '\n';
+                if (buffer_insert_char(ed, &newline, 1) == 0) {
+                    redraw_input_line(prompt, ed->buffer, ed->cursor);
+                }
             }
+        } else if (c == '\r') {
+            // Enter key (ASCII 13): Submit input
+            printf("\n");
+            running = 0;
                 } else if (c == '\t') {
             // Tab completion
             if (ed->completer) {

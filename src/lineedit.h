@@ -7,7 +7,7 @@
  * - Word operations (Alt+d, Alt+backspace)
  * - Line operations (Ctrl+k, Ctrl+u)
  * - Tab completion support (via callback)
- * - Multiline input (Ctrl+n, bracketed paste)
+ * - Multiline input (Ctrl+j, bracketed paste)
  */
 
 #ifndef LINEEDIT_H

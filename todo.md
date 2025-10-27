@@ -35,7 +35,7 @@ Now let me find the `interactive_mode` function:
 [Assistant] Let me check the current directory:
 ```
 
-- [ ] can we use ctrl + J for new line. what trick this node js claude used to achieve this?
+- [x] can we use ctrl + J for new line. what trick this node js claude used to achieve this?
 
 - [ ] 
 Goodbye!
