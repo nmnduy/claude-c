@@ -21,6 +21,9 @@
 #include <sys/stat.h>
 #include <cjson/cJSON.h>
 
+// Include the internal header for proper ConversationState definition
+#include "../src/claude_internal.h"
+
 // Test framework colors
 #define COLOR_RESET "\033[0m"
 #define COLOR_GREEN "\033[32m"
@@ -34,11 +37,6 @@ static int tests_passed = 0;
 static int tests_failed = 0;
 
 // Forward declarations from claude.c
-typedef struct {
-    char *api_key;
-    char *working_dir;
-} ConversationState;
-
 extern cJSON* tool_read(cJSON *params, ConversationState *state);
 extern char* read_file(const char *path);
 extern int write_file(const char *path, const char *content);
@@ -169,19 +167,39 @@ int main(void) {
     printf("\n%s========================================%s\n", COLOR_CYAN, COLOR_RESET);
     printf("   Enhanced Read Tool Test Suite\n");
     printf("%s========================================%s\n", COLOR_CYAN, COLOR_RESET);
-    
-    // Initialize state
-    ConversationState state;
+
+    // Initialize state - zero out all fields first
+    ConversationState state = {0};
+
+    // Use strdup to create a mutable copy for working_dir
+    char *working_dir_copy = strdup("/tmp");
+    if (!working_dir_copy) {
+        fprintf(stderr, "Failed to allocate memory for working_dir\n");
+        return 1;
+    }
+
     state.api_key = NULL;
-    state.working_dir = "/tmp";
-    
+    state.working_dir = working_dir_copy;
+    state.api_url = NULL;
+    state.model = NULL;
+    state.additional_dirs = NULL;
+    state.additional_dirs_count = 0;
+    state.additional_dirs_capacity = 0;
+    state.session_id = NULL;
+    state.persistence_db = NULL;
+    state.todo_list = NULL;
+    state.count = 0;
+
     // Run tests
     test_read_entire_file(&state);
     test_read_line_range(&state);
     test_read_invalid_range(&state);
-    
+
     // Print summary
     print_test_summary();
-    
+
+    // Cleanup
+    free(working_dir_copy);
+
     return tests_failed > 0 ? 1 : 0;
 }
