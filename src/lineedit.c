@@ -188,12 +188,22 @@ static int read_utf8_char(unsigned char *buffer, unsigned char first_byte) {
 static int buffer_delete_range(LineEditor *ed, int start, int end);
 
 // Check if character is word boundary
-static int is_word_boundary(char c) {
+#ifdef TEST_BUILD
+int
+#else
+static int
+#endif
+is_word_boundary(char c) {
     return !isalnum(c) && c != '_';
 }
 
 // Move cursor backward by one word
-static int move_backward_word(const char *buffer, int cursor_pos) {
+#ifdef TEST_BUILD
+int
+#else
+static int
+#endif
+move_backward_word(const char *buffer, int cursor_pos) {
     if (cursor_pos <= 0) return 0;
 
     int pos = cursor_pos - 1;
@@ -217,7 +227,12 @@ static int move_backward_word(const char *buffer, int cursor_pos) {
 }
 
 // Move cursor forward by one word
-static int move_forward_word(const char *buffer, int cursor_pos, int buffer_len) {
+#ifdef TEST_BUILD
+int
+#else
+static int
+#endif
+move_forward_word(const char *buffer, int cursor_pos, int buffer_len) {
     if (cursor_pos >= buffer_len) return buffer_len;
 
     int pos = cursor_pos;
@@ -251,7 +266,12 @@ static int delete_next_word(LineEditor *ed) {
 }
 
 // Calculate visible length of string (excluding ANSI escape sequences)
-static int visible_strlen(const char *str) {
+#ifdef TEST_BUILD
+int
+#else
+static int
+#endif
+visible_strlen(const char *str) {
     int visible_len = 0;
     int in_escape = 0;
 
