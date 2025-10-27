@@ -209,7 +209,7 @@ Tests are in `tests/test_edit.c` and verify:
 
 ### Running the Agent
 ```bash
-export ANTHROPIC_API_KEY="your-api-key"
+export OPENAI_API_KEY="your-api-key"
 ./build/claude-c "your prompt here"
 ```
 
