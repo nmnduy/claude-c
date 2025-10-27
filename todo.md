@@ -59,6 +59,7 @@ Abort trap: 6
 ⠸ Processing tool results...
 ```
 
+- [ ] large paste fails. how does node js claude prevents that and show X lines pasted.
 - [x] pressing Esc will wait for tool to finish but there is no indicator
 - [ ] logs are not flushed often?
 - [ ] are we logging enough? are all log records go to the same log file?

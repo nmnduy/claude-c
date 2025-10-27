@@ -55,6 +55,14 @@ static char* read_test_file() {
     return read_file(TEST_FILE);
 }
 
+// Helper to initialize ConversationState with working_dir
+static char* init_test_state(ConversationState *state) {
+    memset(state, 0, sizeof(ConversationState));
+    char *working_dir = strdup("/tmp");
+    state->working_dir = working_dir;
+    return working_dir;  // Caller must free this
+}
+
 static void assert_true(const char *test_name, int condition, const char *message) {
     tests_run++;
     if (condition) {
@@ -125,8 +133,8 @@ static void test_simple_single_replace() {
 
     setup_test_file("This is a test file.\nThe word test appears multiple times.\nWe use test to test the edit tool.\nTest test test!");
 
-    ConversationState state = {0};
-    state.working_dir = "/tmp";
+    ConversationState state;
+    char *working_dir = init_test_state(&state);
 
     cJSON *params = cJSON_CreateObject();
     cJSON_AddStringToObject(params, "file_path", TEST_FILE);
@@ -152,6 +160,7 @@ static void test_simple_single_replace() {
     cJSON_Delete(params);
     cJSON_Delete(result);
     cleanup_test_file();
+    free(working_dir);
 }
 
 static void test_multi_replace() {
@@ -159,8 +168,8 @@ static void test_multi_replace() {
 
     setup_test_file("This is a test file.\nThe word test appears multiple times.\nWe use test to test the edit tool.\nTest test test!");
 
-    ConversationState state = {0};
-    state.working_dir = "/tmp";
+    ConversationState state;
+    char *working_dir = init_test_state(&state);
 
     cJSON *params = cJSON_CreateObject();
     cJSON_AddStringToObject(params, "file_path", TEST_FILE);
@@ -190,6 +199,7 @@ static void test_multi_replace() {
     cJSON_Delete(params);
     cJSON_Delete(result);
     cleanup_test_file();
+    free(working_dir);
 }
 
 static void test_regex_single_replace() {
@@ -197,8 +207,8 @@ static void test_regex_single_replace() {
 
     setup_test_file("int oldVar = 5;\nint oldVar2 = 10;\nprintf(\"Value: %d\", oldVar);");
 
-    ConversationState state = {0};
-    state.working_dir = "/tmp";
+    ConversationState state;
+    char *working_dir = init_test_state(&state);
 
     cJSON *params = cJSON_CreateObject();
     cJSON_AddStringToObject(params, "file_path", TEST_FILE);
@@ -223,6 +233,7 @@ static void test_regex_single_replace() {
     cJSON_Delete(params);
     cJSON_Delete(result);
     cleanup_test_file();
+    free(working_dir);
 }
 
 static void test_regex_multi_replace() {
@@ -230,8 +241,8 @@ static void test_regex_multi_replace() {
 
     setup_test_file("// TODO: Fix this bug\n// TODO: Add error handling\n// TODO: Optimize performance\nint x = 5;");
 
-    ConversationState state = {0};
-    state.working_dir = "/tmp";
+    ConversationState state;
+    char *working_dir = init_test_state(&state);
 
     cJSON *params = cJSON_CreateObject();
     cJSON_AddStringToObject(params, "file_path", TEST_FILE);
@@ -262,6 +273,7 @@ static void test_regex_multi_replace() {
     cJSON_Delete(params);
     cJSON_Delete(result);
     cleanup_test_file();
+    free(working_dir);
 }
 
 static void test_regex_word_boundary() {
@@ -269,8 +281,8 @@ static void test_regex_word_boundary() {
 
     setup_test_file("The oldVar variable and oldVar2 and myoldVar are different.");
 
-    ConversationState state = {0};
-    state.working_dir = "/tmp";
+    ConversationState state;
+    char *working_dir = init_test_state(&state);
 
     cJSON *params = cJSON_CreateObject();
     cJSON_AddStringToObject(params, "file_path", TEST_FILE);
@@ -298,6 +310,7 @@ static void test_regex_word_boundary() {
     cJSON_Delete(params);
     cJSON_Delete(result);
     cleanup_test_file();
+    free(working_dir);
 }
 
 static void test_replace_numbers() {
@@ -305,8 +318,8 @@ static void test_replace_numbers() {
 
     setup_test_file("Replace 123 with NUMBER\nReplace 456 with NUMBER\nReplace 789 with NUMBER");
 
-    ConversationState state = {0};
-    state.working_dir = "/tmp";
+    ConversationState state;
+    char *working_dir = init_test_state(&state);
 
     cJSON *params = cJSON_CreateObject();
     cJSON_AddStringToObject(params, "file_path", TEST_FILE);
@@ -335,6 +348,7 @@ static void test_replace_numbers() {
     cJSON_Delete(params);
     cJSON_Delete(result);
     cleanup_test_file();
+    free(working_dir);
 }
 
 static void test_string_not_found() {
@@ -342,8 +356,8 @@ static void test_string_not_found() {
 
     setup_test_file("This file has no match");
 
-    ConversationState state = {0};
-    state.working_dir = "/tmp";
+    ConversationState state;
+    char *working_dir = init_test_state(&state);
 
     cJSON *params = cJSON_CreateObject();
     cJSON_AddStringToObject(params, "file_path", TEST_FILE);
@@ -364,6 +378,7 @@ static void test_string_not_found() {
     cJSON_Delete(params);
     cJSON_Delete(result);
     cleanup_test_file();
+    free(working_dir);
 }
 
 static void test_invalid_regex() {
@@ -371,8 +386,8 @@ static void test_invalid_regex() {
 
     setup_test_file("Some content");
 
-    ConversationState state = {0};
-    state.working_dir = "/tmp";
+    ConversationState state;
+    char *working_dir = init_test_state(&state);
 
     cJSON *params = cJSON_CreateObject();
     cJSON_AddStringToObject(params, "file_path", TEST_FILE);
@@ -387,13 +402,14 @@ static void test_invalid_regex() {
     cJSON_Delete(params);
     cJSON_Delete(result);
     cleanup_test_file();
+    free(working_dir);
 }
 
 static void test_missing_parameters() {
     printf("\n%s[Test: Missing Parameters Error]%s\n", COLOR_CYAN, COLOR_RESET);
 
-    ConversationState state = {0};
-    state.working_dir = "/tmp";
+    ConversationState state;
+    char *working_dir = init_test_state(&state);
 
     // Missing new_string
     cJSON *params = cJSON_CreateObject();
@@ -413,8 +429,8 @@ static void test_empty_string_replacement() {
 
     setup_test_file("Remove XXX from XXX this XXX text");
 
-    ConversationState state = {0};
-    state.working_dir = "/tmp";
+    ConversationState state;
+    char *working_dir = init_test_state(&state);
 
     cJSON *params = cJSON_CreateObject();
     cJSON_AddStringToObject(params, "file_path", TEST_FILE);
@@ -432,6 +448,7 @@ static void test_empty_string_replacement() {
     cJSON_Delete(params);
     cJSON_Delete(result);
     cleanup_test_file();
+    free(working_dir);
 }
 
 static void test_multiline_content() {
@@ -439,8 +456,8 @@ static void test_multiline_content() {
 
     setup_test_file("Line 1: test\nLine 2: test\nLine 3: test\n");
 
-    ConversationState state = {0};
-    state.working_dir = "/tmp";
+    ConversationState state;
+    char *working_dir = init_test_state(&state);
 
     cJSON *params = cJSON_CreateObject();
     cJSON_AddStringToObject(params, "file_path", TEST_FILE);
@@ -459,6 +476,7 @@ static void test_multiline_content() {
     cJSON_Delete(params);
     cJSON_Delete(result);
     cleanup_test_file();
+    free(working_dir);
 }
 
 // ============================================================================
