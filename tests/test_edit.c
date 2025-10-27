@@ -20,6 +20,9 @@
 #include <sys/stat.h>
 #include <cjson/cJSON.h>
 
+// Include internal header to get ConversationState definition
+#include "../src/claude_internal.h"
+
 // Test framework colors
 #define COLOR_RESET "\033[0m"
 #define COLOR_GREEN "\033[32m"
@@ -33,11 +36,6 @@ static int tests_passed = 0;
 static int tests_failed = 0;
 
 // Forward declarations from claude.c
-typedef struct {
-    char *api_key;
-    char *working_dir;
-} ConversationState;
-
 extern cJSON* tool_edit(cJSON *params, ConversationState *state);
 extern char* read_file(const char *path);
 extern int write_file(const char *path, const char *content);
