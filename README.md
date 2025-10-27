@@ -300,11 +300,11 @@ Searches for patterns in files (uses ripgrep/grep).
 - Non-streaming responses (streaming can be added)
 
 ### Tool Execution
-- **Sequential execution**: Tool calls execute one at a time
-- Results automatically added to conversation  
+- **Parallel execution**: Tool calls execute concurrently using pthreads
+- Results automatically added to conversation
 - Recursive execution: Claude can chain multiple tool calls
 - Error handling with detailed error messages
-- **Note**: Parallel execution infrastructure exists but is not yet enabled
+- **Note**: Exceeds the official Node.js implementation which executes tools sequentially
 
 ### Memory Management
 - Manual memory management (malloc/free)
@@ -325,6 +325,7 @@ Searches for patterns in files (uses ripgrep/grep).
 - ✅ **Theme system** with Kitty-compatible configuration
 - ✅ **Comprehensive logging** system
 - ✅ **Persistence layer** for API history and sessions
+- ✅ **Parallel tool execution** with pthreads (exceeds Node.js version)
 
 ### Not Included (from original)
 - ❌ MCP (Model Context Protocol) servers
@@ -335,23 +336,20 @@ Searches for patterns in files (uses ripgrep/grep).
 - ❌ **Interactive TUI mode** (one-shot prompts only)
 - ❌ Configuration files (environment variables only)
 - ❌ Session management across runs
-- ❌ **Parallel tool execution** (infrastructure exists, not enabled)
 
 ## Limitations
 
 1. **One-shot prompts only**: No interactive conversation mode
 2. **Non-streaming responses**: Waits for full API response
-3. **Sequential tool execution**: No parallel execution yet
-4. **No session persistence**: Conversations don't persist across runs
-5. **Environment-only configuration**: No config file support
-6. **Basic error handling**: Errors printed to stderr, minimal recovery
+3. **No session persistence**: Conversations don't persist across runs
+4. **Environment-only configuration**: No config file support
+5. **Basic error handling**: Errors printed to stderr, minimal recovery
 
 ## Future Enhancements
 
 ### High Priority
 - [ ] **Interactive TUI mode** - Multi-turn conversations
 - [ ] **Streaming API responses** (SSE) - Better UX
-- [ ] **Parallel tool execution** - Enable pthread infrastructure
 - [ ] **Session persistence** - Save/load conversations
 
 ### Medium Priority  
@@ -373,6 +371,7 @@ Searches for patterns in files (uses ripgrep/grep).
 - [x] **Theme system** - Kitty-compatible terminal themes
 - [x] **Logging system** - Comprehensive debugging support
 - [x] **Persistence layer** - API history and session data
+- [x] **Parallel tool execution** - Concurrent tool execution with pthreads
 
 ## Code Structure
 
