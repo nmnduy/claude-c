@@ -10,6 +10,34 @@
 #include <cjson/cJSON.h>
 
 // ============================================================================
+// Configuration Constants
+// ============================================================================
+
+#define VERSION "0.0.1"
+
+// API Configuration - defaults can be overridden by environment variables
+#define API_BASE_URL "https://api.openai.com"
+#define DEFAULT_MODEL "o4-mini"
+#define MAX_TOKENS 16384
+#define MAX_TOOLS 10
+#define BUFFER_SIZE 8192
+#define MAX_MESSAGES 10000
+
+// Retry configuration for rate limiting (429 errors)
+#define MAX_RETRIES 3                    // Maximum number of retry attempts
+#define INITIAL_BACKOFF_MS 1000          // Initial backoff delay in milliseconds
+#define MAX_BACKOFF_MS 10000             // Maximum backoff delay in milliseconds (10 seconds)
+#define BACKOFF_MULTIPLIER 2.0           // Exponential backoff multiplier
+
+// ANSI color codes (for non-TUI output)
+#define ANSI_RESET "\033[0m"
+#define ANSI_BLUE "\033[34m"
+#define ANSI_GREEN "\033[32m"
+#define ANSI_YELLOW "\033[33m"
+#define ANSI_RED "\033[31m"
+#define ANSI_CYAN "\033[36m"
+
+// ============================================================================
 // Forward Declarations
 // ============================================================================
 
@@ -54,8 +82,6 @@ typedef struct {
     ContentBlock *content;
     int content_count;
 } Message;
-
-#define MAX_MESSAGES 10000
 
 typedef struct ConversationState {
     Message messages[MAX_MESSAGES];
