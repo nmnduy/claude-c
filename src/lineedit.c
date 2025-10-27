@@ -118,7 +118,7 @@ static void register_cleanup_handlers(void) {
     signal(SIGINT, signal_handler);   // Ctrl+C
     signal(SIGTERM, signal_handler);  // kill command
     signal(SIGHUP, signal_handler);   // Terminal hangup
-    signal(SIGQUIT, signal_handler);  // Ctrl+\
+    signal(SIGQUIT, signal_handler);  /* Ctrl+\ */
 
     g_cleanup_registered = 1;
 }
