@@ -16,6 +16,9 @@
 // Primary color mappings for different UI elements
 // These are used when colorscheme colors are not available
 
+// Main text color - Default terminal color (light gray/white)
+#define ANSI_FALLBACK_FOREGROUND "\033[37m"
+
 // User messages - Green (standard terminal color)
 #define ANSI_FALLBACK_USER "\033[32m"
 
@@ -60,17 +63,19 @@
 // Returns the ANSI escape sequence for given element
 static inline const char* get_fallback_color(int element_type) {
     switch (element_type) {
-        case 0: // USER
+        case 0: // FOREGROUND
+            return ANSI_FALLBACK_FOREGROUND;
+        case 1: // USER
             return ANSI_FALLBACK_USER;
-        case 1: // ASSISTANT  
+        case 2: // ASSISTANT  
             return ANSI_FALLBACK_ASSISTANT;
-        case 2: // TOOL
+        case 3: // TOOL
             return ANSI_FALLBACK_TOOL;
-        case 3: // ERROR
+        case 4: // ERROR
             return ANSI_FALLBACK_ERROR;
-        case 4: // STATUS
+        case 5: // STATUS
             return ANSI_FALLBACK_STATUS;
-        case 5: // HEADER
+        case 6: // HEADER
             return ANSI_FALLBACK_HEADER;
         default:
             return "";
@@ -78,11 +83,12 @@ static inline const char* get_fallback_color(int element_type) {
 }
 
 // Element type constants for use with get_fallback_color()
-#define FALLBACK_USER 0
-#define FALLBACK_ASSISTANT 1
-#define FALLBACK_TOOL 2
-#define FALLBACK_ERROR 3
-#define FALLBACK_STATUS 4
-#define FALLBACK_HEADER 5
+#define FALLBACK_FOREGROUND 0
+#define FALLBACK_USER 1
+#define FALLBACK_ASSISTANT 2
+#define FALLBACK_TOOL 3
+#define FALLBACK_ERROR 4
+#define FALLBACK_STATUS 5
+#define FALLBACK_HEADER 6
 
 #endif // FALLBACK_COLORS_H
