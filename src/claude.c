@@ -344,9 +344,9 @@ STATIC char* read_file(const char *path) {
     long fsize = ftell(f);
     fseek(f, 0, SEEK_SET);
 
-    char *content = malloc(fsize + 1);
+    char *content = malloc((size_t)fsize + 1);
     if (content) {
-        fread(content, 1, fsize, f);
+        fread(content, 1, (size_t)fsize, f);
         content[fsize] = 0;
     }
 
@@ -473,7 +473,7 @@ int add_directory(ConversationState *state, const char *path) {
     // Expand array if needed
     if (state->additional_dirs_count >= state->additional_dirs_capacity) {
         int new_capacity = state->additional_dirs_capacity == 0 ? 4 : state->additional_dirs_capacity * 2;
-        char **new_array = realloc(state->additional_dirs, new_capacity * sizeof(char*));
+        char **new_array = realloc(state->additional_dirs, (size_t)new_capacity * sizeof(char*));
         if (!new_array) {
             free(resolved_path);
             return -1;  // Out of memory
@@ -625,7 +625,7 @@ STATIC cJSON* tool_read(cJSON *params, ConversationState *state) {
                 
                 if (include) {
                     // Add this line to result
-                    char *new_buffer = realloc(result_buffer, result_size + line_len + 1);
+                    char *new_buffer = realloc(result_buffer, result_size + (size_t)line_len + 1);
                     if (!new_buffer) {
                         free(result_buffer);
                         free(content);
@@ -634,8 +634,8 @@ STATIC cJSON* tool_read(cJSON *params, ConversationState *state) {
                         return error;
                     }
                     result_buffer = new_buffer;
-                    memcpy(result_buffer + result_size, line_start, line_len);
-                    result_size += line_len;
+                    memcpy(result_buffer + result_size, line_start, (size_t)line_len);
+                    result_size += (size_t)line_len;
                     result_buffer[result_size] = '\0';
                 }
                 
