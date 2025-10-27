@@ -102,19 +102,19 @@ For a typical conversation turn with caching:
 ### Enable Caching (Default)
 
 ```bash
-./build/claude "your prompt here"
+./build/claude-c "your prompt here"
 ```
 
 ### Disable Caching
 
 ```bash
 export DISABLE_PROMPT_CACHING=1
-./build/claude "your prompt here"
+./build/claude-c "your prompt here"
 ```
 
 Or for a single run:
 ```bash
-DISABLE_PROMPT_CACHING=1 ./build/claude "your prompt here"
+DISABLE_PROMPT_CACHING=1 ./build/claude-c "your prompt here"
 ```
 
 ## Testing
