@@ -8,26 +8,6 @@
 #include <math.h>
 #include "logger.h"
 
-// Basic ANSI color constants (from ncurses)
-#define COLOR_BLACK 0
-#define COLOR_RED 1
-#define COLOR_GREEN 2
-#define COLOR_YELLOW 3
-#define COLOR_BLUE 4
-#define COLOR_MAGENTA 5
-#define COLOR_CYAN 6
-#define COLOR_WHITE 7
-
-// Extended color support flag (for 256-color terminals)
-#define COLORS 256
-
-// TUI color pair assignments
-#define PAIR_ASSISTANT  1  // Assistant text
-#define PAIR_USER       2  // User text
-#define PAIR_STATUS     3  // Status bar
-#define PAIR_HEADER     4  // Headers/info
-#define PAIR_ERROR      5  // Errors
-
 // Colorscheme element types (for ANSI escape code generation)
 typedef enum {
     COLORSCHEME_USER,
@@ -46,12 +26,6 @@ typedef struct {
 
 // Theme structure to hold parsed Kitty colors
 typedef struct {
-    int assistant_fg;    // Assistant text color
-    int user_fg;         // User text color
-    int status_bg;       // Status bar color
-    int error_fg;        // Error message color
-    int header_fg;       // Header color
-    int background;      // Background color
     RGB assistant_rgb;   // RGB values for ANSI codes
     RGB user_rgb;
     RGB status_rgb;
@@ -93,61 +67,6 @@ static RGB parse_hex_color(const char *hex) {
     }
 
     return rgb;
-}
-
-// Convert RGB (0-255) to ncurses color number (0-255)
-// Uses the standard 256-color palette
-static int rgb_to_ncurses_color(RGB rgb) {
-    // For the 8 basic colors, use COLOR_* constants
-    if (rgb.r == 0 && rgb.g == 0 && rgb.b == 0) return COLOR_BLACK;
-    if (rgb.r >= 200 && rgb.g < 50 && rgb.b < 50) return COLOR_RED;
-    if (rgb.r < 50 && rgb.g >= 200 && rgb.b < 50) return COLOR_GREEN;
-    if (rgb.r >= 200 && rgb.g >= 200 && rgb.b < 50) return COLOR_YELLOW;
-    if (rgb.r < 50 && rgb.g < 50 && rgb.b >= 200) return COLOR_BLUE;
-    if (rgb.r >= 200 && rgb.g < 50 && rgb.b >= 200) return COLOR_MAGENTA;
-    if (rgb.r < 50 && rgb.g >= 200 && rgb.b >= 200) return COLOR_CYAN;
-    if (rgb.r >= 200 && rgb.g >= 200 && rgb.b >= 200) return COLOR_WHITE;
-
-    // For 256-color terminals, use the extended palette
-    // Colors 16-231 are a 6x6x6 RGB cube
-    // Colors 232-255 are grayscale
-
-    if (COLORS >= 256) {
-        // Check if it's a grayscale color
-        int avg = (rgb.r + rgb.g + rgb.b) / 3;
-        int r_diff = abs(rgb.r - avg);
-        int g_diff = abs(rgb.g - avg);
-        int b_diff = abs(rgb.b - avg);
-
-        if (r_diff < 10 && g_diff < 10 && b_diff < 10) {
-            // Grayscale ramp: 232-255 (24 shades)
-            int gray_index = (avg * 23) / 255;
-            int color = 232 + gray_index;
-            LOG_DEBUG("[THEME]     RGB(%d,%d,%d) -> grayscale color %d",
-                    rgb.r, rgb.g, rgb.b, color);
-            return color;
-        }
-
-        // 6x6x6 RGB cube (216 colors): 16-231
-        int r_idx = (rgb.r * 5) / 255;
-        int g_idx = (rgb.g * 5) / 255;
-        int b_idx = (rgb.b * 5) / 255;
-        int color = 16 + (36 * r_idx) + (6 * g_idx) + b_idx;
-
-        LOG_DEBUG("[THEME]     RGB(%d,%d,%d) -> 256-color %d",
-                rgb.r, rgb.g, rgb.b, color);
-        return color;
-    }
-
-    // Fallback for 8-color terminals
-    int r = rgb.r >= 128 ? 1 : 0;
-    int g = rgb.g >= 128 ? 1 : 0;
-    int b = rgb.b >= 128 ? 1 : 0;
-    int color = r * COLOR_RED + g * COLOR_GREEN + b * COLOR_BLUE;
-
-    LOG_DEBUG("[THEME]     RGB(%d,%d,%d) -> basic color %d",
-            rgb.r, rgb.g, rgb.b, color);
-    return color;
 }
 
 // Convert RGB to ANSI 256-color escape code
@@ -220,14 +139,6 @@ static int load_kitty_theme(const char *filepath, Theme *theme) {
 
     LOG_DEBUG("[THEME] File opened successfully");
 
-    // Initialize with defaults (will be overridden by theme)
-    theme->assistant_fg = COLOR_BLUE;
-    theme->user_fg = COLOR_GREEN;
-    theme->status_bg = COLOR_YELLOW;
-    theme->error_fg = COLOR_RED;
-    theme->header_fg = COLOR_CYAN;
-    theme->background = COLOR_BLACK;
-
     char line[1024];
     int line_num = 0;
     int parsed_count = 0;
@@ -254,44 +165,33 @@ static int load_kitty_theme(const char *filepath, Theme *theme) {
             LOG_DEBUG("[THEME] Line %d: %s = %s", line_num, key, value);
 
             RGB rgb = parse_hex_color(value);
-            int color = rgb_to_ncurses_color(rgb);
 
             // Map Kitty color keys to TUI elements
             if (strcmp(key, "foreground") == 0 || strcmp(key, "assistant_fg") == 0) {
-                theme->assistant_fg = color;
                 theme->assistant_rgb = rgb;
                 parsed_count++;
-                LOG_DEBUG("[THEME]   -> Set assistant_fg = %d", color);
+                LOG_DEBUG("[THEME]   -> Set assistant_rgb = RGB(%d,%d,%d)", rgb.r, rgb.g, rgb.b);
             }
             else if (strcmp(key, "color2") == 0 || strcmp(key, "user_fg") == 0) {
-                theme->user_fg = color;
                 theme->user_rgb = rgb;
                 parsed_count++;
-                LOG_DEBUG("[THEME]   -> Set user_fg = %d", color);
+                LOG_DEBUG("[THEME]   -> Set user_rgb = RGB(%d,%d,%d)", rgb.r, rgb.g, rgb.b);
             }
             else if (strcmp(key, "color3") == 0 || strcmp(key, "status_bg") == 0) {
-                theme->status_bg = color;
                 theme->status_rgb = rgb;
                 parsed_count++;
-                LOG_DEBUG("[THEME]   -> Set status_bg = %d", color);
+                LOG_DEBUG("[THEME]   -> Set status_rgb = RGB(%d,%d,%d)", rgb.r, rgb.g, rgb.b);
             }
             else if (strcmp(key, "color1") == 0 || strcmp(key, "error_fg") == 0) {
-                theme->error_fg = color;
                 theme->error_rgb = rgb;
                 parsed_count++;
-                LOG_DEBUG("[THEME]   -> Set error_fg = %d", color);
+                LOG_DEBUG("[THEME]   -> Set error_rgb = RGB(%d,%d,%d)", rgb.r, rgb.g, rgb.b);
             }
             else if (strcmp(key, "color4") == 0 || strcmp(key, "color6") == 0 ||
                      strcmp(key, "header_fg") == 0) {
-                theme->header_fg = color;
                 theme->header_rgb = rgb;
                 parsed_count++;
-                LOG_DEBUG("[THEME]   -> Set header_fg = %d", color);
-            }
-            else if (strcmp(key, "background") == 0) {
-                theme->background = color;
-                parsed_count++;
-                LOG_DEBUG("[THEME]   -> Set background = %d", color);
+                LOG_DEBUG("[THEME]   -> Set header_rgb = RGB(%d,%d,%d)", rgb.r, rgb.g, rgb.b);
             }
         }
     }
