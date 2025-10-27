@@ -22,98 +22,9 @@
 // Global spinner for TUI status updates
 static Spinner *g_tui_spinner = NULL;
 
-// Helper: Duplicate a string
-static char* str_dup(const char *str) {
-    if (!str) return NULL;
-    size_t len = strlen(str);
-    char *dup = malloc(len + 1);
-    if (dup) {
-        memcpy(dup, str, len + 1);
-    }
-    return dup;
-}
 
-// Helper: Word-wrap text to fit within specified width
-// Returns array of lines (caller must free each line and the array)
-static char** word_wrap(const char *text, int width, int *line_count) {
-    *line_count = 0;
-    if (!text || width <= 0) return NULL;
 
-    int capacity = 10;
-    char **lines = malloc(capacity * sizeof(char*));
-    if (!lines) return NULL;
 
-    const char *p = text;
-    while (*p) {
-        // Find end of line (natural newline or width limit)
-        const char *line_start = p;
-        const char *last_space = NULL;
-        int col = 0;
-
-        while (*p && *p != '\n') {
-            if (*p == ' ' || *p == '\t') {
-                last_space = p;
-            }
-            col++;
-            if (col >= width) {
-                // Need to wrap
-                if (last_space && last_space > line_start) {
-                    // Break at last space
-                    p = last_space + 1;
-                } else {
-                    // No space found, hard break
-                }
-                break;
-            }
-            p++;
-        }
-
-        // Extract line
-        int line_len = p - line_start;
-        if (*p == '\n') {
-            p++; // Skip newline
-        }
-
-        // Trim trailing spaces from line
-        while (line_len > 0 && (line_start[line_len-1] == ' ' || line_start[line_len-1] == '\t')) {
-            line_len--;
-        }
-
-        // Allocate and store line
-        if (*line_count >= capacity) {
-            capacity *= 2;
-            char **new_lines = realloc(lines, capacity * sizeof(char*));
-            if (!new_lines) {
-                for (int i = 0; i < *line_count; i++) {
-                    free(lines[i]);
-                }
-                free(lines);
-                return NULL;
-            }
-            lines = new_lines;
-        }
-
-        lines[*line_count] = malloc(line_len + 1);
-        if (!lines[*line_count]) {
-            for (int i = 0; i < *line_count; i++) {
-                free(lines[i]);
-            }
-            free(lines);
-            return NULL;
-        }
-        memcpy(lines[*line_count], line_start, line_len);
-        lines[*line_count][line_len] = '\0';
-        (*line_count)++;
-    }
-
-    // If no lines were created, create one empty line
-    if (*line_count == 0) {
-        lines[0] = str_dup("");
-        *line_count = 1;
-    }
-
-    return lines;
-}
 
 int tui_init(TUIState *tui) {
     if (!tui) return -1;

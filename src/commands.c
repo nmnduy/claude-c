@@ -192,7 +192,7 @@ const Command** commands_list(int *count) {
 // ============================================================================
 
 CompletionResult* commands_tab_completer(const char *line, int cursor_pos, void *ctx) {
-    ConversationState *state = (ConversationState*)ctx;
+    (void)ctx;  // Suppress unused parameter warning
     if (!line || line[0] != '/') return NULL;
     const char *space = strchr(line, ' ');
     int cmd_name_len = space ? (space - line - 1) : ((int)strlen(line) - 1);
