@@ -59,7 +59,7 @@ Abort trap: 6
 ⠸ Processing tool results...
 ```
 
-- [ ] pressing Esc will wait for tool to finish but there is no indicator
+- [x] pressing Esc will wait for tool to finish but there is no indicator
 - [ ] logs are not flushed often?
 - [ ] are we logging enough? are all log records go to the same log file?
 - [x] all log records should have session id tag. sessions are essential and each run has a new session id

@@ -2568,12 +2568,13 @@ static void process_response(ConversationState *state, cJSON *response, TUIState
                 LOG_INFO("Tool execution interrupted by user (ESC pressed)");
                 interrupted = 1;
 
-                // Notify user immediately
+                // Update status to show we're waiting for tools to finish
+                // Keep spinner active to provide continuous visual feedback
                 if (!tui) {
-                    spinner_stop(tool_spinner, "Interrupted by user (ESC) - waiting for tools to finish...", 0);
-                    tool_spinner = NULL;  // Mark as stopped
+                    // Update spinner message but keep it running
+                    spinner_update(tool_spinner, "Interrupted (ESC) - waiting for tools to finish...");
                 } else {
-                    tui_update_status(tui, "Interrupted by user (ESC) - waiting for tools to finish...");
+                    tui_update_status(tui, "Interrupted (ESC) - waiting for tools to finish...");
                 }
                 break;
             }
@@ -2581,6 +2582,7 @@ static void process_response(ConversationState *state, cJSON *response, TUIState
         }
 
         // Wait for monitor thread to complete (this ensures all tool threads are joined)
+        // The spinner continues running during this wait to provide visual feedback
         pthread_join(monitor_thread, NULL);
 
         clock_gettime(CLOCK_MONOTONIC, &tool_end);
@@ -2592,10 +2594,10 @@ static void process_response(ConversationState *state, cJSON *response, TUIState
         if (interrupted) {
             if (!tui) {
                 if (tool_spinner) {
-                    spinner_stop(tool_spinner, "Interrupted by user (ESC)", 0);
+                    spinner_stop(tool_spinner, "Interrupted by user (ESC) - tools completed", 0);
                 }
             } else {
-                tui_update_status(tui, "Interrupted by user (ESC)");
+                tui_update_status(tui, "Interrupted by user (ESC) - tools completed");
             }
 
             free(threads);
