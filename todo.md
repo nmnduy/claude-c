@@ -28,7 +28,7 @@ Now let me find the `interactive_mode` function:
 ```
 
 
-- [ ] why does it fail with failed to resolve path. isn't that path same dir? log debug more when we see this to help fixing the problem. maybe unit test this tool more.
+- [x] why does it fail with failed to resolve path. isn't that path same dir? log debug more when we see this to help fixing the problem. maybe unit test this tool more.
 ```sh
 [Tool: Write] test_todo_simple.c
 [Error] Write failed: Failed to resolve path
