@@ -117,7 +117,16 @@ export ANTHROPIC_API_KEY="your-api-key-here"
 ./claude "your prompt here"
 ```
 
-**Note:** The project currently supports one-shot prompts only. Interactive TUI mode is planned for future releases.
+**Interactive mode:**
+```bash
+./claude
+```
+
+The interactive mode supports:
+- Multi-turn conversations
+- ESC key interruption: Press ESC to stop the agent during API calls or tool execution
+- Slash commands: `/clear`, `/exit`, `/quit`, `/help`, `/add-dir`
+- Readline-style editing: Ctrl+A, Ctrl+E, Alt+B, Alt+F, etc.
 
 ### Color Theme Support
 
@@ -333,22 +342,19 @@ Searches for patterns in files (uses ripgrep/grep).
 - ❌ Permission management
 - ❌ Advanced tools (Task, WebFetch, etc.)
 - ❌ **Streaming responses** (currently non-streaming only)
-- ❌ **Interactive TUI mode** (one-shot prompts only)
 - ❌ Configuration files (environment variables only)
 - ❌ Session management across runs
 
 ## Limitations
 
-1. **One-shot prompts only**: No interactive conversation mode
-2. **Non-streaming responses**: Waits for full API response
-3. **No session persistence**: Conversations don't persist across runs
-4. **Environment-only configuration**: No config file support
-5. **Basic error handling**: Errors printed to stderr, minimal recovery
+1. **Non-streaming responses**: Waits for full API response
+2. **No session persistence**: Conversations don't persist across runs
+3. **Environment-only configuration**: No config file support
+4. **Basic error handling**: Errors printed to stderr, minimal recovery
 
 ## Future Enhancements
 
 ### High Priority
-- [ ] **Interactive TUI mode** - Multi-turn conversations
 - [ ] **Streaming API responses** (SSE) - Better UX
 - [ ] **Session persistence** - Save/load conversations
 
@@ -372,6 +378,7 @@ Searches for patterns in files (uses ripgrep/grep).
 - [x] **Logging system** - Comprehensive debugging support
 - [x] **Persistence layer** - API history and session data
 - [x] **Parallel tool execution** - Concurrent tool execution with pthreads
+- [x] **ESC key interruption** - Stop agent work with ESC key during API calls or tool execution
 
 ## Code Structure
 
@@ -490,6 +497,8 @@ Typical performance on modern hardware:
 ### ✅ What's Working Now
 
 **Core Functionality**
+- Interactive TUI mode with multi-turn conversations
+- ESC key interruption during API calls and tool execution
 - One-shot prompt processing with Claude API
 - All 6 essential tools (Bash, Read, Write, Edit, Glob, Grep)
 - Advanced features: regex in Edit, line ranges in Read
@@ -497,6 +506,9 @@ Typical performance on modern hardware:
 - Comprehensive logging and persistence
 
 **User Experience**
+- Interactive TUI with readline-style editing
+- ESC key to stop agent work in real-time
+- Slash commands for conversation control
 - Kitty-compatible theme system (300+ themes available)
 - Environment-based configuration
 - Detailed error messages and debugging support
@@ -505,9 +517,7 @@ Typical performance on modern hardware:
 ### 🚧 What's Missing
 
 **Major Features**
-- Interactive TUI mode (currently one-shot only)
 - Streaming API responses
-- Parallel tool execution
 - Session persistence across runs
 
 **Infrastructure**
@@ -521,7 +531,7 @@ Typical performance on modern hardware:
 - **Architecture**: 100% - Modular design implemented
 - **Core Tools**: 100% - All essential tools working
 - **API Integration**: 90% - Missing streaming
-- **User Experience**: 70% - Themes work, no interactive mode
+- **User Experience**: 95% - Interactive mode, themes, ESC interruption all working
 - **Advanced Features**: 40% - Logging/persistence done, missing MCP/hooks
 
 ## Security Notes
