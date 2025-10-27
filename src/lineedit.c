@@ -533,6 +533,41 @@ static int buffer_backspace(LineEditor *ed) {
     return 1;
 }
 
+// Delete word before cursor (Alt+Backspace)
+// Returns: number of bytes deleted, or 0 if nothing to delete
+static int buffer_delete_word_backward(LineEditor *ed) {
+    if (ed->cursor <= 0) {
+        return 0;  // Nothing to delete
+    }
+
+    int word_start = ed->cursor - 1;
+
+    // Skip trailing whitespace/punctuation (word boundaries)
+    while (word_start > 0 && is_word_boundary(ed->buffer[word_start])) {
+        word_start--;
+    }
+
+    // Skip the word characters (alphanumeric + underscore)
+    while (word_start > 0 && !is_word_boundary(ed->buffer[word_start])) {
+        word_start--;
+    }
+
+    // If we stopped at a boundary (not at start), move one forward
+    if (word_start > 0 && is_word_boundary(ed->buffer[word_start])) {
+        word_start++;
+    }
+
+    int delete_count = ed->cursor - word_start;
+    if (delete_count > 0) {
+        memmove(&ed->buffer[word_start], &ed->buffer[ed->cursor],
+                ed->length - ed->cursor + 1);
+        ed->length -= delete_count;
+        ed->cursor = word_start;
+    }
+
+    return delete_count;
+}
+
 // Delete range of characters
 // Returns: number of bytes deleted
 static int buffer_delete_range(LineEditor *ed, int start, int end) {
@@ -672,6 +707,11 @@ char* lineedit_readline(LineEditor *ed, const char *prompt) {
             } else if (seq[0] == 'd' || seq[0] == 'D') {
                 // Alt+d: delete next word
                 if (delete_next_word(ed) > 0) {
+                    redraw_input_line(prompt, ed->buffer, ed->cursor);
+                }
+            } else if (seq[0] == 127 || seq[0] == 8) {
+                // Alt+Backspace: delete previous word
+                if (buffer_delete_word_backward(ed) > 0) {
                     redraw_input_line(prompt, ed->buffer, ed->cursor);
                 }
             } else if (seq[0] == '[') {
