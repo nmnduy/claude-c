@@ -7,6 +7,7 @@
 #include <ctype.h>
 #include <math.h>
 #include "logger.h"
+#include "fallback_colors.h"
 
 // Colorscheme element types (for ANSI escape code generation)
 typedef enum {

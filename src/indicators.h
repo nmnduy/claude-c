@@ -14,6 +14,7 @@
 #include <unistd.h>
 #include <pthread.h>
 #include <time.h>
+#include "fallback_colors.h"
 
 // Spinner animation frames using Unicode characters
 // These render beautifully in GPU-accelerated terminals like Kitty, Alacritty, WezTerm
@@ -29,12 +30,12 @@ static const char *SPINNER_LINE[] = {"-", "\\", "|", "/"};
 static const char *SPINNER_BOX[] = {"◰", "◳", "◲", "◱"};
 static const char *SPINNER_CIRCLE[] = {"◜", "◠", "◝", "◞", "◡", "◟"};
 
-// Color codes
-#define SPINNER_CYAN "\033[36m"
-#define SPINNER_YELLOW "\033[33m"
-#define SPINNER_GREEN "\033[32m"
-#define SPINNER_BLUE "\033[34m"
-#define SPINNER_RESET "\033[0m"
+// Color codes - use centralized fallback system
+#define SPINNER_CYAN ANSI_FALLBACK_CYAN
+#define SPINNER_YELLOW ANSI_FALLBACK_YELLOW
+#define SPINNER_GREEN ANSI_FALLBACK_GREEN
+#define SPINNER_BLUE ANSI_FALLBACK_BLUE
+#define SPINNER_RESET ANSI_RESET
 
 typedef struct {
     pthread_t thread;
@@ -123,7 +124,7 @@ static void spinner_stop(Spinner *spinner, const char *final_message, int succes
         if (success) {
             printf("%s✓%s %s\n", SPINNER_GREEN, SPINNER_RESET, final_message);
         } else {
-            printf("%s✗%s %s\n", "\033[31m", SPINNER_RESET, final_message);
+            printf("%s✗%s %s\n", ANSI_FALLBACK_ERROR, SPINNER_RESET, final_message);
         }
     }
 

@@ -31,6 +31,7 @@
 #include <ctype.h>
 #include <signal.h>
 #include "colorscheme.h"
+#include "fallback_colors.h"
 
 #ifdef TEST_BUILD
 // Test build: stub out persistence (logger is linked via LOGGER_OBJ)
@@ -87,12 +88,28 @@ static void persistence_log_api_call(
 
 
 static void print_assistant(const char *text) {
-    printf("%s[Assistant]%s %s\n", ANSI_BLUE, ANSI_RESET, text);
+    // Try to get color from colorscheme, fall back to centralized ANSI color
+    char color_code[32];
+    const char *color_start;
+    if (get_colorscheme_color(COLORSCHEME_ASSISTANT, color_code, sizeof(color_code)) == 0) {
+        color_start = color_code;
+    } else {
+        color_start = ANSI_FALLBACK_ASSISTANT;
+    }
+    printf("%s[Assistant]%s %s\n", color_start, ANSI_RESET, text);
     fflush(stdout);
 }
 
 static void print_tool(const char *tool_name, const char *details) {
-    printf("%s[Tool: %s]%s", ANSI_YELLOW, tool_name, ANSI_RESET);
+    // Try to get color from colorscheme, fall back to centralized ANSI color
+    char color_code[32];
+    const char *color_start;
+    if (get_colorscheme_color(COLORSCHEME_TOOL, color_code, sizeof(color_code)) == 0) {
+        color_start = color_code;
+    } else {
+        color_start = ANSI_FALLBACK_TOOL;
+    }
+    printf("%s[Tool: %s]%s", color_start, tool_name, ANSI_RESET);
     if (details && strlen(details) > 0) {
         printf(" %s", details);
     }
@@ -2566,7 +2583,15 @@ static void process_response(ConversationState *state, cJSON *response, TUIState
                 } else {
                     char error_display[512];
                     snprintf(error_display, sizeof(error_display), "[Error] %s failed: %s", tool_name, error_msg);
-                    printf("%s%s%s\n", ANSI_RED, error_display, ANSI_RESET);
+                    // Try to get color from colorscheme, fall back to centralized ANSI color
+                    char color_code[32];
+                    const char *color_start;
+                    if (get_colorscheme_color(COLORSCHEME_ERROR, color_code, sizeof(color_code)) == 0) {
+                        color_start = color_code;
+                    } else {
+                        color_start = ANSI_FALLBACK_ERROR;
+                    }
+                    printf("%s%s%s\n", color_start, error_display, ANSI_RESET);
                     fflush(stdout);
                 }
             }
@@ -2690,14 +2715,14 @@ static void interactive_mode(ConversationState *state) {
     if (get_colorscheme_color(COLORSCHEME_ASSISTANT, color_code, sizeof(color_code)) == 0) {
         banner_color = color_code;
     } else {
-        banner_color = "\033[1;34m";  // Bold blue fallback
+        banner_color = ANSI_FALLBACK_BOLD_BLUE;  // Bold blue fallback from centralized system
     }
 
     printf("%s", banner_color);
     printf(" ▐▛███▜▌   claude-c v%s\n", VERSION);
     printf("▝▜█████▛▘  %s\n", state->model);
     printf("  ▘▘ ▝▝    %s\n", state->working_dir);
-    printf("\033[0m\n");  // Reset color and add blank line
+    printf(ANSI_RESET "\n");  // Reset color and add blank line
     fflush(stdout);
 
     // Initialize TUI
