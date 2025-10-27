@@ -654,6 +654,7 @@ char* lineedit_readline(LineEditor *ed, const char *prompt) {
     // Set up raw mode
     new_term = g_original_termios;
     new_term.c_lflag &= ~(ICANON | ECHO);  // Disable canonical mode and echo
+    new_term.c_iflag &= ~(ICRNL | INLCR);  // Don't translate CR<->NL so we can distinguish Enter from Ctrl+J
     new_term.c_cc[VMIN] = 1;
     new_term.c_cc[VTIME] = 0;
     tcsetattr(STDIN_FILENO, TCSANOW, &new_term);
@@ -886,7 +887,7 @@ char* lineedit_readline(LineEditor *ed, const char *prompt) {
             // Enter key (ASCII 13): Submit input
             printf("\n");
             running = 0;
-                } else if (c == '\t') {
+        } else if (c == '\t') {
             // Tab completion
             if (ed->completer) {
                 CompletionResult *res = ed->completer(ed->buffer, ed->cursor, ed->completer_ctx);
