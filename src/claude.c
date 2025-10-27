@@ -2495,13 +2495,16 @@ static void process_response(ConversationState *state, cJSON *response, TUIState
             char *tool_details = get_tool_details(name->valuestring, input);
             
             if (tui) {
+                char prefix_with_tool[128];
+                snprintf(prefix_with_tool, sizeof(prefix_with_tool), "[Tool: %s]", name->valuestring);
+                
                 char tool_msg[256];
                 if (tool_details) {
-                    snprintf(tool_msg, sizeof(tool_msg), "%s] %s", name->valuestring, tool_details);
+                    snprintf(tool_msg, sizeof(tool_msg), "%s", tool_details);
                 } else {
-                    snprintf(tool_msg, sizeof(tool_msg), "%s", name->valuestring);
+                    tool_msg[0] = '\0';  // Empty string if no details
                 }
-                tui_add_conversation_line(tui, "[Tool:", tool_msg, COLOR_PAIR_TOOL);
+                tui_add_conversation_line(tui, prefix_with_tool, tool_msg, COLOR_PAIR_TOOL);
             } else {
                 print_tool(name->valuestring, tool_details);
             }

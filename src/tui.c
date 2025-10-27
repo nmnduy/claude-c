@@ -304,7 +304,7 @@ void tui_show_startup_banner(TUIState *tui, const char *version, const char *mod
     if (get_colorscheme_color(COLORSCHEME_ASSISTANT, mascot_color_code, sizeof(mascot_color_code)) == 0) {
         mascot_color_start = mascot_color_code;
     } else {
-        mascot_color_start = ANSI_FALLBACK_ASSISTANT;  // Blue fallback
+        mascot_color_start = ANSI_FALLBACK_BOLD_CYAN;  // Bold cyan - more visible on dark backgrounds
     }
     
     // Get foreground color for text information
