@@ -17,13 +17,14 @@ typedef struct _win_st WINDOW;
 
 // TUI Color pairs
 typedef enum {
-    COLOR_PAIR_DEFAULT = 1,
-    COLOR_PAIR_USER = 2,       // Green for user messages
-    COLOR_PAIR_ASSISTANT = 3,  // Blue for assistant messages
-    COLOR_PAIR_TOOL = 4,       // Yellow for tool execution
-    COLOR_PAIR_ERROR = 5,      // Red for errors
-    COLOR_PAIR_STATUS = 6,     // Cyan for status messages
-    COLOR_PAIR_PROMPT = 7      // Green for input prompt
+    COLOR_PAIR_DEFAULT = 1,    // Foreground color for main text
+    COLOR_PAIR_FOREGROUND = 2, // Explicit foreground color
+    COLOR_PAIR_USER = 3,       // Green for user role names
+    COLOR_PAIR_ASSISTANT = 4,  // Blue for assistant role names
+    COLOR_PAIR_TOOL = 5,       // Yellow for tool execution indicators
+    COLOR_PAIR_ERROR = 6,      // Red for errors
+    COLOR_PAIR_STATUS = 7,     // Cyan for status messages
+    COLOR_PAIR_PROMPT = 8      // Green for input prompt
 } TUIColorPair;
 
 // TUI State

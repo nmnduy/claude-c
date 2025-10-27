@@ -11,6 +11,7 @@
 
 // Colorscheme element types (for ANSI escape code generation)
 typedef enum {
+    COLORSCHEME_FOREGROUND,  // Main text color for majority of content
     COLORSCHEME_USER,
     COLORSCHEME_ASSISTANT,
     COLORSCHEME_TOOL,
@@ -27,6 +28,7 @@ typedef struct {
 
 // Theme structure to hold parsed Kitty colors
 typedef struct {
+    RGB foreground_rgb;  // Main text color for majority of content
     RGB assistant_rgb;   // RGB values for ANSI codes
     RGB user_rgb;
     RGB status_rgb;
@@ -105,6 +107,9 @@ static int get_colorscheme_color(ColorschemeElement element, char *buf, size_t b
 
     RGB rgb = {0, 0, 0};
     switch (element) {
+        case COLORSCHEME_FOREGROUND:
+            rgb = g_theme.foreground_rgb;
+            break;
         case COLORSCHEME_USER:
             rgb = g_theme.user_rgb;
             break;
@@ -168,7 +173,12 @@ static int load_kitty_theme(const char *filepath, Theme *theme) {
             RGB rgb = parse_hex_color(value);
 
             // Map Kitty color keys to TUI elements
-            if (strcmp(key, "foreground") == 0 || strcmp(key, "assistant_fg") == 0) {
+            if (strcmp(key, "foreground") == 0) {
+                theme->foreground_rgb = rgb;
+                parsed_count++;
+                LOG_DEBUG("[THEME]   -> Set foreground_rgb = RGB(%d,%d,%d)", rgb.r, rgb.g, rgb.b);
+            }
+            else if (strcmp(key, "assistant_fg") == 0) {
                 theme->assistant_rgb = rgb;
                 parsed_count++;
                 LOG_DEBUG("[THEME]   -> Set assistant_rgb = RGB(%d,%d,%d)", rgb.r, rgb.g, rgb.b);
@@ -227,6 +237,7 @@ static int init_colorscheme(const char *filepath) {
     LOG_DEBUG("[THEME] Using default colors");
 
     // Set default RGB values for ANSI codes
+    g_theme.foreground_rgb = (RGB){221, 221, 221};  // Light gray (default terminal text)
     g_theme.assistant_rgb = (RGB){100, 149, 237};   // Cornflower blue
     g_theme.user_rgb = (RGB){80, 250, 123};         // Bright green
     g_theme.status_rgb = (RGB){241, 250, 140};      // Yellow

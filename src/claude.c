@@ -88,30 +88,54 @@ static void persistence_log_api_call(
 
 
 static void print_assistant(const char *text) {
-    // Try to get color from colorscheme, fall back to centralized ANSI color
-    char color_code[32];
-    const char *color_start;
-    if (get_colorscheme_color(COLORSCHEME_ASSISTANT, color_code, sizeof(color_code)) == 0) {
-        color_start = color_code;
+    // Use accent color for role name, foreground for main text
+    char role_color_code[32];
+    char text_color_code[32];
+    const char *role_color_start;
+    const char *text_color_start;
+    
+    // Get accent color for role name
+    if (get_colorscheme_color(COLORSCHEME_ASSISTANT, role_color_code, sizeof(role_color_code)) == 0) {
+        role_color_start = role_color_code;
     } else {
-        color_start = ANSI_FALLBACK_ASSISTANT;
+        role_color_start = ANSI_FALLBACK_ASSISTANT;
     }
-    printf("%s[Assistant]%s %s\n", color_start, ANSI_RESET, text);
+    
+    // Get foreground color for main text
+    if (get_colorscheme_color(COLORSCHEME_FOREGROUND, text_color_code, sizeof(text_color_code)) == 0) {
+        text_color_start = text_color_code;
+    } else {
+        text_color_start = ANSI_FALLBACK_FOREGROUND;
+    }
+    
+    printf("%s[Assistant]%s %s%s%s\n", role_color_start, ANSI_RESET, text_color_start, text, ANSI_RESET);
     fflush(stdout);
 }
 
 static void print_tool(const char *tool_name, const char *details) {
-    // Try to get color from colorscheme, fall back to centralized ANSI color
-    char color_code[32];
-    const char *color_start;
-    if (get_colorscheme_color(COLORSCHEME_TOOL, color_code, sizeof(color_code)) == 0) {
-        color_start = color_code;
+    // Use accent color for tool indicator, foreground for details
+    char tool_color_code[32];
+    char text_color_code[32];
+    const char *tool_color_start;
+    const char *text_color_start;
+    
+    // Get accent color for tool indicator
+    if (get_colorscheme_color(COLORSCHEME_TOOL, tool_color_code, sizeof(tool_color_code)) == 0) {
+        tool_color_start = tool_color_code;
     } else {
-        color_start = ANSI_FALLBACK_TOOL;
+        tool_color_start = ANSI_FALLBACK_TOOL;
     }
-    printf("%s[Tool: %s]%s", color_start, tool_name, ANSI_RESET);
+    
+    // Get foreground color for details
+    if (get_colorscheme_color(COLORSCHEME_FOREGROUND, text_color_code, sizeof(text_color_code)) == 0) {
+        text_color_start = text_color_code;
+    } else {
+        text_color_start = ANSI_FALLBACK_FOREGROUND;
+    }
+    
+    printf("%s[Tool: %s]%s", tool_color_start, tool_name, ANSI_RESET);
     if (details && strlen(details) > 0) {
-        printf(" %s", details);
+        printf(" %s%s%s", text_color_start, details, ANSI_RESET);
     }
     printf("\n");
     fflush(stdout);
