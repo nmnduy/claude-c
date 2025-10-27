@@ -32,6 +32,7 @@ TEST_INPUT_TARGET = $(BUILD_DIR)/test_input
 TEST_READ_TARGET = $(BUILD_DIR)/test_read
 TEST_LINEEDIT_TARGET = $(BUILD_DIR)/test_lineedit
 TEST_TODO_TARGET = $(BUILD_DIR)/test_todo
+TEST_TODO_WRITE_TARGET = $(BUILD_DIR)/test_todo_write
 TEST_TIMING_TARGET = $(BUILD_DIR)/test_tool_timing
 QUERY_TOOL = $(BUILD_DIR)/query_logs
 SRC = src/claude.c
@@ -56,9 +57,10 @@ TEST_INPUT_SRC = tests/test_input.c
 TEST_READ_SRC = tests/test_read.c
 TEST_LINEEDIT_SRC = tests/test_lineedit.c
 TEST_TODO_SRC = tests/test_todo.c
+TEST_TODO_WRITE_SRC = tests/test_todo_write.c
 QUERY_TOOL_SRC = tools/query_logs.c
 
-.PHONY: all clean check-deps test test-edit test-input test-read test-lineedit test-todo query-tool debug analyze sanitize-ub sanitize-all sanitize-leak valgrind memscan
+.PHONY: all clean check-deps test test-edit test-input test-read test-lineedit test-todo test-todo-write query-tool debug analyze sanitize-ub sanitize-all sanitize-leak valgrind memscan
 
 all: check-deps $(TARGET)
 
@@ -97,6 +99,12 @@ test-todo: check-deps $(TEST_TODO_TARGET)
 	@echo "Running TODO list tests..."
 	@echo ""
 	@./$(TEST_TODO_TARGET)
+
+test-todo-write: check-deps $(TEST_TODO_WRITE_TARGET)
+	@echo ""
+	@echo "Running TodoWrite tool tests..."
+	@echo ""
+	@./$(TEST_TODO_WRITE_TARGET)
 
 test-timing: check-deps $(TEST_TIMING_TARGET)
 	@echo ""
@@ -339,6 +347,19 @@ $(TEST_TODO_TARGET): $(TODO_SRC) $(TEST_TODO_SRC)
 	@$(CC) -o $(TEST_TODO_TARGET) $(BUILD_DIR)/todo_test.o $(BUILD_DIR)/test_todo.o
 	@echo ""
 	@echo "✓ TODO list test build successful!"
+	@echo ""
+
+# Test target for TodoWrite tool - tests integration with claude.c
+$(TEST_TODO_WRITE_TARGET): $(SRC) $(TEST_TODO_WRITE_SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(TODO_OBJ)
+	@mkdir -p $(BUILD_DIR)
+	@echo "Compiling claude.c for TodoWrite testing (renaming main)..."
+	@$(CC) $(CFLAGS) -DTEST_BUILD -Dmain=unused_main -c -o $(BUILD_DIR)/claude_todowrite_test.o $(SRC)
+	@echo "Compiling TodoWrite tool test suite..."
+	@$(CC) $(CFLAGS) -c -o $(BUILD_DIR)/test_todo_write.o $(TEST_TODO_WRITE_SRC)
+	@echo "Linking test executable..."
+	@$(CC) -o $(TEST_TODO_WRITE_TARGET) $(BUILD_DIR)/claude_todowrite_test.o $(BUILD_DIR)/test_todo_write.o $(TODO_OBJ) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(LDFLAGS)
+	@echo ""
+	@echo "✓ TodoWrite tool test build successful!"
 	@echo ""
 
 # Test target for tool timing - ensures no 60-second delays

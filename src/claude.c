@@ -33,13 +33,7 @@
 #include "colorscheme.h"
 
 #ifdef TEST_BUILD
-// Test build: stub out logging and persistence
-#define LOG_INFO(...) do {} while (0)
-#define LOG_WARN(...) do {} while (0)
-static int log_init(void) { return 0; }
-static void log_set_rotation(int a, int b) { (void)a; (void)b; }
-static void log_set_level(int level) { (void)level; }
-static void log_shutdown(void) {}
+// Test build: stub out persistence (logger is linked via LOGGER_OBJ)
 // Stub persistence types and functions
 struct PersistenceDB { int dummy; };
 static struct PersistenceDB* persistence_init(const char *path) { (void)path; return NULL; }
@@ -68,6 +62,7 @@ static void persistence_log_api_call(
 
 // Internal API for module access
 #include "claude_internal.h"
+#include "todo.h"
 
 // New input system modules
 #include "lineedit.h"
@@ -1016,6 +1011,73 @@ static cJSON* tool_grep(cJSON *params, ConversationState *state) {
     return result;
 }
 
+STATIC cJSON* tool_todo_write(cJSON *params, ConversationState *state) {
+    const cJSON *todos_json = cJSON_GetObjectItem(params, "todos");
+
+    if (!todos_json || !cJSON_IsArray(todos_json)) {
+        cJSON *error = cJSON_CreateObject();
+        cJSON_AddStringToObject(error, "error", "Missing or invalid 'todos' parameter (must be array)");
+        return error;
+    }
+
+    // Ensure todo_list is initialized
+    if (!state->todo_list) {
+        cJSON *error = cJSON_CreateObject();
+        cJSON_AddStringToObject(error, "error", "Todo list not initialized");
+        return error;
+    }
+
+    // Clear existing todos
+    todo_clear(state->todo_list);
+
+    // Parse and add each todo
+    int added = 0;
+    int total = cJSON_GetArraySize(todos_json);
+
+    for (int i = 0; i < total; i++) {
+        cJSON *todo_item = cJSON_GetArrayItem(todos_json, i);
+        if (!cJSON_IsObject(todo_item)) continue;
+
+        const cJSON *content_json = cJSON_GetObjectItem(todo_item, "content");
+        const cJSON *active_form_json = cJSON_GetObjectItem(todo_item, "activeForm");
+        const cJSON *status_json = cJSON_GetObjectItem(todo_item, "status");
+
+        if (!content_json || !cJSON_IsString(content_json) ||
+            !active_form_json || !cJSON_IsString(active_form_json) ||
+            !status_json || !cJSON_IsString(status_json)) {
+            continue;  // Skip invalid todo items
+        }
+
+        const char *content = content_json->valuestring;
+        const char *active_form = active_form_json->valuestring;
+        const char *status_str = status_json->valuestring;
+
+        // Parse status string to TodoStatus enum
+        TodoStatus status;
+        if (strcmp(status_str, "completed") == 0) {
+            status = TODO_COMPLETED;
+        } else if (strcmp(status_str, "in_progress") == 0) {
+            status = TODO_IN_PROGRESS;
+        } else if (strcmp(status_str, "pending") == 0) {
+            status = TODO_PENDING;
+        } else {
+            continue;  // Invalid status, skip this item
+        }
+
+        // Add the todo item
+        if (todo_add(state->todo_list, content, active_form, status) == 0) {
+            added++;
+        }
+    }
+
+    cJSON *result = cJSON_CreateObject();
+    cJSON_AddStringToObject(result, "status", "success");
+    cJSON_AddNumberToObject(result, "added", added);
+    cJSON_AddNumberToObject(result, "total", total);
+
+    return result;
+}
+
 // ============================================================================
 // Tool Registry
 // ============================================================================
@@ -1032,6 +1094,7 @@ static Tool tools[] = {
     {"Edit", tool_edit},
     {"Glob", tool_glob},
     {"Grep", tool_grep},
+    {"TodoWrite", tool_todo_write},
 };
 
 static const int num_tools = sizeof(tools) / sizeof(Tool);
@@ -1250,14 +1313,73 @@ static cJSON* get_tool_definitions(int enable_caching) {
     cJSON_AddItemToObject(grep_params, "required", grep_req);
     cJSON_AddItemToObject(grep_func, "parameters", grep_params);
     cJSON_AddItemToObject(grep_tool, "function", grep_func);
+    cJSON_AddItemToArray(tool_array, grep_tool);
 
-    // Add cache_control to the last tool (Grep) if caching is enabled
+    // TodoWrite tool
+    cJSON *todo_tool = cJSON_CreateObject();
+    cJSON_AddStringToObject(todo_tool, "type", "function");
+    cJSON *todo_func = cJSON_CreateObject();
+    cJSON_AddStringToObject(todo_func, "name", "TodoWrite");
+    cJSON_AddStringToObject(todo_func, "description",
+        "Creates and updates a task list to track progress on multi-step tasks");
+    cJSON *todo_params = cJSON_CreateObject();
+    cJSON_AddStringToObject(todo_params, "type", "object");
+    cJSON *todo_props = cJSON_CreateObject();
+
+    // Define the todos array parameter
+    cJSON *todos_array = cJSON_CreateObject();
+    cJSON_AddStringToObject(todos_array, "type", "array");
+    cJSON_AddStringToObject(todos_array, "description",
+        "Array of todo items to display. Replaces the entire todo list.");
+
+    // Define the items schema for the array
+    cJSON *todos_items = cJSON_CreateObject();
+    cJSON_AddStringToObject(todos_items, "type", "object");
+    cJSON *item_props = cJSON_CreateObject();
+
+    cJSON *content_prop = cJSON_CreateObject();
+    cJSON_AddStringToObject(content_prop, "type", "string");
+    cJSON_AddStringToObject(content_prop, "description",
+        "Task description in imperative form (e.g., 'Run tests')");
+    cJSON_AddItemToObject(item_props, "content", content_prop);
+
+    cJSON *active_form_prop = cJSON_CreateObject();
+    cJSON_AddStringToObject(active_form_prop, "type", "string");
+    cJSON_AddStringToObject(active_form_prop, "description",
+        "Task description in present continuous form (e.g., 'Running tests')");
+    cJSON_AddItemToObject(item_props, "activeForm", active_form_prop);
+
+    cJSON *status_prop = cJSON_CreateObject();
+    cJSON_AddStringToObject(status_prop, "type", "string");
+    cJSON_AddStringToObject(status_prop, "enum", "[\"pending\", \"in_progress\", \"completed\"]");
+    cJSON_AddStringToObject(status_prop, "description",
+        "Current status of the task");
+    cJSON_AddItemToObject(item_props, "status", status_prop);
+
+    cJSON_AddItemToObject(todos_items, "properties", item_props);
+    cJSON *item_required = cJSON_CreateArray();
+    cJSON_AddItemToArray(item_required, cJSON_CreateString("content"));
+    cJSON_AddItemToArray(item_required, cJSON_CreateString("activeForm"));
+    cJSON_AddItemToArray(item_required, cJSON_CreateString("status"));
+    cJSON_AddItemToObject(todos_items, "required", item_required);
+
+    cJSON_AddItemToObject(todos_array, "items", todos_items);
+    cJSON_AddItemToObject(todo_props, "todos", todos_array);
+
+    cJSON_AddItemToObject(todo_params, "properties", todo_props);
+    cJSON *todo_req = cJSON_CreateArray();
+    cJSON_AddItemToArray(todo_req, cJSON_CreateString("todos"));
+    cJSON_AddItemToObject(todo_params, "required", todo_req);
+    cJSON_AddItemToObject(todo_func, "parameters", todo_params);
+    cJSON_AddItemToObject(todo_tool, "function", todo_func);
+
+    // Add cache_control to the last tool (TodoWrite) if caching is enabled
     // This is the second cache breakpoint (tool definitions)
     if (enable_caching) {
-        add_cache_control(grep_tool);
+        add_cache_control(todo_tool);
     }
 
-    cJSON_AddItemToArray(tool_array, grep_tool);
+    cJSON_AddItemToArray(tool_array, todo_tool);
 
     return tool_array;
 }

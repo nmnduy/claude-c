@@ -14,7 +14,7 @@ This is a pure C implementation of a coding agent that interacts with Anthropic'
 - Single-file architecture in `src/claude.c`
 - Standard C11 with POSIX support
 - Direct API integration via libcurl
-- Implements 6 core tools: Bash, Read, Write, Edit, Glob, Grep
+- Implements 7 core tools: Bash, Read, Write, Edit, Glob, Grep, TodoWrite
 - **Prompt caching support** - matching the official Claude Code CLI performance
 
 ## C Coding Best Practices
@@ -425,15 +425,16 @@ The code is organized into clear sections with comments:
    - Path resolution (`resolve_path`)
    - CURL callback for API responses
 
-3. **Lines 166-511**: Tool implementations
-   - `tool_bash` (166): Executes shell commands via `popen`
-   - `tool_read` (216): Reads file contents
-   - `tool_write` (249): Writes/overwrites files
-   - `tool_edit` (413): String/regex replacement with multi-replace support
-   - `tool_glob` (512): File pattern matching via POSIX `glob()`
-   - `tool_grep` (543): Executes system grep/ripgrep
+3. **Lines 166-1084**: Tool implementations
+   - `tool_bash`: Executes shell commands via `popen`
+   - `tool_read`: Reads file contents with optional line range support
+   - `tool_write`: Writes/overwrites files
+   - `tool_edit`: String/regex replacement with multi-replace support
+   - `tool_glob`: File pattern matching via POSIX `glob()`
+   - `tool_grep`: Executes system grep/ripgrep
+   - `tool_todo_write`: Updates the task tracking list (parses JSON with todos array)
 
-4. **Lines 592-760**: Tool registry and API schemas
+4. **Lines 1086-1390**: Tool registry and API schemas
    - Tool dispatch table
    - JSON schema definitions for each tool
    - `get_tool_definitions()`: Builds tool array for API
@@ -488,6 +489,53 @@ The Edit tool is the most sophisticated, supporting both simple string replaceme
 - Uses `regex_replace()` for regex patterns (lines 329-411)
 - Returns replacement count in result JSON
 - Regex uses POSIX ERE (`REG_EXTENDED`)
+
+## TodoWrite Tool Implementation
+
+The TodoWrite tool enables Claude to manage a visual task list during multi-step operations, matching the behavior of the official Node.js Claude Code CLI.
+
+**Parameters:**
+- `todos`: Array of todo items (required)
+  - Each item has:
+    - `content`: Task description in imperative form (e.g., "Run tests")
+    - `activeForm`: Task description in present continuous form (e.g., "Running tests")
+    - `status`: One of "pending", "in_progress", or "completed"
+
+**Behavior:**
+- Replaces the entire todo list with the provided items
+- Validates each todo item's structure and status
+- Skips invalid items (invalid status, missing fields)
+- Returns count of added items and total items processed
+
+**Implementation notes:**
+- Uses the TodoList API from `src/todo.h` and `src/todo.c`
+- Parses JSON array and maps status strings to `TodoStatus` enum
+- Clears existing todos before adding new ones (full replacement, not incremental)
+- Integrates with `ConversationState` via `state->todo_list` pointer
+- Visual rendering handled by TUI module (`tui_render_todo_list()`)
+
+**Example usage:**
+```json
+{
+  "todos": [
+    {
+      "content": "Read file contents",
+      "activeForm": "Reading file contents",
+      "status": "completed"
+    },
+    {
+      "content": "Parse configuration",
+      "activeForm": "Parsing configuration",
+      "status": "in_progress"
+    },
+    {
+      "content": "Write output file",
+      "activeForm": "Writing output file",
+      "status": "pending"
+    }
+  ]
+}
+```
 
 ## Test Build System
 
