@@ -19,6 +19,17 @@
 typedef struct LineEditor LineEditor;
 
 // ============================================================================
+// History Support
+// ============================================================================
+
+typedef struct {
+    char **entries;      // Array of history strings
+    int capacity;        // Max entries (default: 100)
+    int count;           // Current number of entries
+    int position;        // Current position when navigating (-1 = not navigating)
+} History;
+
+// ============================================================================
 // Completion Support
 // ============================================================================
 
@@ -43,6 +54,7 @@ typedef struct LineEditor {
     int length;              // Current length of input
     CompletionFn completer;  // Optional: for tab completion
     void *completer_ctx;     // Context passed to completer
+    History history;         // Command history
 } LineEditor;
 
 // ============================================================================
