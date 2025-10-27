@@ -20,6 +20,14 @@ Based on analysis of ncurses implementation patterns and current gaps in our lin
 **Commits:**
 - `902bf60` - Add major lineedit improvements: UTF-8, Delete key, and History
 - `ed407fc` - Add comprehensive unit tests for lineedit improvements
+- `021c477` - Update LINEEDIT_IMPROVEMENTS.md with completion status
+
+**Implementation Details:**
+- UTF-8 helpers: `src/lineedit.c:135-177` (char_length, is_continuation, read_utf8_char)
+- UTF-8 insertion: `src/lineedit.c:583-619` (handles multibyte input)
+- Forward Delete: `src/lineedit.c:511-527` (ESC[3~ handler)
+- History struct: `src/lineedit.h:21-30, src/lineedit.c:21-72`
+- History navigation: `src/lineedit.c:545-593` (Up/Down arrow handlers)
 
 ## Current State
 
@@ -30,14 +38,17 @@ Based on analysis of ncurses implementation patterns and current gaps in our lin
 - ✅ Comprehensive wrapping calculation (well-tested)
 - ✅ Tab completion framework
 - ✅ Basic cursor movement (arrows, Ctrl+a/e, Home/End)
+- ✅ **NEW: Full UTF-8/Unicode support** (1-4 byte characters)
+- ✅ **NEW: Forward Delete key** (ESC[3~)
+- ✅ **NEW: Command history** (Up/Down arrows, 100 entries)
 
-**Identified Gaps:**
-- ❌ No UTF-8/Unicode support (ASCII only, chars 32-127)
-- ❌ Missing Forward Delete key
-- ❌ No command history (Up/Down arrows)
-- ❌ Monolithic function (230 lines mixing input/buffer/display)
-- ❌ Basic escape sequence handling without timeout
-- ❌ No input queue/ungetch mechanism
+**Originally Identified Gaps:**
+- ✅ ~~No UTF-8/Unicode support~~ → **FIXED: Full UTF-8 support implemented**
+- ✅ ~~Missing Forward Delete key~~ → **FIXED: ESC[3~ now handled**
+- ✅ ~~No command history~~ → **FIXED: Up/Down arrow navigation with 100-entry buffer**
+- ❌ Monolithic function (230 lines mixing input/buffer/display) - *Remaining*
+- ❌ Basic escape sequence handling without timeout - *Remaining*
+- ❌ No input queue/ungetch mechanism - *Remaining*
 
 ## High-Priority Improvements
 
@@ -134,26 +145,31 @@ typedef struct {
 - Status messages for certain operations
 - Better error indication
 
-## Implementation Order
+## Implementation Status
 
-1. **UTF-8 support** - Foundational for international users
-2. **Forward delete & escape handling** - Quick wins, improves UX
-3. **Code refactoring** - Makes subsequent work easier
-4. **Command history** - Major UX improvement
-5. **Better bounds checking** - Robustness & safety
+1. ✅ **UTF-8 support** - COMPLETED - Foundational for international users
+2. ✅ **Forward delete** - COMPLETED - Quick win, improves UX
+3. ⏳ **Code refactoring** - PENDING - Lower priority, would make future work easier
+4. ✅ **Command history** - COMPLETED - Major UX improvement
+5. ⏳ **Escape sequence timeout** - PENDING - Lower priority, robustness improvement
+6. ⏳ **Better bounds checking** - PENDING - Lower priority, safety enhancement
 
-## Testing Strategy
+## Testing
 
-- Extend `tests/test_lineedit.c` with:
-  - UTF-8 character insertion tests
-  - Forward delete tests
-  - History navigation tests
-  - Edge case handling
-- Manual testing with:
-  - Unicode characters (emoji, Chinese, Arabic)
-  - Different terminal emulators
-  - Terminal resize during input
-  - Very long input lines
+**Automated Tests (tests/test_lineedit.c):**
+- ✅ 11 UTF-8 character parsing tests
+- ✅ 13 Command history management tests
+- ✅ 43 Terminal wrapping and cursor positioning tests
+- **Total: 67/67 tests passing**
+
+Run with: `make test-lineedit`
+
+**Manual Testing Recommendations:**
+- Unicode characters (emoji, Chinese, Arabic, etc.)
+- Different terminal emulators (iTerm2, Terminal.app, Alacritty, etc.)
+- Terminal resize during input
+- Very long input lines
+- History navigation with repeated commands
 
 ## References
 
