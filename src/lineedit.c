@@ -451,26 +451,26 @@ static int read_key_with_timeout(unsigned char *c, int timeout_ms) {
     }
 
     // Data available, read it
-    ssize_t n = read(STDIN_FILENO, c, 1);
-    if (n == 1) {
-        return 1;  // Success
-    } else if (n == 0) {
-        return -1;  // EOF
-    } else {
-        return -1;  // Error
+    if (read(STDIN_FILENO, c, 1) != 1) {
+        return -1;  // Read error or EOF
     }
+
+    return 1;  // Success
 }
 
-// Read a single byte, checking queue first, then stdin
-// Returns: 1 on success, 0 on timeout, -1 on error/EOF
-static int read_key(LineEditor *ed, unsigned char *c, int timeout_ms) {
+// Read a single byte, checking queue first
+static int read_key(LineEditor *ed, unsigned char *c) {
     // Check queue first
     if (queue_pop(ed, c) == 0) {
         return 1;  // Got byte from queue
     }
 
-    // Read from stdin with timeout
-    return read_key_with_timeout(c, timeout_ms);
+    // Queue empty, read from stdin
+    if (read(STDIN_FILENO, c, 1) != 1) {
+        return -1;  // Error or EOF
+    }
+
+    return 1;  // Success
 }
 
 // ============================================================================
@@ -644,7 +644,7 @@ char* lineedit_readline(LineEditor *ed, const char *prompt) {
     int running = 1;
     while (running) {
         unsigned char c;
-        if (read(STDIN_FILENO, &c, 1) != 1) {
+        if (read_key(ed, &c) != 1) {
             // Error or EOF - cleanup handled by restore_terminal()
             restore_terminal();
             free(saved_input);
@@ -654,8 +654,10 @@ char* lineedit_readline(LineEditor *ed, const char *prompt) {
         if (c == 27) {  // ESC sequence
             unsigned char seq[2];
 
-            // Read next two bytes
-            if (read(STDIN_FILENO, &seq[0], 1) != 1) {
+            // Read next byte with timeout to distinguish standalone ESC from escape sequences
+            int ret = read_key_with_timeout(&seq[0], 100);  // 100ms timeout
+            if (ret <= 0) {
+                // Timeout or error - treat as standalone ESC (ignore for now)
                 continue;
             }
 
@@ -674,28 +676,45 @@ char* lineedit_readline(LineEditor *ed, const char *prompt) {
                 }
             } else if (seq[0] == '[') {
                 // Arrow keys and other escape sequences
-                if (read(STDIN_FILENO, &seq[1], 1) != 1) {
+                ret = read_key_with_timeout(&seq[1], 100);  // 100ms timeout
+                if (ret <= 0) {
                     continue;
                 }
 
                 if (seq[1] == '2') {
                     // Possible bracketed paste sequence: \e[200~ or \e[201~
                     unsigned char paste_seq[3];
-                    if (read(STDIN_FILENO, paste_seq, 3) == 3) {
-                        if (paste_seq[0] == '0' && paste_seq[1] == '0' && paste_seq[2] == '~') {
-                            in_paste_mode = 1;  // Start of paste
-                        } else if (paste_seq[0] == '0' && paste_seq[1] == '1' && paste_seq[2] == '~') {
-                            in_paste_mode = 0;  // End of paste
+                    int paste_bytes_read = 0;
+                    // Read 3 more bytes for the paste sequence
+                    for (int i = 0; i < 3; i++) {
+                        ret = read_key_with_timeout(&paste_seq[i], 100);
+                        if (ret <= 0) break;
+                        paste_bytes_read++;
+                    }
+                    if (paste_bytes_read == 3 &&
+                        paste_seq[0] == '0' && paste_seq[1] == '0' && paste_seq[2] == '~') {
+                        in_paste_mode = 1;  // Start of paste
+                    } else if (paste_bytes_read == 3 &&
+                               paste_seq[0] == '0' && paste_seq[1] == '1' && paste_seq[2] == '~') {
+                        in_paste_mode = 0;  // End of paste
+                    } else {
+                        // Not a valid paste sequence - push bytes back to queue
+                        for (int i = paste_bytes_read - 1; i >= 0; i--) {
+                            queue_push(ed, paste_seq[i]);
                         }
                     }
                 } else if (seq[1] == '3') {
                     // Delete key: \e[3~
                     unsigned char tilde;
-                    if (read(STDIN_FILENO, &tilde, 1) == 1 && tilde == '~') {
+                    ret = read_key_with_timeout(&tilde, 100);
+                    if (ret > 0 && tilde == '~') {
                         // Delete character at cursor (forward delete)
                         if (buffer_delete_char(ed) > 0) {
                             redraw_input_line(prompt, ed->buffer, ed->cursor);
                         }
+                    } else if (ret > 0) {
+                        // Not a tilde - push it back to queue
+                        queue_push(ed, tilde);
                     }
                 } else if (seq[1] == 'D') {
                     // Left arrow
@@ -768,7 +787,13 @@ char* lineedit_readline(LineEditor *ed, const char *prompt) {
                     // End
                     ed->cursor = ed->length;
                     redraw_input_line(prompt, ed->buffer, ed->cursor);
+                } else {
+                    // Unrecognized escape sequence - push seq[1] back to queue
+                    queue_push(ed, seq[1]);
                 }
+            } else {
+                // Unrecognized ESC+char sequence - push seq[0] back to queue
+                queue_push(ed, seq[0]);
             }
         } else if (c == 1) {
             // Ctrl+A: beginning of line
