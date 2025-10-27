@@ -176,6 +176,20 @@ void tui_add_conversation_line(TUIState *tui, const char *prefix, const char *te
             }
             break;
             
+        case COLOR_PAIR_PROMPT:
+            // Input prompt in accent color, text in foreground
+            if (get_colorscheme_color(COLORSCHEME_USER, prefix_color_code, sizeof(prefix_color_code)) == 0) {
+                prefix_color_start = prefix_color_code;
+            } else {
+                prefix_color_start = ANSI_FALLBACK_USER;  // Green fallback
+            }
+            if (get_colorscheme_color(COLORSCHEME_FOREGROUND, text_color_code, sizeof(text_color_code)) == 0) {
+                text_color_start = text_color_code;
+            } else {
+                text_color_start = ANSI_FALLBACK_FOREGROUND;  // Default terminal color
+            }
+            break;
+            
         default:
             // No coloring
             prefix_color_start = "";
@@ -325,7 +339,7 @@ void tui_show_startup_banner(TUIState *tui, const char *version, const char *mod
     fflush(stdout);
 }
 
-void tui_render_todo_list(TUIState *tui, const struct TodoList *todo_list) {
+void tui_render_todo_list(TUIState *tui, const TodoList *todo_list) {
     if (!tui || !tui->is_initialized || !todo_list) return;
 
     // Stop any running spinner before rendering TODO list
@@ -334,9 +348,6 @@ void tui_render_todo_list(TUIState *tui, const struct TodoList *todo_list) {
         g_tui_spinner = NULL;
     }
 
-    // We need to include todo.h types, but to avoid circular dependencies,
-    // we'll call the todo_render function directly which handles the formatting
-    // For now, we'll just forward to it
-    extern void todo_render(const struct TodoList *list);
+    // Call todo_render function which handles the formatting
     todo_render(todo_list);
 }

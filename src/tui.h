@@ -11,6 +11,7 @@
 #define TUI_H
 
 #include "claude_internal.h"
+#include "todo.h"
 
 // Forward declaration for WINDOW type (not actually used, kept for compatibility)
 typedef struct _win_st WINDOW;
@@ -83,11 +84,8 @@ void tui_handle_resize(TUIState *tui);
 // working_dir: Current working directory
 void tui_show_startup_banner(TUIState *tui, const char *version, const char *model, const char *working_dir);
 
-// Forward declaration
-struct TodoList;
-
 // Render TODO list panel
 // Shows task list with visual indicators (✓ completed, ⋯ in progress, ○ pending)
-void tui_render_todo_list(TUIState *tui, const struct TodoList *todo_list);
+void tui_render_todo_list(TUIState *tui, const TodoList *todo_list);
 
 #endif // TUI_H

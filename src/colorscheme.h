@@ -258,7 +258,7 @@ static int load_kitty_theme(const char *filepath, Theme *theme) {
 // If filepath is NULL or file doesn't exist, falls back to standard ANSI colors
 // Returns 0 on success, -1 on failure
 // Note: This doesn't require ncurses - works with raw ANSI codes
-static int init_colorscheme(const char *filepath) {
+static inline int init_colorscheme(const char *filepath) {
     LOG_DEBUG("[THEME] Initializing colorscheme system");
 
     // Try to load custom Kitty theme

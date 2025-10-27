@@ -34,7 +34,7 @@ static const char *SPINNER_BOX[] = {"◰", "◳", "◲", "◱"};
 static const char *SPINNER_CIRCLE[] = {"◜", "◠", "◝", "◞", "◡", "◟"};
 
 // Color codes - use theme system with fallbacks
-static const char* get_spinner_color_status(void) {
+static inline const char* get_spinner_color_status(void) {
     static char color_buf[32];
     if (get_colorscheme_color(COLORSCHEME_STATUS, color_buf, sizeof(color_buf)) == 0) {
         return color_buf;
