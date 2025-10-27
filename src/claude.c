@@ -2515,9 +2515,6 @@ static void process_response(ConversationState *state, cJSON *response, TUIState
     }
 
     if (tool_count > 0) {
-        if (1) { // Force non-TUI spinner path for testing
-            printf("\n");
-        }
 
         LOG_INFO("Processing %d tool call(s)", tool_count);
 
