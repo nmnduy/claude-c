@@ -29,14 +29,6 @@
 #define MAX_BACKOFF_MS 10000             // Maximum backoff delay in milliseconds (10 seconds)
 #define BACKOFF_MULTIPLIER 2.0           // Exponential backoff multiplier
 
-// ANSI color codes (for non-TUI output)
-#define ANSI_RESET "\033[0m"
-#define ANSI_BLUE "\033[34m"
-#define ANSI_GREEN "\033[32m"
-#define ANSI_YELLOW "\033[33m"
-#define ANSI_RED "\033[31m"
-#define ANSI_CYAN "\033[36m"
-
 // ============================================================================
 // Forward Declarations
 // ============================================================================

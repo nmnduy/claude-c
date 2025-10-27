@@ -3,6 +3,7 @@
  */
 
 #include "todo.h"
+#include "fallback_colors.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -141,12 +142,12 @@ void todo_render(const TodoList *list) {
     }
 
     // ANSI colors
-    const char *green = "\033[32m";
-    const char *yellow = "\033[33m";
-    const char *cyan = "\033[36m";
-    const char *dim = "\033[2m";
-    const char *reset = "\033[0m";
-    const char *bold = "\033[1m";
+    const char *green = ANSI_FALLBACK_GREEN;
+    const char *yellow = ANSI_FALLBACK_YELLOW;
+    const char *cyan = ANSI_FALLBACK_CYAN;
+    const char *dim = ANSI_FALLBACK_DIM;
+    const char *reset = ANSI_RESET;
+    const char *bold = ANSI_FALLBACK_BOLD;
 
     // Print header
     printf("\n%s%s━━━ Tasks ━━━%s\n", bold, cyan, reset);

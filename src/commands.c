@@ -5,6 +5,7 @@
 #include "commands.h"
 #include "claude_internal.h"
 #include "logger.h"
+#include "fallback_colors.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -14,12 +15,6 @@
 #include <dirent.h>
 #include <sys/stat.h>
 #include <cjson/cJSON.h>
-
-// ANSI color codes for output
-#define ANSI_RESET "\033[0m"
-#define ANSI_CYAN "\033[36m"
-#define ANSI_GREEN "\033[32m"
-#define ANSI_RED "\033[31m"
 
 // ============================================================================
 // Command Registry
@@ -34,12 +29,12 @@ static int command_count = 0;
 // ============================================================================
 
 static void print_status(const char *text) {
-    printf("%s[Status]%s %s\n", ANSI_CYAN, ANSI_RESET, text);
+    printf("%s[Status]%s %s\n", ANSI_FALLBACK_STATUS, ANSI_RESET, text);
     fflush(stdout);
 }
 
 static void print_error(const char *text) {
-    fprintf(stderr, "%s[Error]%s %s\n", ANSI_RED, ANSI_RESET, text);
+    fprintf(stderr, "%s[Error]%s %s\n", ANSI_FALLBACK_ERROR, ANSI_RESET, text);
     fflush(stderr);
 }
 
@@ -94,7 +89,7 @@ static int cmd_add_dir(ConversationState *state, const char *args) {
 
 static int cmd_help(ConversationState *state, const char *args) {
     (void)state; (void)args;
-    printf("\n%sCommands:%s\n", ANSI_CYAN, ANSI_RESET);
+    printf("\n%sCommands:%s\n", ANSI_FALLBACK_STATUS, ANSI_RESET);
     for (int i = 0; i < command_count; i++) {
         const Command *cmd = command_registry[i];
         printf("  %-18s - %s\n", cmd->usage, cmd->description);

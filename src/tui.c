@@ -6,6 +6,7 @@
 #include "lineedit.h"
 #define COLORSCHEME_EXTERN
 #include "colorscheme.h"
+#include "fallback_colors.h"
 #include "indicators.h"
 #include <stdlib.h>
 #include <string.h>
@@ -174,9 +175,9 @@ void tui_add_conversation_line(TUIState *tui, const char *prefix, const char *te
         g_tui_spinner = NULL;
     }
 
-    // Get color from colorscheme or fall back to defaults
+    // Get color from colorscheme or fall back to centralized defaults
     const char *color_start = "";
-    const char *color_end = "\033[0m";
+    const char *color_end = ANSI_RESET;
     char color_code[32];
 
     // Try to get color from colorscheme first
@@ -185,35 +186,35 @@ void tui_add_conversation_line(TUIState *tui, const char *prefix, const char *te
             if (get_colorscheme_color(COLORSCHEME_USER, color_code, sizeof(color_code)) == 0) {
                 color_start = color_code;
             } else {
-                color_start = "\033[32m";  // Green fallback
+                color_start = ANSI_FALLBACK_USER;  // Green fallback from centralized system
             }
             break;
         case COLOR_PAIR_ASSISTANT:
             if (get_colorscheme_color(COLORSCHEME_ASSISTANT, color_code, sizeof(color_code)) == 0) {
                 color_start = color_code;
             } else {
-                color_start = "\033[34m";  // Blue fallback
+                color_start = ANSI_FALLBACK_ASSISTANT;  // Blue fallback from centralized system
             }
             break;
         case COLOR_PAIR_TOOL:
             if (get_colorscheme_color(COLORSCHEME_TOOL, color_code, sizeof(color_code)) == 0) {
                 color_start = color_code;
             } else {
-                color_start = "\033[33m";  // Yellow fallback
+                color_start = ANSI_FALLBACK_TOOL;  // Yellow fallback from centralized system
             }
             break;
         case COLOR_PAIR_ERROR:
             if (get_colorscheme_color(COLORSCHEME_ERROR, color_code, sizeof(color_code)) == 0) {
                 color_start = color_code;
             } else {
-                color_start = "\033[31m";  // Red fallback
+                color_start = ANSI_FALLBACK_ERROR;  // Red fallback from centralized system
             }
             break;
         case COLOR_PAIR_STATUS:
             if (get_colorscheme_color(COLORSCHEME_STATUS, color_code, sizeof(color_code)) == 0) {
                 color_start = color_code;
             } else {
-                color_start = "\033[36m";  // Cyan fallback
+                color_start = ANSI_FALLBACK_STATUS;  // Cyan fallback from centralized system
             }
             break;
         default:
@@ -265,18 +266,18 @@ char* tui_read_input(TUIState *tui, const char *prompt) {
     LineEditor editor;
     lineedit_init(&editor, NULL, NULL);  // No completion for now
 
-    // Get prompt color from colorscheme or use default green
+    // Get prompt color from colorscheme or use centralized fallback green
     char color_code[32];
     const char *color_start;
     if (get_colorscheme_color(COLORSCHEME_USER, color_code, sizeof(color_code)) == 0) {
         color_start = color_code;
     } else {
-        color_start = "\033[32m";  // Green fallback
+        color_start = ANSI_FALLBACK_USER;  // Green fallback from centralized system
     }
 
     // Create colored prompt
     char colored_prompt[256];
-    snprintf(colored_prompt, sizeof(colored_prompt), "%s%s\033[0m ", color_start, prompt);
+    snprintf(colored_prompt, sizeof(colored_prompt), "%s%s%s ", color_start, prompt, ANSI_RESET);
 
     // Read input
     char *input = lineedit_readline(&editor, colored_prompt);
@@ -295,16 +296,16 @@ void tui_refresh(TUIState *tui) {
 void tui_clear_conversation(TUIState *tui) {
     if (!tui || !tui->is_initialized) return;
 
-    // Get status color from colorscheme or use default cyan
+    // Get status color from colorscheme or use centralized fallback cyan
     char color_code[32];
     const char *color_start;
     if (get_colorscheme_color(COLORSCHEME_STATUS, color_code, sizeof(color_code)) == 0) {
         color_start = color_code;
     } else {
-        color_start = "\033[36m";  // Cyan fallback
+        color_start = ANSI_FALLBACK_STATUS;  // Cyan fallback from centralized system
     }
 
-    printf("%s[System] Conversation history cleared (kept in terminal scrollback)\033[0m\n", color_start);
+    printf("%s[System] Conversation history cleared (kept in terminal scrollback)%s\n", color_start, ANSI_RESET);
     fflush(stdout);
 }
 
@@ -328,7 +329,7 @@ void tui_show_startup_banner(TUIState *tui, const char *version, const char *mod
     if (get_colorscheme_color(COLORSCHEME_ASSISTANT, color_code, sizeof(color_code)) == 0) {
         color_start = color_code;
     } else {
-        color_start = "\033[1;36m";  // Bold cyan fallback
+        color_start = ANSI_FALLBACK_BOLD_CYAN;  // Bold cyan fallback from centralized system
     }
 
     // Print banner with colorscheme color
@@ -336,7 +337,7 @@ void tui_show_startup_banner(TUIState *tui, const char *version, const char *mod
     printf(" ▐▛███▜▌   claude-c v%s\n", version);
     printf("▝▜█████▛▘  %s\n", model);
     printf("  ▘▘ ▝▝    %s\n", working_dir);
-    printf("\033[0m\n");  // Reset color and add blank line
+    printf(ANSI_RESET "\n");  // Reset color and add blank line
     fflush(stdout);
 }
 
