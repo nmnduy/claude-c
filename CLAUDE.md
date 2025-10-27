@@ -136,7 +136,7 @@ if (!buf) {
 
 **Valgrind (memory error detection):**
 ```bash
-valgrind --leak-check=full --show-leak-kinds=all ./build/claude "test"
+valgrind --leak-check=full --show-leak-kinds=all ./build/claude-c "test"
 ```
 
 **Fuzzing (continuous testing):**
@@ -184,7 +184,7 @@ When reviewing code (human or AI-generated), verify:
 
 ### Build Commands
 ```bash
-make              # Build the claude executable (output: build/claude)
+make              # Build the claude-c executable (output: build/claude-c)
 make test         # Build and run unit tests
 make clean        # Remove built files
 make install      # Install to /usr/local/bin (requires sudo)
@@ -194,7 +194,7 @@ make check-deps   # Verify all dependencies are installed
 ### Development Workflow
 - The build output goes to `build/` directory (not tracked in git)
 - Test executable is `build/test_edit`
-- Main executable is `build/claude`
+- Main executable is `build/claude-c`
 
 ### Running Tests
 The test suite focuses on the Edit tool (the most complex component):
@@ -210,7 +210,7 @@ Tests are in `tests/test_edit.c` and verify:
 ### Running the Agent
 ```bash
 export ANTHROPIC_API_KEY="your-api-key"
-./build/claude "your prompt here"
+./build/claude-c "your prompt here"
 ```
 
 ### Color Theme System
@@ -220,18 +220,18 @@ The TUI uses **Kitty terminal's theme format** - a simple key-value configuratio
 **Configuration:**
 ```bash
 # Use a built-in theme
-export CLAUDE_THEME="./colorschemes/dracula.conf"
-./build/claude
+export CLAUDE_C_THEME="./colorschemes/dracula.conf"
+./build/claude-c
 
 # Use an absolute path
-export CLAUDE_THEME="/Users/username/code/claude-c/colorschemes/gruvbox-dark.conf"
-./build/claude
+export CLAUDE_C_THEME="/Users/username/code/claude-c/colorschemes/gruvbox-dark.conf"
+./build/claude-c
 ```
 
 **Default locations (checked in order):**
-1. `$CLAUDE_THEME` environment variable
-2. `$XDG_CONFIG_HOME/claude/theme.conf` (typically `~/.config/claude/theme.conf`)
-3. `$HOME/.claude/theme.conf`
+1. `$CLAUDE_C_THEME` environment variable
+2. `$XDG_CONFIG_HOME/claude-c/theme.conf` (typically `~/.config/claude-c/theme.conf`)
+3. `$HOME/.claude-c/theme.conf`
 4. Built-in defaults
 
 **Implementation location:** `src/colorscheme.h` (will be refactored to `src/theme.h`)
@@ -323,8 +323,8 @@ curl -O https://raw.githubusercontent.com/dexpota/kitty-themes/master/themes/Nor
 mv Nord.conf colorschemes/nord.conf
 
 # Use it
-export CLAUDE_THEME="./colorschemes/nord.conf"
-./build/claude
+export CLAUDE_C_THEME="./colorschemes/nord.conf"
+./build/claude-c
 ```
 
 #### Technical Implementation
@@ -473,7 +473,7 @@ The C implementation now includes automatic environment context building, matchi
 **Testing the CLAUDE.md injection:**
 ```bash
 # Set DEBUG_PROMPT to see the full system prompt including CLAUDE.md
-DEBUG_PROMPT=1 ./build/claude
+DEBUG_PROMPT=1 ./build/claude-c
 ```
 
 ### Implementation Details
@@ -682,11 +682,11 @@ The C implementation now includes **prompt caching** support, matching the offic
    ```bash
    # Disable caching globally (for debugging or comparison)
    export DISABLE_PROMPT_CACHING=1
-   ./build/claude "your prompt"
+   ./build/claude-c "your prompt"
 
    # Enable caching (default)
    unset DISABLE_PROMPT_CACHING
-   ./build/claude "your prompt"
+   ./build/claude-c "your prompt"
    ```
 
 5. **What gets cached**:

@@ -41,7 +41,7 @@ typedef struct {
 //
 // Parameters:
 //   db_path: Path to SQLite database file (NULL = use default location)
-//            Default: $XDG_DATA_HOME/claude/api_calls.db or ~/.local/share/claude/api_calls.db
+//            Default: $XDG_DATA_HOME/claude-c/api_calls.db or ~/.local/share/claude-c/api_calls.db
 //
 // Returns:
 //   PersistenceDB* on success, NULL on failure

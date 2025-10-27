@@ -39,12 +39,12 @@ static const char *INDEX_SQL =
     "CREATE INDEX IF NOT EXISTS idx_api_calls_session_id ON api_calls(session_id);";
 
 // Get default database path
-// Priority: $CLAUDE_DB_PATH > $XDG_DATA_HOME/claude/api_calls.db > ~/.local/share/claude/api_calls.db
+// Priority: $CLAUDE_C_DB_PATH > $XDG_DATA_HOME/claude-c/api_calls.db > ~/.local/share/claude-c/api_calls.db
 char* persistence_get_default_path(void) {
     char *path = NULL;
 
     // Check environment variable first
-    const char *env_path = getenv("CLAUDE_DB_PATH");
+    const char *env_path = getenv("CLAUDE_C_DB_PATH");
     if (env_path && env_path[0] != '\0') {
         path = strdup(env_path);
         return path;
@@ -55,7 +55,7 @@ char* persistence_get_default_path(void) {
     if (xdg_data && xdg_data[0] != '\0') {
         path = malloc(PATH_MAX);
         if (path) {
-            snprintf(path, PATH_MAX, "%s/claude/api_calls.db", xdg_data);
+            snprintf(path, PATH_MAX, "%s/claude-c/api_calls.db", xdg_data);
             return path;
         }
     }
@@ -65,7 +65,7 @@ char* persistence_get_default_path(void) {
     if (home && home[0] != '\0') {
         path = malloc(PATH_MAX);
         if (path) {
-            snprintf(path, PATH_MAX, "%s/.local/share/claude/api_calls.db", home);
+            snprintf(path, PATH_MAX, "%s/.local/share/claude-c/api_calls.db", home);
             return path;
         }
     }

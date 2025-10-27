@@ -26,7 +26,7 @@ else ifeq ($(UNAME_S),Linux)
 endif
 
 BUILD_DIR = build
-TARGET = $(BUILD_DIR)/claude
+TARGET = $(BUILD_DIR)/claude-c
 TEST_EDIT_TARGET = $(BUILD_DIR)/test_edit
 TEST_INPUT_TARGET = $(BUILD_DIR)/test_input
 TEST_READ_TARGET = $(BUILD_DIR)/test_read
@@ -64,7 +64,7 @@ QUERY_TOOL_SRC = tools/query_logs.c
 
 all: check-deps $(TARGET)
 
-debug: check-deps $(BUILD_DIR)/claude-debug
+debug: check-deps $(BUILD_DIR)/claude-c-debug
 
 query-tool: check-deps $(QUERY_TOOL)
 
@@ -121,7 +121,7 @@ $(TARGET): $(SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(LINEEDIT_
 	@echo ""
 
 # Debug build with AddressSanitizer for finding memory bugs
-$(BUILD_DIR)/claude-debug: $(SRC) $(LOGGER_SRC) $(PERSISTENCE_SRC) $(MIGRATIONS_SRC) $(LINEEDIT_SRC) $(COMMANDS_SRC) $(COMPLETION_SRC) $(TUI_SRC) $(TODO_SRC)
+$(BUILD_DIR)/claude-c-debug: $(SRC) $(LOGGER_SRC) $(PERSISTENCE_SRC) $(MIGRATIONS_SRC) $(LINEEDIT_SRC) $(COMMANDS_SRC) $(COMPLETION_SRC) $(TUI_SRC) $(TODO_SRC)
 	@mkdir -p $(BUILD_DIR)
 	@echo "Building with AddressSanitizer (debug mode)..."
 	$(CC) $(DEBUG_CFLAGS) -c -o $(BUILD_DIR)/logger_debug.o $(LOGGER_SRC)
@@ -132,10 +132,10 @@ $(BUILD_DIR)/claude-debug: $(SRC) $(LOGGER_SRC) $(PERSISTENCE_SRC) $(MIGRATIONS_
 	$(CC) $(DEBUG_CFLAGS) -c -o $(BUILD_DIR)/completion_debug.o $(COMPLETION_SRC)
 	$(CC) $(DEBUG_CFLAGS) -c -o $(BUILD_DIR)/tui_debug.o $(TUI_SRC)
 	$(CC) $(DEBUG_CFLAGS) -c -o $(BUILD_DIR)/todo_debug.o $(TODO_SRC)
-	$(CC) $(DEBUG_CFLAGS) -o $(BUILD_DIR)/claude-debug $(SRC) $(BUILD_DIR)/logger_debug.o $(BUILD_DIR)/persistence_debug.o $(BUILD_DIR)/migrations_debug.o $(BUILD_DIR)/lineedit_debug.o $(BUILD_DIR)/commands_debug.o $(BUILD_DIR)/completion_debug.o $(BUILD_DIR)/tui_debug.o $(BUILD_DIR)/todo_debug.o $(DEBUG_LDFLAGS)
+	$(CC) $(DEBUG_CFLAGS) -o $(BUILD_DIR)/claude-c-debug $(SRC) $(BUILD_DIR)/logger_debug.o $(BUILD_DIR)/persistence_debug.o $(BUILD_DIR)/migrations_debug.o $(BUILD_DIR)/lineedit_debug.o $(BUILD_DIR)/commands_debug.o $(BUILD_DIR)/completion_debug.o $(BUILD_DIR)/tui_debug.o $(BUILD_DIR)/todo_debug.o $(DEBUG_LDFLAGS)
 	@echo ""
 	@echo "✓ Debug build successful with AddressSanitizer!"
-	@echo "Run: ./$(BUILD_DIR)/claude-debug \"your prompt here\""
+	@echo "Run: ./$(BUILD_DIR)/claude-c-debug \"your prompt here\""
 	@echo ""
 	@echo "AddressSanitizer will detect:"
 	@echo "  - Use-after-free"
@@ -167,10 +167,10 @@ sanitize-ub: check-deps
 	$(CC) $(CFLAGS) -g -O0 -fsanitize=undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/logger_ub.o $(LOGGER_SRC)
 	$(CC) $(CFLAGS) -g -O0 -fsanitize=undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/migrations_ub.o $(MIGRATIONS_SRC)
 	$(CC) $(CFLAGS) -g -O0 -fsanitize=undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/persistence_ub.o $(PERSISTENCE_SRC)
-	$(CC) $(CFLAGS) -g -O0 -fsanitize=undefined -fno-omit-frame-pointer -o $(BUILD_DIR)/claude-ubsan $(SRC) $(BUILD_DIR)/logger_ub.o $(BUILD_DIR)/persistence_ub.o $(BUILD_DIR)/migrations_ub.o $(LDFLAGS) -fsanitize=undefined
+	$(CC) $(CFLAGS) -g -O0 -fsanitize=undefined -fno-omit-frame-pointer -o $(BUILD_DIR)/claude-c-ubsan $(SRC) $(BUILD_DIR)/logger_ub.o $(BUILD_DIR)/persistence_ub.o $(BUILD_DIR)/migrations_ub.o $(LDFLAGS) -fsanitize=undefined
 	@echo ""
 	@echo "✓ Build successful with UBSan!"
-	@echo "Run: ./$(BUILD_DIR)/claude-ubsan \"your prompt here\""
+	@echo "Run: ./$(BUILD_DIR)/claude-c-ubsan \"your prompt here\""
 	@echo ""
 
 # Build with combined Address + Undefined Behavior Sanitizers (recommended)
@@ -180,10 +180,10 @@ sanitize-all: check-deps
 	$(CC) $(CFLAGS) -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/logger_all.o $(LOGGER_SRC)
 	$(CC) $(CFLAGS) -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/migrations_all.o $(MIGRATIONS_SRC)
 	$(CC) $(CFLAGS) -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/persistence_all.o $(PERSISTENCE_SRC)
-	$(CC) $(CFLAGS) -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -o $(BUILD_DIR)/claude-allsan $(SRC) $(BUILD_DIR)/logger_all.o $(BUILD_DIR)/persistence_all.o $(BUILD_DIR)/migrations_all.o $(LDFLAGS) -fsanitize=address,undefined
+	$(CC) $(CFLAGS) -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -o $(BUILD_DIR)/claude-c-allsan $(SRC) $(BUILD_DIR)/logger_all.o $(BUILD_DIR)/persistence_all.o $(BUILD_DIR)/migrations_all.o $(LDFLAGS) -fsanitize=address,undefined
 	@echo ""
 	@echo "✓ Build successful with combined sanitizers!"
-	@echo "Run: ./$(BUILD_DIR)/claude-allsan \"your prompt here\""
+	@echo "Run: ./$(BUILD_DIR)/claude-c-allsan \"your prompt here\""
 	@echo ""
 	@echo "This build detects:"
 	@echo "  - Use-after-free, double-free, buffer overflows (AddressSanitizer)"
@@ -197,10 +197,10 @@ sanitize-leak: check-deps
 	$(CC) $(CFLAGS) -g -O0 -fsanitize=leak -fno-omit-frame-pointer -c -o $(BUILD_DIR)/logger_leak.o $(LOGGER_SRC)
 	$(CC) $(CFLAGS) -g -O0 -fsanitize=leak -fno-omit-frame-pointer -c -o $(BUILD_DIR)/migrations_leak.o $(MIGRATIONS_SRC)
 	$(CC) $(CFLAGS) -g -O0 -fsanitize=leak -fno-omit-frame-pointer -c -o $(BUILD_DIR)/persistence_leak.o $(PERSISTENCE_SRC)
-	$(CC) $(CFLAGS) -g -O0 -fsanitize=leak -fno-omit-frame-pointer -o $(BUILD_DIR)/claude-lsan $(SRC) $(BUILD_DIR)/logger_leak.o $(BUILD_DIR)/persistence_leak.o $(BUILD_DIR)/migrations_leak.o $(LDFLAGS) -fsanitize=leak
+	$(CC) $(CFLAGS) -g -O0 -fsanitize=leak -fno-omit-frame-pointer -o $(BUILD_DIR)/claude-c-lsan $(SRC) $(BUILD_DIR)/logger_leak.o $(BUILD_DIR)/persistence_leak.o $(BUILD_DIR)/migrations_leak.o $(LDFLAGS) -fsanitize=leak
 	@echo ""
 	@echo "✓ Build successful with LeakSanitizer!"
-	@echo "Run: ./$(BUILD_DIR)/claude-lsan \"your prompt here\""
+	@echo "Run: ./$(BUILD_DIR)/claude-c-lsan \"your prompt here\""
 	@echo ""
 
 # Run Valgrind memory checker on tests
@@ -234,11 +234,11 @@ memscan: analyze sanitize-all
 	@echo ""
 	@echo "Next steps:"
 	@echo "  1. Review static analysis results: cat $(BUILD_DIR)/analyze.log"
-	@echo "  2. Test with sanitizers: ./$(BUILD_DIR)/claude-allsan \"test prompt\""
+	@echo "  2. Test with sanitizers: ./$(BUILD_DIR)/claude-c-allsan \"test prompt\""
 	@echo "  3. Run Valgrind: make valgrind"
 	@echo ""
 	@echo "For production testing, run all test suites with sanitizers:"
-	@echo "  ./$(BUILD_DIR)/claude-allsan --help"
+	@echo "  ./$(BUILD_DIR)/claude-c-allsan --help"
 	@echo ""
 
 $(LOGGER_OBJ): $(LOGGER_SRC) src/logger.h
@@ -371,6 +371,11 @@ $(TEST_TIMING_TARGET): tests/test_tool_timing.c
 	@echo "✓ Tool timing test build successful!"
 	@echo ""
 
+install: $(TARGET)
+	@echo "Installing claude-c to /usr/local/bin..."
+	@sudo cp $(TARGET) /usr/local/bin/claude-c
+	@echo "✓ Installation complete! Run 'claude-c' from anywhere."
+
 clean:
 	rm -rf $(BUILD_DIR)
 
@@ -385,7 +390,7 @@ help:
 	@echo "Claude Code - Pure C Edition - Build System"
 	@echo ""
 	@echo "Usage:"
-	@echo "  make           - Build the claude executable"
+	@echo "  make           - Build the claude-c executable"
 	@echo "  make debug     - Build with AddressSanitizer (memory bug detection)"
 	@echo "  make test      - Build and run all unit tests"
 	@echo "  make test-edit - Build and run Edit tool tests only"
@@ -395,7 +400,7 @@ help:
 	@echo "  make test-todo - Build and run TODO list tests only"
 	@echo "  make query-tool - Build the API call log query utility"
 	@echo "  make clean     - Remove built files"
-	@echo "  make install   - Install to \$$HOME/.local/bin"
+	@echo "  make install   - Install to /usr/local/bin as claude-c"
 	@echo "  make check-deps - Check if all dependencies are installed"
 	@echo ""
 	@echo "Memory Bug Scanning:"

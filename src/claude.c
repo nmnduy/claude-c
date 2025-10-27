@@ -2695,7 +2695,7 @@ static void process_response(ConversationState *state, cJSON *response, TUIState
 // Advanced input handler with readline-like keybindings
 static void interactive_mode(ConversationState *state) {
     // Initialize colorscheme FIRST (before any colored output)
-    const char *theme = getenv("CLAUDE_THEME");
+    const char *theme = getenv("CLAUDE_C_THEME");
     if (theme && strlen(theme) > 0) {
         char theme_path[512];
         snprintf(theme_path, sizeof(theme_path), "colorschemes/%s.conf", theme);

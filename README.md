@@ -92,14 +92,14 @@ cd claude-c
 make
 ```
 
-This will produce a `claude` executable in the current directory.
+This will produce a `claude-c` executable in the current directory.
 
 **Optional: Install globally**
 ```bash
 make install
 ```
 
-This installs to `/usr/local/bin/claude` so you can run it from anywhere.
+This installs to `/usr/local/bin/claude-c` so you can run it from anywhere.
 
 ## Usage
 
@@ -114,12 +114,12 @@ export ANTHROPIC_API_KEY="your-api-key-here"
 
 **One-shot mode (current):**
 ```bash
-./claude "your prompt here"
+./claude-c "your prompt here"
 ```
 
 **Interactive mode:**
 ```bash
-./claude
+./claude-c
 ```
 
 The interactive mode supports:
@@ -134,13 +134,13 @@ The TUI uses **Kitty terminal's theme format** - a simple, dependency-free confi
 
 **Configuration location:**
 ```bash
-~/.config/claude/theme.conf
+~/.config/claude-c/theme.conf
 ```
 
 **Environment variable override:**
 ```bash
-export CLAUDE_THEME="/path/to/your/theme.conf"
-./claude "your prompt"
+export CLAUDE_C_THEME="/path/to/your/theme.conf"
+./claude-c "your prompt"
 ```
 
 **Theme Format:**
@@ -180,12 +180,12 @@ Most Kitty themes work out of the box! Download from [kitty-themes](https://gith
 
 ```bash
 # Download a theme
-curl -o ~/.config/claude/dracula.conf \
+curl -o ~/.config/claude-c/dracula.conf \
   https://raw.githubusercontent.com/dexpota/kitty-themes/master/themes/Dracula.conf
 
 # Use it
-export CLAUDE_THEME=~/.config/claude/dracula.conf
-./claude "your prompt"
+export CLAUDE_C_THEME=~/.config/claude-c/dracula.conf
+./claude-c "your prompt"
 ```
 
 If no theme is specified, sensible defaults are used.
@@ -194,17 +194,17 @@ If no theme is specified, sensible defaults are used.
 
 **Simple query:**
 ```bash
-./claude "What files are in the current directory?"
+./claude-c "What files are in the current directory?"
 ```
 
 **Code modification:**
 ```bash
-./claude "Read main.c and add error checking to the malloc calls"
+./claude-c "Read main.c and add error checking to the malloc calls"
 ```
 
 **Multi-step task:**
 ```bash
-./claude "Find all .c files, count the lines in each, and create a summary"
+./claude-c "Find all .c files, count the lines in each, and create a summary"
 ```
 
 ## Available Tools
