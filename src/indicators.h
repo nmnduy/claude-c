@@ -15,6 +15,9 @@
 #include <pthread.h>
 #include <time.h>
 #include "fallback_colors.h"
+#include "logger.h"
+#define COLORSCHEME_EXTERN
+#include "colorscheme.h"
 
 // Spinner animation frames using Unicode characters
 // These render beautifully in GPU-accelerated terminals like Kitty, Alacritty, WezTerm
@@ -30,10 +33,40 @@ static const char *SPINNER_LINE[] = {"-", "\\", "|", "/"};
 static const char *SPINNER_BOX[] = {"◰", "◳", "◲", "◱"};
 static const char *SPINNER_CIRCLE[] = {"◜", "◠", "◝", "◞", "◡", "◟"};
 
-// Color codes - use centralized fallback system
-#define SPINNER_CYAN ANSI_FALLBACK_CYAN
-#define SPINNER_YELLOW ANSI_FALLBACK_YELLOW
-#define SPINNER_GREEN ANSI_FALLBACK_GREEN
+// Color codes - use theme system with fallbacks
+static const char* get_spinner_color_status(void) {
+    static char color_buf[32];
+    if (get_colorscheme_color(COLORSCHEME_STATUS, color_buf, sizeof(color_buf)) == 0) {
+        return color_buf;
+    }
+    // Log warning when falling back to default color
+    LOG_WARN("Using fallback color for spinner (status)");
+    return ANSI_FALLBACK_YELLOW;
+}
+
+static const char* get_spinner_color_tool(void) {
+    static char color_buf[32];
+    if (get_colorscheme_color(COLORSCHEME_TOOL, color_buf, sizeof(color_buf)) == 0) {
+        return color_buf;
+    }
+    // Log warning when falling back to default color
+    LOG_WARN("Using fallback color for spinner (tool)");
+    return ANSI_FALLBACK_CYAN;
+}
+
+static const char* get_spinner_color_success(void) {
+    static char color_buf[32];
+    if (get_colorscheme_color(COLORSCHEME_USER, color_buf, sizeof(color_buf)) == 0) {
+        return color_buf;
+    }
+    // Log warning when falling back to default color
+    LOG_WARN("Using fallback color for spinner (success)");
+    return ANSI_FALLBACK_GREEN;
+}
+
+#define SPINNER_CYAN get_spinner_color_tool()
+#define SPINNER_YELLOW get_spinner_color_status()
+#define SPINNER_GREEN get_spinner_color_success()
 #define SPINNER_BLUE ANSI_FALLBACK_BLUE
 #define SPINNER_RESET ANSI_RESET
 
