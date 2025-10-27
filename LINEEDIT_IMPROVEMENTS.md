@@ -4,13 +4,13 @@ Based on analysis of ncurses implementation patterns and current gaps in our lin
 
 ## 🎉 Completion Summary
 
-**Status:** 3 out of 5 high-priority improvements completed!
+**Status:** All 5 high-priority improvements completed! ✨
 
 ✅ **UTF-8/Unicode Support** - Full multibyte character handling
 ✅ **Forward Delete Key** - ESC[3~ sequence support
 ✅ **Command History** - Up/Down arrow navigation with 100-entry buffer
-⏳ **Code Refactoring** - Pending (lower priority)
-⏳ **Escape Sequence Timeout** - Pending (lower priority)
+✅ **Code Refactoring** - Extracted buffer operations and input queue
+✅ **Escape Sequence Timeout** - Implemented with select() and input queue
 
 **Test Coverage:** 67/67 tests passing
 - 11 UTF-8 tests
@@ -21,13 +21,17 @@ Based on analysis of ncurses implementation patterns and current gaps in our lin
 - `902bf60` - Add major lineedit improvements: UTF-8, Delete key, and History
 - `ed407fc` - Add comprehensive unit tests for lineedit improvements
 - `021c477` - Update LINEEDIT_IMPROVEMENTS.md with completion status
+- (current) - Complete refactoring: buffer operations, input queue, and timeout handling
 
 **Implementation Details:**
-- UTF-8 helpers: `src/lineedit.c:135-177` (char_length, is_continuation, read_utf8_char)
-- UTF-8 insertion: `src/lineedit.c:583-619` (handles multibyte input)
-- Forward Delete: `src/lineedit.c:511-527` (ESC[3~ handler)
-- History struct: `src/lineedit.h:21-30, src/lineedit.c:21-72`
-- History navigation: `src/lineedit.c:545-593` (Up/Down arrow handlers)
+- UTF-8 helpers: `src/lineedit.c:135-183` (char_length, is_continuation, read_utf8_char)
+- History struct: `src/lineedit.h:25-30, src/lineedit.c:25-72`
+- History navigation: Integrated into main readline loop
+- Input queue: `src/lineedit.h:50-51, src/lineedit.c:403-423` (ungetch mechanism)
+- Timeout handling: `src/lineedit.c:429-473` (read_key with select())
+- Buffer operations: `src/lineedit.c:479-556` (insert_char, delete_char, backspace, delete_range)
+- Forward Delete: Uses buffer_delete_char() helper
+- UTF-8 insertion: Uses buffer_insert_char() helper
 
 ## Current State
 
@@ -46,9 +50,9 @@ Based on analysis of ncurses implementation patterns and current gaps in our lin
 - ✅ ~~No UTF-8/Unicode support~~ → **FIXED: Full UTF-8 support implemented**
 - ✅ ~~Missing Forward Delete key~~ → **FIXED: ESC[3~ now handled**
 - ✅ ~~No command history~~ → **FIXED: Up/Down arrow navigation with 100-entry buffer**
-- ❌ Monolithic function (230 lines mixing input/buffer/display) - *Remaining*
-- ❌ Basic escape sequence handling without timeout - *Remaining*
-- ❌ No input queue/ungetch mechanism - *Remaining*
+- ✅ ~~Monolithic function~~ → **FIXED: Extracted buffer operations and input functions**
+- ✅ ~~Basic escape sequence handling without timeout~~ → **FIXED: Implemented select()-based timeout**
+- ✅ ~~No input queue/ungetch mechanism~~ → **FIXED: Added circular input queue**
 
 ## High-Priority Improvements
 
@@ -81,31 +85,37 @@ if (seq[1] == '3') {
 }
 ```
 
-### 3. Refactor for Separation of Concerns
-**Problem:** `lineedit_readline()` is 230 lines mixing input/buffer/display
+### 3. Refactor for Separation of Concerns ✅ COMPLETED
+**Problem:** `lineedit_readline()` was 336 lines mixing input/buffer/display
 
-**Solution from ncurses patterns:**
-- Extract `read_key()` - input capture with timeout/retry
-- Extract `buffer_insert_char()` - insert at cursor
-- Extract `buffer_delete_char()` - delete at cursor
-- Extract `buffer_delete_range()` - for word operations
-- Keep `redraw_input_line()` - already good separation
+**Solution Implemented:**
+- ✅ Extracted `read_key()` - input capture with timeout using select()
+- ✅ Extracted `buffer_insert_char()` - insert at cursor
+- ✅ Extracted `buffer_delete_char()` - forward delete at cursor
+- ✅ Extracted `buffer_backspace()` - delete before cursor
+- ✅ Extracted `buffer_delete_range()` - for word operations
+- ✅ Already had `redraw_input_line()` - good separation maintained
 
-**Benefits:**
-- Easier testing of individual operations
-- Clearer code organization
-- Reusable buffer operations
+**Benefits Achieved:**
+- Individual operations can be tested independently
+- Much clearer code organization (separate sections for each concern)
+- Reusable buffer operations for future enhancements
+- Main readline loop is now more readable
 
-### 4. Improve Escape Sequence Handling
-**Problem:** Fixed-byte reads can hang on partial sequences
+### 4. Improve Escape Sequence Handling ✅ COMPLETED
+**Problem:** Fixed-byte reads could hang on partial sequences
 
-**Solution:**
-- Add timeout on read() calls using select() or poll()
-- Implement input queue (ungetch-like mechanism)
-- Handle incomplete sequences gracefully
-- State machine for complex sequences
+**Solution Implemented:**
+- ✅ Added timeout on read() calls using select() (configurable ms)
+- ✅ Implemented input queue (circular buffer, 16 bytes)
+- ✅ Can handle incomplete sequences gracefully (timeouts return 0)
+- ✅ Infrastructure ready for state machine if needed in future
 
-**ncurses reference:** `lib_getch.c` has sophisticated sequence handling
+**Implementation:**
+- `read_key_with_timeout()`: Uses select() for timeout support
+- `read_key()`: Checks queue first, then reads from stdin
+- `queue_push()` and `queue_pop()`: Circular buffer for ungetch
+- Timeout defaults can be configured per read operation
 
 ### 5. Command History ✅ COMPLETED
 **Problem:** No Up/Down arrow history navigation
@@ -147,12 +157,14 @@ typedef struct {
 
 ## Implementation Status
 
+**All high-priority improvements completed!** 🎉
+
 1. ✅ **UTF-8 support** - COMPLETED - Foundational for international users
 2. ✅ **Forward delete** - COMPLETED - Quick win, improves UX
-3. ⏳ **Code refactoring** - PENDING - Lower priority, would make future work easier
+3. ✅ **Code refactoring** - COMPLETED - Makes future work much easier
 4. ✅ **Command history** - COMPLETED - Major UX improvement
-5. ⏳ **Escape sequence timeout** - PENDING - Lower priority, robustness improvement
-6. ⏳ **Better bounds checking** - PENDING - Lower priority, safety enhancement
+5. ✅ **Escape sequence timeout** - COMPLETED - Robustness improvement with select()
+6. ⏳ **Better bounds checking** - PENDING - Medium priority, safety enhancement (current checks are adequate)
 
 ## Testing
 

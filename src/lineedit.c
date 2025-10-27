@@ -14,6 +14,8 @@
 #include <ctype.h>
 #include <sys/ioctl.h>
 #include <signal.h>
+#include <sys/select.h>
+#include <errno.h>
 
 #define INITIAL_BUFFER_SIZE 4096
 #define DEFAULT_HISTORY_SIZE 100
@@ -182,6 +184,9 @@ static int read_utf8_char(unsigned char *buffer, unsigned char first_byte) {
     return expected_length;
 }
 
+// Forward declarations for buffer operations
+static int buffer_delete_range(LineEditor *ed, int start, int end);
+
 // Check if character is word boundary
 static int is_word_boundary(char c) {
     return !isalnum(c) && c != '_';
@@ -230,18 +235,16 @@ static int move_forward_word(const char *buffer, int cursor_pos, int buffer_len)
     return pos;
 }
 
-// Delete the next word
-static int delete_next_word(char *buffer, int *cursor_pos, int *buffer_len) {
-    if (*cursor_pos >= *buffer_len) return 0;
+// Delete the next word (now using LineEditor)
+static int delete_next_word(LineEditor *ed) {
+    if (ed->cursor >= ed->length) return 0;
 
-    int start_pos = *cursor_pos;
-    int end_pos = move_forward_word(buffer, start_pos, *buffer_len);
+    int start_pos = ed->cursor;
+    int end_pos = move_forward_word(ed->buffer, start_pos, ed->length);
 
     if (end_pos > start_pos) {
         // Delete characters from start_pos to end_pos
-        memmove(&buffer[start_pos], &buffer[end_pos], *buffer_len - end_pos + 1);
-        *buffer_len -= (end_pos - start_pos);
-        return end_pos - start_pos; // Return number of characters deleted
+        return buffer_delete_range(ed, start_pos, end_pos);
     }
 
     return 0;
@@ -395,6 +398,165 @@ static void redraw_input_line(const char *prompt, const char *buffer, int cursor
 }
 
 // ============================================================================
+// Input Queue Management (for ungetch-like functionality)
+// ============================================================================
+
+// Push a byte back into the input queue
+static int queue_push(LineEditor *ed, unsigned char c) {
+    if (ed->queue_count >= INPUT_QUEUE_SIZE) {
+        return -1;  // Queue full
+    }
+    ed->input_queue[ed->queue_tail] = c;
+    ed->queue_tail = (ed->queue_tail + 1) % INPUT_QUEUE_SIZE;
+    ed->queue_count++;
+    return 0;
+}
+
+// Pop a byte from the input queue
+static int queue_pop(LineEditor *ed, unsigned char *c) {
+    if (ed->queue_count <= 0) {
+        return -1;  // Queue empty
+    }
+    *c = ed->input_queue[ed->queue_head];
+    ed->queue_head = (ed->queue_head + 1) % INPUT_QUEUE_SIZE;
+    ed->queue_count--;
+    return 0;
+}
+
+// ============================================================================
+// Input Reading with Timeout
+// ============================================================================
+
+// Read a single byte from stdin with timeout
+// Returns: 1 on success, 0 on timeout, -1 on error/EOF
+static int read_key_with_timeout(unsigned char *c, int timeout_ms) {
+    fd_set readfds;
+    struct timeval tv;
+    int ret;
+
+    FD_ZERO(&readfds);
+    FD_SET(STDIN_FILENO, &readfds);
+
+    tv.tv_sec = timeout_ms / 1000;
+    tv.tv_usec = (timeout_ms % 1000) * 1000;
+
+    ret = select(STDIN_FILENO + 1, &readfds, NULL, NULL, &tv);
+    if (ret < 0) {
+        if (errno == EINTR) {
+            return 0;  // Interrupted, treat as timeout
+        }
+        return -1;  // Error
+    } else if (ret == 0) {
+        return 0;  // Timeout
+    }
+
+    // Data available, read it
+    ssize_t n = read(STDIN_FILENO, c, 1);
+    if (n == 1) {
+        return 1;  // Success
+    } else if (n == 0) {
+        return -1;  // EOF
+    } else {
+        return -1;  // Error
+    }
+}
+
+// Read a single byte, checking queue first, then stdin
+// Returns: 1 on success, 0 on timeout, -1 on error/EOF
+static int read_key(LineEditor *ed, unsigned char *c, int timeout_ms) {
+    // Check queue first
+    if (queue_pop(ed, c) == 0) {
+        return 1;  // Got byte from queue
+    }
+
+    // Read from stdin with timeout
+    return read_key_with_timeout(c, timeout_ms);
+}
+
+// ============================================================================
+// Buffer Operations
+// ============================================================================
+
+// Insert character(s) at cursor position
+// Returns: 0 on success, -1 on error (buffer full)
+static int buffer_insert_char(LineEditor *ed, const unsigned char *utf8_char, int char_bytes) {
+    if (ed->length + char_bytes >= (int)ed->buffer_capacity - 1) {
+        return -1;  // Buffer full
+    }
+
+    // Make space for the new character(s)
+    memmove(&ed->buffer[ed->cursor + char_bytes], &ed->buffer[ed->cursor],
+            ed->length - ed->cursor + 1);
+
+    // Copy the character bytes
+    for (int i = 0; i < char_bytes; i++) {
+        ed->buffer[ed->cursor + i] = utf8_char[i];
+    }
+
+    ed->length += char_bytes;
+    ed->cursor += char_bytes;
+    return 0;
+}
+
+// Delete character at cursor position (forward delete)
+// Returns: number of bytes deleted, or 0 if nothing to delete
+static int buffer_delete_char(LineEditor *ed) {
+    if (ed->cursor >= ed->length) {
+        return 0;  // Nothing to delete
+    }
+
+    // Find the length of the UTF-8 character at cursor
+    int char_len = utf8_char_length((unsigned char)ed->buffer[ed->cursor]);
+
+    // Delete the character by moving subsequent text left
+    memmove(&ed->buffer[ed->cursor],
+           &ed->buffer[ed->cursor + char_len],
+           ed->length - ed->cursor - char_len + 1);
+
+    ed->length -= char_len;
+    return char_len;
+}
+
+// Delete character before cursor (backspace)
+// Returns: number of bytes deleted, or 0 if nothing to delete
+static int buffer_backspace(LineEditor *ed) {
+    if (ed->cursor <= 0) {
+        return 0;  // Nothing to delete
+    }
+
+    // For simplicity, delete one byte at a time
+    // (proper UTF-8 would require scanning backwards)
+    memmove(&ed->buffer[ed->cursor - 1], &ed->buffer[ed->cursor],
+            ed->length - ed->cursor + 1);
+    ed->length--;
+    ed->cursor--;
+    return 1;
+}
+
+// Delete range of characters
+// Returns: number of bytes deleted
+static int buffer_delete_range(LineEditor *ed, int start, int end) {
+    if (start < 0 || end > ed->length || start >= end) {
+        return 0;  // Invalid range
+    }
+
+    int bytes_deleted = end - start;
+    memmove(&ed->buffer[start], &ed->buffer[end], ed->length - end + 1);
+    ed->length -= bytes_deleted;
+
+    // Adjust cursor if needed
+    if (ed->cursor > start) {
+        if (ed->cursor < end) {
+            ed->cursor = start;
+        } else {
+            ed->cursor -= bytes_deleted;
+        }
+    }
+
+    return bytes_deleted;
+}
+
+// ============================================================================
 // API Implementation
 // ============================================================================
 
@@ -411,6 +573,10 @@ void lineedit_init(LineEditor *ed, CompletionFn completer, void *ctx) {
     ed->completer = completer;
     ed->completer_ctx = ctx;
     history_init(&ed->history);
+    // Initialize input queue
+    ed->queue_head = 0;
+    ed->queue_tail = 0;
+    ed->queue_count = 0;
 }
 
 void lineedit_free(LineEditor *ed) {
@@ -503,7 +669,7 @@ char* lineedit_readline(LineEditor *ed, const char *prompt) {
                 redraw_input_line(prompt, ed->buffer, ed->cursor);
             } else if (seq[0] == 'd' || seq[0] == 'D') {
                 // Alt+d: delete next word
-                if (delete_next_word(ed->buffer, &ed->cursor, &ed->length)) {
+                if (delete_next_word(ed) > 0) {
                     redraw_input_line(prompt, ed->buffer, ed->cursor);
                 }
             } else if (seq[0] == '[') {
@@ -527,15 +693,7 @@ char* lineedit_readline(LineEditor *ed, const char *prompt) {
                     unsigned char tilde;
                     if (read(STDIN_FILENO, &tilde, 1) == 1 && tilde == '~') {
                         // Delete character at cursor (forward delete)
-                        if (ed->cursor < ed->length) {
-                            // Find the length of the UTF-8 character at cursor
-                            int char_len = utf8_char_length((unsigned char)ed->buffer[ed->cursor]);
-
-                            // Delete the character by moving subsequent text left
-                            memmove(&ed->buffer[ed->cursor],
-                                   &ed->buffer[ed->cursor + char_len],
-                                   ed->length - ed->cursor - char_len + 1);
-                            ed->length -= char_len;
+                        if (buffer_delete_char(ed) > 0) {
                             redraw_input_line(prompt, ed->buffer, ed->cursor);
                         }
                     }
@@ -641,30 +799,21 @@ char* lineedit_readline(LineEditor *ed, const char *prompt) {
             }
         } else if (c == 127 || c == 8) {
             // Backspace
-            if (ed->cursor > 0) {
-                memmove(&ed->buffer[ed->cursor - 1], &ed->buffer[ed->cursor], ed->length - ed->cursor + 1);
-                ed->length--;
-                ed->cursor--;
+            if (buffer_backspace(ed) > 0) {
                 redraw_input_line(prompt, ed->buffer, ed->cursor);
             }
         } else if (c == 14) {
             // Ctrl+N (ASCII 14): Insert newline character
-            if (ed->length < (int)ed->buffer_capacity - 1) {
-                memmove(&ed->buffer[ed->cursor + 1], &ed->buffer[ed->cursor], ed->length - ed->cursor + 1);
-                ed->buffer[ed->cursor] = '\n';
-                ed->length++;
-                ed->cursor++;
+            unsigned char newline = '\n';
+            if (buffer_insert_char(ed, &newline, 1) == 0) {
                 redraw_input_line(prompt, ed->buffer, ed->cursor);
             }
         } else if (c == '\r' || c == '\n') {
             // Enter: Submit, unless we're in paste mode
             if (in_paste_mode) {
                 // In paste mode, insert newline as a regular character
-                if (ed->length < (int)ed->buffer_capacity - 1) {
-                    memmove(&ed->buffer[ed->cursor + 1], &ed->buffer[ed->cursor], ed->length - ed->cursor + 1);
-                    ed->buffer[ed->cursor] = '\n';
-                    ed->length++;
-                    ed->cursor++;
+                unsigned char newline = '\n';
+                if (buffer_insert_char(ed, &newline, 1) == 0) {
                     redraw_input_line(prompt, ed->buffer, ed->cursor);
                 }
             } else {
@@ -738,19 +887,8 @@ char* lineedit_readline(LineEditor *ed, const char *prompt) {
                 continue;
             }
 
-            // Check if we have space for the character
-            if (ed->length + char_bytes < (int)ed->buffer_capacity - 1) {
-                // Insert character bytes at cursor position
-                memmove(&ed->buffer[ed->cursor + char_bytes], &ed->buffer[ed->cursor],
-                        ed->length - ed->cursor + 1);
-
-                // Copy the UTF-8 character bytes
-                for (int i = 0; i < char_bytes; i++) {
-                    ed->buffer[ed->cursor + i] = utf8_buffer[i];
-                }
-
-                ed->length += char_bytes;
-                ed->cursor += char_bytes;
+            // Insert character using buffer operation
+            if (buffer_insert_char(ed, utf8_buffer, char_bytes) == 0) {
                 redraw_input_line(prompt, ed->buffer, ed->cursor);
             }
         }
