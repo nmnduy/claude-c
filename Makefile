@@ -3,8 +3,8 @@
 CC = gcc
 CFLAGS = -Wall -Wextra -Wpedantic -Wformat=2 -Wconversion -Wshadow -Wcast-qual -Wcast-align -Wstrict-prototypes -Wmissing-prototypes -Wmissing-declarations -Wuninitialized -Warray-bounds=2 -Wvla -Wwrite-strings -Wlogical-op -Wnull-dereference -Wduplicated-cond -Wduplicated-branches -Wjump-misses-init -Wimplicit-fallthrough=5 -Wsign-conversion -Wsign-compare -Wfloat-equal -Wpointer-arith -Wbad-function-cast -Wstrict-overflow=5 -Waggregate-return -Wredundant-decls -Wnested-externs -Winline -Wswitch-enum -Wswitch-default -Wenum-conversion -Wdisabled-optimization -Wunsafe-loop-optimizations -O2 -std=c11 -D_POSIX_C_SOURCE=200809L
 DEBUG_CFLAGS = -Wall -Wextra -Wpedantic -Wformat=2 -Wconversion -Wshadow -Wcast-qual -Wcast-align -Wstrict-prototypes -Wmissing-prototypes -Wmissing-declarations -Wuninitialized -Warray-bounds=2 -Wvla -Wwrite-strings -Wlogical-op -Wnull-dereference -Wduplicated-cond -Wduplicated-branches -Wjump-misses-init -Wimplicit-fallthrough=5 -Wsign-conversion -Wsign-compare -Wfloat-equal -Wpointer-arith -Wbad-function-cast -Wstrict-overflow=5 -Waggregate-return -Wredundant-decls -Wnested-externs -Winline -Wswitch-enum -Wswitch-default -Wenum-conversion -Wdisabled-optimization -Wunsafe-loop-optimizations -g -O0 -std=c11 -D_POSIX_C_SOURCE=200809L -fsanitize=address -fno-omit-frame-pointer
-LDFLAGS = -lcurl -lpthread -lsqlite3 -lncurses
-DEBUG_LDFLAGS = -lcurl -lpthread -lsqlite3 -lncurses -fsanitize=address
+LDFLAGS = -lcurl -lpthread -lsqlite3
+DEBUG_LDFLAGS = -lcurl -lpthread -lsqlite3 -fsanitize=address
 
 # Detect OS for cJSON library linking
 UNAME_S := $(shell uname -s)
@@ -357,7 +357,6 @@ check-deps:
 	@echo "Checking dependencies..."
 	@command -v $(CC) >/dev/null 2>&1 || { echo "Error: gcc not found. Please install gcc."; exit 1; }
 	@command -v curl-config >/dev/null 2>&1 || { echo "Error: libcurl not found. Install with: brew install curl (macOS) or apt-get install libcurl4-openssl-dev (Linux)"; exit 1; }
-	@command -v ncurses6-config >/dev/null 2>&1 || command -v ncurses5-config >/dev/null 2>&1 || { echo "Error: ncurses not found. Install with: brew install ncurses (macOS) or apt-get install libncurses-dev (Linux)"; exit 1; }
 	@echo "✓ All dependencies found"
 	@echo ""
 
@@ -391,14 +390,13 @@ help:
 	@echo "  - libcurl"
 	@echo "  - cJSON"
 	@echo "  - sqlite3"
-	@echo "  - ncurses"
 	@echo "  - pthread (usually included with OS)"
 	@echo "  - valgrind (optional, for memory leak detection)"
 	@echo ""
 	@echo "macOS installation:"
-	@echo "  brew install curl cjson sqlite3 ncurses valgrind"
+	@echo "  brew install curl cjson sqlite3 valgrind"
 	@echo ""
 	@echo "Linux installation:"
-	@echo "  apt-get install libcurl4-openssl-dev libcjson-dev libsqlite3-dev libncurses-dev valgrind"
+	@echo "  apt-get install libcurl4-openssl-dev libcjson-dev libsqlite3-dev valgrind"
 	@echo "  or"
-	@echo "  yum install libcurl-devel cjson-devel sqlite-devel ncurses-devel valgrind"
+	@echo "  yum install libcurl-devel cjson-devel sqlite-devel valgrind"

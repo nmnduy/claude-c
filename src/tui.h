@@ -10,8 +10,10 @@
 #ifndef TUI_H
 #define TUI_H
 
-#include <ncurses.h>
 #include "claude_internal.h"
+
+// Forward declaration for WINDOW type (not actually used, kept for compatibility)
+typedef struct _win_st WINDOW;
 
 // TUI Color pairs
 typedef enum {
