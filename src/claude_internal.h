@@ -16,6 +16,9 @@
 // PersistenceDB is defined in persistence.h (or stubbed in TEST_BUILD)
 struct PersistenceDB;
 
+// TodoList is defined in todo.h
+struct TodoList;
+
 // ============================================================================
 // Enums
 // ============================================================================
@@ -66,6 +69,7 @@ typedef struct ConversationState {
     int additional_dirs_capacity;   // Capacity of additional_dirs array
     char *session_id;               // Unique session identifier for this conversation
     struct PersistenceDB *persistence_db;  // For logging API calls to SQLite
+    struct TodoList *todo_list;     // Task tracking list
 } ConversationState;
 
 // ============================================================================

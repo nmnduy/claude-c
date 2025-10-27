@@ -330,3 +330,19 @@ void tui_show_startup_banner(TUIState *tui, const char *version, const char *mod
     printf("\033[0m\n");  // Reset color and add blank line
     fflush(stdout);
 }
+
+void tui_render_todo_list(TUIState *tui, const struct TodoList *todo_list) {
+    if (!tui || !tui->is_initialized || !todo_list) return;
+
+    // Stop any running spinner before rendering TODO list
+    if (g_tui_spinner) {
+        spinner_stop(g_tui_spinner, NULL, 1);
+        g_tui_spinner = NULL;
+    }
+
+    // We need to include todo.h types, but to avoid circular dependencies,
+    // we'll call the todo_render function directly which handles the formatting
+    // For now, we'll just forward to it
+    extern void todo_render(const struct TodoList *list);
+    todo_render(todo_list);
+}

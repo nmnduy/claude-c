@@ -31,6 +31,7 @@ TEST_EDIT_TARGET = $(BUILD_DIR)/test_edit
 TEST_INPUT_TARGET = $(BUILD_DIR)/test_input
 TEST_READ_TARGET = $(BUILD_DIR)/test_read
 TEST_LINEEDIT_TARGET = $(BUILD_DIR)/test_lineedit
+TEST_TODO_TARGET = $(BUILD_DIR)/test_todo
 QUERY_TOOL = $(BUILD_DIR)/query_logs
 SRC = src/claude.c
 LOGGER_SRC = src/logger.c
@@ -47,13 +48,16 @@ COMPLETION_SRC = src/completion.c
 COMPLETION_OBJ = $(BUILD_DIR)/completion.o
 TUI_SRC = src/tui.c
 TUI_OBJ = $(BUILD_DIR)/tui.o
+TODO_SRC = src/todo.c
+TODO_OBJ = $(BUILD_DIR)/todo.o
 TEST_EDIT_SRC = tests/test_edit.c
 TEST_INPUT_SRC = tests/test_input.c
 TEST_READ_SRC = tests/test_read.c
 TEST_LINEEDIT_SRC = tests/test_lineedit.c
+TEST_TODO_SRC = tests/test_todo.c
 QUERY_TOOL_SRC = tools/query_logs.c
 
-.PHONY: all clean check-deps test test-edit test-input test-read test-lineedit query-tool debug analyze sanitize-ub sanitize-all sanitize-leak valgrind memscan
+.PHONY: all clean check-deps test test-edit test-input test-read test-lineedit test-todo query-tool debug analyze sanitize-ub sanitize-all sanitize-leak valgrind memscan
 
 all: check-deps $(TARGET)
 
@@ -61,7 +65,7 @@ debug: check-deps $(BUILD_DIR)/claude-debug
 
 query-tool: check-deps $(QUERY_TOOL)
 
-test: test-edit test-input test-read test-lineedit
+test: test-edit test-input test-read test-lineedit test-todo
 
 test-edit: check-deps $(TEST_EDIT_TARGET)
 	@echo ""
@@ -87,16 +91,22 @@ test-lineedit: check-deps $(TEST_LINEEDIT_TARGET)
 	@echo ""
 	@./$(TEST_LINEEDIT_TARGET)
 
-$(TARGET): $(SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(LINEEDIT_OBJ) $(COMMANDS_OBJ) $(COMPLETION_OBJ) $(TUI_OBJ)
+test-todo: check-deps $(TEST_TODO_TARGET)
+	@echo ""
+	@echo "Running TODO list tests..."
+	@echo ""
+	@./$(TEST_TODO_TARGET)
+
+$(TARGET): $(SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(LINEEDIT_OBJ) $(COMMANDS_OBJ) $(COMPLETION_OBJ) $(TUI_OBJ) $(TODO_OBJ)
 	@mkdir -p $(BUILD_DIR)
-	$(CC) $(CFLAGS) -o $(TARGET) $(SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(LINEEDIT_OBJ) $(COMMANDS_OBJ) $(COMPLETION_OBJ) $(TUI_OBJ) $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $(TARGET) $(SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(LINEEDIT_OBJ) $(COMMANDS_OBJ) $(COMPLETION_OBJ) $(TUI_OBJ) $(TODO_OBJ) $(LDFLAGS)
 	@echo ""
 	@echo "✓ Build successful!"
 	@echo "Run: ./$(TARGET) \"your prompt here\""
 	@echo ""
 
 # Debug build with AddressSanitizer for finding memory bugs
-$(BUILD_DIR)/claude-debug: $(SRC) $(LOGGER_SRC) $(PERSISTENCE_SRC) $(MIGRATIONS_SRC) $(LINEEDIT_SRC) $(COMMANDS_SRC) $(COMPLETION_SRC) $(TUI_SRC)
+$(BUILD_DIR)/claude-debug: $(SRC) $(LOGGER_SRC) $(PERSISTENCE_SRC) $(MIGRATIONS_SRC) $(LINEEDIT_SRC) $(COMMANDS_SRC) $(COMPLETION_SRC) $(TUI_SRC) $(TODO_SRC)
 	@mkdir -p $(BUILD_DIR)
 	@echo "Building with AddressSanitizer (debug mode)..."
 	$(CC) $(DEBUG_CFLAGS) -c -o $(BUILD_DIR)/logger_debug.o $(LOGGER_SRC)
@@ -106,7 +116,8 @@ $(BUILD_DIR)/claude-debug: $(SRC) $(LOGGER_SRC) $(PERSISTENCE_SRC) $(MIGRATIONS_
 	$(CC) $(DEBUG_CFLAGS) -c -o $(BUILD_DIR)/commands_debug.o $(COMMANDS_SRC)
 	$(CC) $(DEBUG_CFLAGS) -c -o $(BUILD_DIR)/completion_debug.o $(COMPLETION_SRC)
 	$(CC) $(DEBUG_CFLAGS) -c -o $(BUILD_DIR)/tui_debug.o $(TUI_SRC)
-	$(CC) $(DEBUG_CFLAGS) -o $(BUILD_DIR)/claude-debug $(SRC) $(BUILD_DIR)/logger_debug.o $(BUILD_DIR)/persistence_debug.o $(BUILD_DIR)/migrations_debug.o $(BUILD_DIR)/lineedit_debug.o $(BUILD_DIR)/commands_debug.o $(BUILD_DIR)/completion_debug.o $(BUILD_DIR)/tui_debug.o $(DEBUG_LDFLAGS)
+	$(CC) $(DEBUG_CFLAGS) -c -o $(BUILD_DIR)/todo_debug.o $(TODO_SRC)
+	$(CC) $(DEBUG_CFLAGS) -o $(BUILD_DIR)/claude-debug $(SRC) $(BUILD_DIR)/logger_debug.o $(BUILD_DIR)/persistence_debug.o $(BUILD_DIR)/migrations_debug.o $(BUILD_DIR)/lineedit_debug.o $(BUILD_DIR)/commands_debug.o $(BUILD_DIR)/completion_debug.o $(BUILD_DIR)/tui_debug.o $(BUILD_DIR)/todo_debug.o $(DEBUG_LDFLAGS)
 	@echo ""
 	@echo "✓ Debug build successful with AddressSanitizer!"
 	@echo "Run: ./$(BUILD_DIR)/claude-debug \"your prompt here\""
@@ -243,6 +254,10 @@ $(TUI_OBJ): $(TUI_SRC) src/tui.h src/claude_internal.h
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c -o $(TUI_OBJ) $(TUI_SRC)
 
+$(TODO_OBJ): $(TODO_SRC) src/todo.h
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c -o $(TODO_OBJ) $(TODO_SRC)
+
 # Query tool - utility to inspect API call logs
 $(QUERY_TOOL): $(QUERY_TOOL_SRC) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ)
 	@mkdir -p $(BUILD_DIR)
@@ -307,6 +322,18 @@ $(TEST_LINEEDIT_TARGET): $(LINEEDIT_SRC) $(TEST_LINEEDIT_SRC) $(LOGGER_OBJ)
 	@echo "✓ Line Editor test build successful!"
 	@echo ""
 
+# Test target for TODO list - tests task management functionality
+$(TEST_TODO_TARGET): $(TODO_SRC) $(TEST_TODO_SRC)
+	@mkdir -p $(BUILD_DIR)
+	@echo "Compiling TODO list test suite..."
+	@$(CC) $(CFLAGS) -c -o $(BUILD_DIR)/todo_test.o $(TODO_SRC)
+	@$(CC) $(CFLAGS) -c -o $(BUILD_DIR)/test_todo.o $(TEST_TODO_SRC)
+	@echo "Linking test executable..."
+	@$(CC) -o $(TEST_TODO_TARGET) $(BUILD_DIR)/todo_test.o $(BUILD_DIR)/test_todo.o
+	@echo ""
+	@echo "✓ TODO list test build successful!"
+	@echo ""
+
 clean:
 	rm -rf $(BUILD_DIR)
 
@@ -329,6 +356,7 @@ help:
 	@echo "  make test-input - Build and run Input handler tests only"
 	@echo "  make test-read - Build and run Read tool tests only"
 	@echo "  make test-lineedit - Build and run Line Editor wrapping tests only"
+	@echo "  make test-todo - Build and run TODO list tests only"
 	@echo "  make query-tool - Build the API call log query utility"
 	@echo "  make clean     - Remove built files"
 	@echo "  make install   - Install to \$$HOME/.local/bin"

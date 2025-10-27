@@ -303,6 +303,69 @@ Theme load_theme(const char *path) {
 **Compatibility:**
 Most Kitty themes work without modification. The TUI maps standard Kitty color keys to UI elements automatically.
 
+### TODO List System
+
+The implementation includes a task tracking system similar to the official Claude Code CLI, allowing the agent to display progress on multi-step tasks.
+
+**Features:**
+- Three task states: `pending`, `in_progress`, `completed`
+- Visual indicators: ✓ (completed), ⋯ (in progress), ○ (pending)
+- Colored terminal output (green, yellow, dim)
+- Simple C API for task management
+
+**Implementation location:** `src/todo.h` and `src/todo.c`
+
+**Data structures:**
+```c
+typedef struct {
+    char *content;       // "Run tests"
+    char *active_form;   // "Running tests"
+    TodoStatus status;   // pending, in_progress, completed
+} TodoItem;
+
+typedef struct {
+    TodoItem *items;
+    size_t count;
+    size_t capacity;
+} TodoList;
+```
+
+**Core API:**
+- `todo_init()` / `todo_free()`: Initialize and cleanup
+- `todo_add()`: Add new task
+- `todo_update_status()`: Update task by index
+- `todo_update_by_content()`: Update task by matching content
+- `todo_render()`: Display task list with colors
+- `todo_count_by_status()`: Count tasks by state
+
+**Integration:**
+- Added to `ConversationState` structure as `todo_list` field
+- TUI function `tui_render_todo_list()` displays the task panel
+- Tests available via `make test-todo`
+
+**Example output:**
+```
+━━━ Tasks ━━━
+✓ Initialize project structure
+⋯ Implementing core functionality
+○ Write unit tests
+○ Update documentation
+━━━━━━━━━━━━
+```
+
+**Testing:**
+```bash
+make test-todo        # Run TODO list unit tests
+./build/test_todo     # Direct execution
+```
+
+The test suite (`tests/test_todo.c`) verifies:
+- List initialization and cleanup
+- Adding/removing items
+- Status updates (by index and by content)
+- Counting by status
+- Visual rendering
+
 ## Context Building
 
 The C implementation now includes automatic environment context building, matching the behavior of the official TypeScript Claude Code CLI. Before each conversation, the system automatically gathers and sends:
