@@ -102,6 +102,11 @@ static void rgb_to_ansi_code(RGB rgb, char *buf, size_t bufsize) {
 // Returns 0 on success, -1 if no theme loaded
 static int get_colorscheme_color(ColorschemeElement element, char *buf, size_t bufsize) {
     if (!g_theme_loaded) {
+        static int warned = 0;
+        if (!warned) {
+            LOG_DEBUG("[THEME] get_colorscheme_color() called but no theme loaded - using fallbacks");
+            warned = 1;
+        }
         return -1;  // No theme loaded
     }
 
