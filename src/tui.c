@@ -322,8 +322,17 @@ void tui_handle_resize(TUIState *tui) {
 void tui_show_startup_banner(TUIState *tui, const char *version, const char *model, const char *working_dir) {
     if (!tui || !tui->is_initialized) return;
 
-    // Print banner directly to stdout with blue/bold color
-    printf("\033[1;34m");  // Bold blue
+    // Get assistant color from colorscheme (appropriate for the Claude mascot)
+    char color_code[32];
+    const char *color_start;
+    if (get_colorscheme_color(COLORSCHEME_ASSISTANT, color_code, sizeof(color_code)) == 0) {
+        color_start = color_code;
+    } else {
+        color_start = "\033[1;36m";  // Bold cyan fallback
+    }
+
+    // Print banner with colorscheme color
+    printf("%s", color_start);  // Use colorscheme color
     printf(" ▐▛███▜▌   claude-c v%s\n", version);
     printf("▝▜█████▛▘  %s\n", model);
     printf("  ▘▘ ▝▝    %s\n", working_dir);
