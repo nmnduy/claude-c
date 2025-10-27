@@ -175,59 +175,109 @@ void tui_add_conversation_line(TUIState *tui, const char *prefix, const char *te
         g_tui_spinner = NULL;
     }
 
-    // Get color from colorscheme or fall back to centralized defaults
-    const char *color_start = "";
+    // Get colors from colorscheme or fall back to centralized defaults
+    const char *prefix_color_start = "";
+    const char *text_color_start = "";
     const char *color_end = ANSI_RESET;
-    char color_code[32];
+    char prefix_color_code[32];
+    char text_color_code[32];
 
-    // Try to get color from colorscheme first
+    // Use foreground color for main text, accent colors only for role names/prefixes
     switch (color_pair) {
+        case COLOR_PAIR_DEFAULT:
+        case COLOR_PAIR_FOREGROUND:
+            // Use foreground color for everything (no distinction)
+            if (get_colorscheme_color(COLORSCHEME_FOREGROUND, text_color_code, sizeof(text_color_code)) == 0) {
+                text_color_start = text_color_code;
+            } else {
+                text_color_start = ANSI_FALLBACK_FOREGROUND;  // Default terminal color
+            }
+            prefix_color_start = text_color_start;  // Same color for prefix
+            break;
+            
         case COLOR_PAIR_USER:
-            if (get_colorscheme_color(COLORSCHEME_USER, color_code, sizeof(color_code)) == 0) {
-                color_start = color_code;
+            // User role name in accent color, text in foreground
+            if (get_colorscheme_color(COLORSCHEME_USER, prefix_color_code, sizeof(prefix_color_code)) == 0) {
+                prefix_color_start = prefix_color_code;
             } else {
-                color_start = ANSI_FALLBACK_USER;  // Green fallback from centralized system
+                prefix_color_start = ANSI_FALLBACK_USER;  // Green fallback
+            }
+            if (get_colorscheme_color(COLORSCHEME_FOREGROUND, text_color_code, sizeof(text_color_code)) == 0) {
+                text_color_start = text_color_code;
+            } else {
+                text_color_start = ANSI_FALLBACK_FOREGROUND;  // Default terminal color
             }
             break;
+            
         case COLOR_PAIR_ASSISTANT:
-            if (get_colorscheme_color(COLORSCHEME_ASSISTANT, color_code, sizeof(color_code)) == 0) {
-                color_start = color_code;
+            // Assistant role name in accent color, text in foreground
+            if (get_colorscheme_color(COLORSCHEME_ASSISTANT, prefix_color_code, sizeof(prefix_color_code)) == 0) {
+                prefix_color_start = prefix_color_code;
             } else {
-                color_start = ANSI_FALLBACK_ASSISTANT;  // Blue fallback from centralized system
+                prefix_color_start = ANSI_FALLBACK_ASSISTANT;  // Blue fallback
+            }
+            if (get_colorscheme_color(COLORSCHEME_FOREGROUND, text_color_code, sizeof(text_color_code)) == 0) {
+                text_color_start = text_color_code;
+            } else {
+                text_color_start = ANSI_FALLBACK_FOREGROUND;  // Default terminal color
             }
             break;
+            
         case COLOR_PAIR_TOOL:
-            if (get_colorscheme_color(COLORSCHEME_TOOL, color_code, sizeof(color_code)) == 0) {
-                color_start = color_code;
+            // Tool indicator in accent color, text in foreground
+            if (get_colorscheme_color(COLORSCHEME_TOOL, prefix_color_code, sizeof(prefix_color_code)) == 0) {
+                prefix_color_start = prefix_color_code;
             } else {
-                color_start = ANSI_FALLBACK_TOOL;  // Yellow fallback from centralized system
+                prefix_color_start = ANSI_FALLBACK_TOOL;  // Yellow fallback
+            }
+            if (get_colorscheme_color(COLORSCHEME_FOREGROUND, text_color_code, sizeof(text_color_code)) == 0) {
+                text_color_start = text_color_code;
+            } else {
+                text_color_start = ANSI_FALLBACK_FOREGROUND;  // Default terminal color
             }
             break;
+            
         case COLOR_PAIR_ERROR:
-            if (get_colorscheme_color(COLORSCHEME_ERROR, color_code, sizeof(color_code)) == 0) {
-                color_start = color_code;
+            // Error indicator in accent color, text in foreground
+            if (get_colorscheme_color(COLORSCHEME_ERROR, prefix_color_code, sizeof(prefix_color_code)) == 0) {
+                prefix_color_start = prefix_color_code;
             } else {
-                color_start = ANSI_FALLBACK_ERROR;  // Red fallback from centralized system
+                prefix_color_start = ANSI_FALLBACK_ERROR;  // Red fallback
+            }
+            if (get_colorscheme_color(COLORSCHEME_FOREGROUND, text_color_code, sizeof(text_color_code)) == 0) {
+                text_color_start = text_color_code;
+            } else {
+                text_color_start = ANSI_FALLBACK_FOREGROUND;  // Default terminal color
             }
             break;
+            
         case COLOR_PAIR_STATUS:
-            if (get_colorscheme_color(COLORSCHEME_STATUS, color_code, sizeof(color_code)) == 0) {
-                color_start = color_code;
+            // Status indicator in accent color, text in foreground
+            if (get_colorscheme_color(COLORSCHEME_STATUS, prefix_color_code, sizeof(prefix_color_code)) == 0) {
+                prefix_color_start = prefix_color_code;
             } else {
-                color_start = ANSI_FALLBACK_STATUS;  // Cyan fallback from centralized system
+                prefix_color_start = ANSI_FALLBACK_STATUS;  // Cyan fallback
+            }
+            if (get_colorscheme_color(COLORSCHEME_FOREGROUND, text_color_code, sizeof(text_color_code)) == 0) {
+                text_color_start = text_color_code;
+            } else {
+                text_color_start = ANSI_FALLBACK_FOREGROUND;  // Default terminal color
             }
             break;
+            
         default:
-            color_start = "";
+            // No coloring
+            prefix_color_start = "";
+            text_color_start = "";
             color_end = "";
             break;
     }
 
-    // Print directly to stdout with color
+    // Print with separate colors for prefix and text
     if (prefix) {
-        printf("%s%s %s%s\n", color_start, prefix, text, color_end);
+        printf("%s%s%s %s%s%s\n", prefix_color_start, prefix, color_end, text_color_start, text, color_end);
     } else {
-        printf("%s%s%s\n", color_start, text, color_end);
+        printf("%s%s%s\n", text_color_start, text, color_end);
     }
     fflush(stdout);
 }
@@ -267,17 +317,17 @@ char* tui_read_input(TUIState *tui, const char *prompt) {
     lineedit_init(&editor, NULL, NULL);  // No completion for now
 
     // Get prompt color from colorscheme or use centralized fallback green
-    char color_code[32];
-    const char *color_start;
-    if (get_colorscheme_color(COLORSCHEME_USER, color_code, sizeof(color_code)) == 0) {
-        color_start = color_code;
+    char prompt_color_code[32];
+    const char *prompt_color_start;
+    if (get_colorscheme_color(COLORSCHEME_USER, prompt_color_code, sizeof(prompt_color_code)) == 0) {
+        prompt_color_start = prompt_color_code;
     } else {
-        color_start = ANSI_FALLBACK_USER;  // Green fallback from centralized system
+        prompt_color_start = ANSI_FALLBACK_USER;  // Green fallback from centralized system
     }
 
-    // Create colored prompt
+    // Create colored prompt with accent color for prompt text
     char colored_prompt[256];
-    snprintf(colored_prompt, sizeof(colored_prompt), "%s%s%s ", color_start, prompt, ANSI_RESET);
+    snprintf(colored_prompt, sizeof(colored_prompt), "%s%s%s ", prompt_color_start, prompt, ANSI_RESET);
 
     // Read input
     char *input = lineedit_readline(&editor, colored_prompt);
@@ -296,16 +346,27 @@ void tui_refresh(TUIState *tui) {
 void tui_clear_conversation(TUIState *tui) {
     if (!tui || !tui->is_initialized) return;
 
-    // Get status color from colorscheme or use centralized fallback cyan
-    char color_code[32];
-    const char *color_start;
-    if (get_colorscheme_color(COLORSCHEME_STATUS, color_code, sizeof(color_code)) == 0) {
-        color_start = color_code;
+    // Get accent color for status indicator
+    char status_color_code[32];
+    char text_color_code[32];
+    const char *status_color_start;
+    const char *text_color_start;
+    
+    if (get_colorscheme_color(COLORSCHEME_STATUS, status_color_code, sizeof(status_color_code)) == 0) {
+        status_color_start = status_color_code;
     } else {
-        color_start = ANSI_FALLBACK_STATUS;  // Cyan fallback from centralized system
+        status_color_start = ANSI_FALLBACK_STATUS;  // Cyan fallback from centralized system
+    }
+    
+    // Get foreground color for message text
+    if (get_colorscheme_color(COLORSCHEME_FOREGROUND, text_color_code, sizeof(text_color_code)) == 0) {
+        text_color_start = text_color_code;
+    } else {
+        text_color_start = ANSI_FALLBACK_FOREGROUND;  // Default terminal color
     }
 
-    printf("%s[System] Conversation history cleared (kept in terminal scrollback)%s\n", color_start, ANSI_RESET);
+    printf("%s[System]%s %sConversation history cleared (kept in terminal scrollback)%s\n", 
+           status_color_start, ANSI_RESET, text_color_start, ANSI_RESET);
     fflush(stdout);
 }
 
@@ -323,20 +384,32 @@ void tui_handle_resize(TUIState *tui) {
 void tui_show_startup_banner(TUIState *tui, const char *version, const char *model, const char *working_dir) {
     if (!tui || !tui->is_initialized) return;
 
-    // Get assistant color from colorscheme (appropriate for the Claude mascot)
-    char color_code[32];
-    const char *color_start;
-    if (get_colorscheme_color(COLORSCHEME_ASSISTANT, color_code, sizeof(color_code)) == 0) {
-        color_start = color_code;
+    // Get accent color for the Claude mascot (assistant color)
+    char mascot_color_code[32];
+    char text_color_code[32];
+    const char *mascot_color_start;
+    const char *text_color_start;
+    
+    if (get_colorscheme_color(COLORSCHEME_ASSISTANT, mascot_color_code, sizeof(mascot_color_code)) == 0) {
+        mascot_color_start = mascot_color_code;
     } else {
-        color_start = ANSI_FALLBACK_BOLD_CYAN;  // Bold cyan fallback from centralized system
+        mascot_color_start = ANSI_FALLBACK_ASSISTANT;  // Blue fallback
+    }
+    
+    // Get foreground color for text information
+    if (get_colorscheme_color(COLORSCHEME_FOREGROUND, text_color_code, sizeof(text_color_code)) == 0) {
+        text_color_start = text_color_code;
+    } else {
+        text_color_start = ANSI_FALLBACK_FOREGROUND;  // Default terminal color
     }
 
-    // Print banner with colorscheme color
-    printf("%s", color_start);  // Use colorscheme color
-    printf(" ▐▛███▜▌   claude-c v%s\n", version);
-    printf("▝▜█████▛▘  %s\n", model);
-    printf("  ▘▘ ▝▝    %s\n", working_dir);
+    // Print banner with accent color for mascot, foreground for text
+    printf("%s", mascot_color_start);  // Use accent color for mascot
+    printf(" ▐▛███▜▌");
+    printf("%s   claude-c v%s\n", text_color_start, version);
+    
+    printf("%s▝▜█████▛▘%s  %s\n", mascot_color_start, text_color_start, model);
+    printf("%s  ▘▘ ▝▝%s    %s\n", mascot_color_start, text_color_start, working_dir);
     printf(ANSI_RESET "\n");  // Reset color and add blank line
     fflush(stdout);
 }
