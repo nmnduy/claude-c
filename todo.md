@@ -1,4 +1,4 @@
-- [ ] why so many linse between [Assistant] and everything else?
+- [x] why so many linse between [Assistant] and everything else?
 ```sh
 [Tool: Grep] "User.*printf" in /Users/dunguyen/fgit/claude-c/src
 [Assistant]
