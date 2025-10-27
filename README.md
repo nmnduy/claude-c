@@ -107,7 +107,7 @@ This installs to `/usr/local/bin/claude-c` so you can run it from anywhere.
 
 Set your Anthropic API key:
 ```bash
-export ANTHROPIC_API_KEY="your-api-key-here"
+export OPENAI_API_KEY="your-api-key-here"
 ```
 
 ### Running
@@ -468,7 +468,7 @@ For production use, consider the official TypeScript version with full features.
 - Ensure you have a C11-compatible compiler
 
 **Runtime errors:**
-- Verify `ANTHROPIC_API_KEY` is set: `echo $ANTHROPIC_API_KEY`
+- Verify `OPENAI_API_KEY` is set: `echo $ANTHROPIC_API_KEY`
 - Check API key validity at https://console.anthropic.com
 - Ensure you have internet connectivity for API calls
 
