@@ -1,5 +1,5 @@
 set -xe
-make && CLAUDE_THEME=${CLAUDE_THEME:-dracula} \
+make && CLAUDE_THEME=${CLAUDE_THEME:-kitty-default} \
   ./build/claude-c
 
 # examples config:
