@@ -6,6 +6,9 @@ DEBUG_CFLAGS = -Wall -Wextra -Wpedantic -Wformat=2 -Wconversion -Wshadow -Wcast-
 LDFLAGS = -lcurl -lpthread -lsqlite3
 DEBUG_LDFLAGS = -lcurl -lpthread -lsqlite3 -fsanitize=address
 
+# Installation prefix (can be overridden via command line)
+INSTALL_PREFIX ?= $(HOME)/.local
+
 # Detect OS for cJSON library linking
 UNAME_S := $(shell uname -s)
 ifeq ($(UNAME_S),Darwin)
@@ -60,7 +63,7 @@ TEST_TODO_SRC = tests/test_todo.c
 TEST_TODO_WRITE_SRC = tests/test_todo_write.c
 QUERY_TOOL_SRC = tools/query_logs.c
 
-.PHONY: all clean check-deps test test-edit test-input test-read test-lineedit test-todo test-todo-write query-tool debug analyze sanitize-ub sanitize-all sanitize-leak valgrind memscan
+.PHONY: all clean check-deps install test test-edit test-input test-read test-lineedit test-todo test-todo-write query-tool debug analyze sanitize-ub sanitize-all sanitize-leak valgrind memscan
 
 all: check-deps $(TARGET)
 
@@ -286,40 +289,40 @@ $(QUERY_TOOL): $(QUERY_TOOL_SRC) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ)
 # Test target for Edit tool - compiles test suite with claude.c functions
 # We rename claude's main to avoid conflict with test's main
 # and export internal functions via TEST_BUILD flag
-$(TEST_EDIT_TARGET): $(SRC) $(TEST_EDIT_SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ)
+$(TEST_EDIT_TARGET): $(SRC) $(TEST_EDIT_SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(TODO_OBJ)
 	@mkdir -p $(BUILD_DIR)
 	@echo "Compiling claude.c for testing (renaming main)..."
 	@$(CC) $(CFLAGS) -DTEST_BUILD -Dmain=unused_main -c -o $(BUILD_DIR)/claude_test.o $(SRC)
 	@echo "Compiling Edit tool test suite..."
 	@$(CC) $(CFLAGS) -c -o $(BUILD_DIR)/test_edit.o $(TEST_EDIT_SRC)
 	@echo "Linking test executable..."
-	@$(CC) -o $(TEST_EDIT_TARGET) $(BUILD_DIR)/claude_test.o $(BUILD_DIR)/test_edit.o $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(LDFLAGS)
+	@$(CC) -o $(TEST_EDIT_TARGET) $(BUILD_DIR)/claude_test.o $(BUILD_DIR)/test_edit.o $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(TODO_OBJ) $(LDFLAGS)
 	@echo ""
 	@echo "✓ Edit tool test build successful!"
 	@echo ""
 
 # Test target for Input handler - compiles test suite with claude.c functions
-$(TEST_INPUT_TARGET): $(SRC) $(TEST_INPUT_SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ)
+$(TEST_INPUT_TARGET): $(SRC) $(TEST_INPUT_SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(TODO_OBJ)
 	@mkdir -p $(BUILD_DIR)
 	@echo "Compiling claude.c for input testing..."
 	@$(CC) $(CFLAGS) -DTEST_BUILD -Dmain=unused_main -c -o $(BUILD_DIR)/claude_input_test.o $(SRC)
 	@echo "Compiling Input handler test suite..."
 	@$(CC) $(CFLAGS) -c -o $(BUILD_DIR)/test_input.o $(TEST_INPUT_SRC)
 	@echo "Linking test executable..."
-	@$(CC) -o $(TEST_INPUT_TARGET) $(BUILD_DIR)/claude_input_test.o $(BUILD_DIR)/test_input.o $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(LDFLAGS)
+	@$(CC) -o $(TEST_INPUT_TARGET) $(BUILD_DIR)/claude_input_test.o $(BUILD_DIR)/test_input.o $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(TODO_OBJ) $(LDFLAGS)
 	@echo ""
 	@echo "✓ Input handler test build successful!"
 	@echo ""
 
 # Test target for Read tool - compiles test suite with claude.c functions
-$(TEST_READ_TARGET): $(SRC) $(TEST_READ_SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ)
+$(TEST_READ_TARGET): $(SRC) $(TEST_READ_SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(TODO_OBJ)
 	@mkdir -p $(BUILD_DIR)
 	@echo "Compiling claude.c for read testing..."
 	@$(CC) $(CFLAGS) -DTEST_BUILD -Dmain=unused_main -c -o $(BUILD_DIR)/claude_read_test.o $(SRC)
 	@echo "Compiling Read tool test suite..."
 	@$(CC) $(CFLAGS) -c -o $(BUILD_DIR)/test_read.o $(TEST_READ_SRC)
 	@echo "Linking test executable..."
-	@$(CC) -o $(TEST_READ_TARGET) $(BUILD_DIR)/claude_read_test.o $(BUILD_DIR)/test_read.o $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(LDFLAGS)
+	@$(CC) -o $(TEST_READ_TARGET) $(BUILD_DIR)/claude_read_test.o $(BUILD_DIR)/test_read.o $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(TODO_OBJ) $(LDFLAGS)
 	@echo ""
 	@echo "✓ Read tool test build successful!"
 	@echo ""
@@ -372,9 +375,13 @@ $(TEST_TIMING_TARGET): tests/test_tool_timing.c
 	@echo ""
 
 install: $(TARGET)
-	@echo "Installing claude-c to /usr/local/bin..."
-	@sudo cp $(TARGET) /usr/local/bin/claude-c
+	@echo "Installing claude-c to $(INSTALL_PREFIX)/bin..."
+	@mkdir -p $(INSTALL_PREFIX)/bin
+	@cp $(TARGET) $(INSTALL_PREFIX)/bin/claude-c
 	@echo "✓ Installation complete! Run 'claude-c' from anywhere."
+	@echo ""
+	@echo "Note: Make sure $(INSTALL_PREFIX)/bin is in your PATH:"
+	@echo "  export PATH=\"$(INSTALL_PREFIX)/bin:$$PATH\""
 
 clean:
 	rm -rf $(BUILD_DIR)
@@ -400,7 +407,9 @@ help:
 	@echo "  make test-todo - Build and run TODO list tests only"
 	@echo "  make query-tool - Build the API call log query utility"
 	@echo "  make clean     - Remove built files"
-	@echo "  make install   - Install to /usr/local/bin as claude-c"
+	@echo "  make install   - Install to \$$HOME/.local/bin as claude-c (default)"
+	@echo "  make install INSTALL_PREFIX=/usr/local - Install to /usr/local/bin (requires sudo)"
+	@echo "  make install INSTALL_PREFIX=/opt - Install to /opt/bin (requires sudo)"
 	@echo "  make check-deps - Check if all dependencies are installed"
 	@echo ""
 	@echo "Memory Bug Scanning:"
