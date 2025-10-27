@@ -47,6 +47,9 @@ typedef CompletionResult* (*CompletionFn)(const char *line, int cursor_pos, void
 // Line Editor
 // ============================================================================
 
+// Input queue for ungetch-like functionality
+#define INPUT_QUEUE_SIZE 16
+
 typedef struct LineEditor {
     char *buffer;            // Input buffer (dynamically allocated)
     size_t buffer_capacity;  // Capacity of buffer
@@ -55,6 +58,11 @@ typedef struct LineEditor {
     CompletionFn completer;  // Optional: for tab completion
     void *completer_ctx;     // Context passed to completer
     History history;         // Command history
+    // Input queue for ungetch
+    unsigned char input_queue[INPUT_QUEUE_SIZE];
+    int queue_head;          // Read position
+    int queue_tail;          // Write position
+    int queue_count;         // Number of bytes in queue
 } LineEditor;
 
 // ============================================================================
