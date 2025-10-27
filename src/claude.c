@@ -1835,6 +1835,43 @@ static const char* get_platform(void) {
 #endif
 }
 
+// Read CLAUDE.md from working directory if it exists
+static char* read_claude_md(const char *working_dir) {
+    char claude_md_path[PATH_MAX];
+    snprintf(claude_md_path, sizeof(claude_md_path), "%s/CLAUDE.md", working_dir);
+
+    // Check if file exists
+    struct stat st;
+    if (stat(claude_md_path, &st) != 0) {
+        return NULL; // File doesn't exist
+    }
+
+    // Read the file
+    FILE *f = fopen(claude_md_path, "r");
+    if (!f) {
+        return NULL;
+    }
+
+    // Allocate buffer based on file size
+    size_t file_size = (size_t)st.st_size;
+    char *content = malloc(file_size + 1);
+    if (!content) {
+        fclose(f);
+        return NULL;
+    }
+
+    size_t read_size = fread(content, 1, file_size, f);
+    fclose(f);
+
+    if (read_size != file_size) {
+        free(content);
+        return NULL;
+    }
+
+    content[file_size] = '\0';
+    return content;
+}
+
 // Build complete system prompt with environment context
 char* build_system_prompt(ConversationState *state) {
     const char *working_dir = state->working_dir;
@@ -1843,10 +1880,12 @@ char* build_system_prompt(ConversationState *state) {
     char *os_version = get_os_version();
     int is_git = is_git_repo(working_dir);
     char *git_status = is_git ? get_git_status(working_dir) : NULL;
+    char *claude_md = read_claude_md(working_dir);
 
     // Calculate required buffer size
     size_t prompt_size = 2048; // Base size for the prompt template
     if (git_status) prompt_size += strlen(git_status);
+    if (claude_md) prompt_size += strlen(claude_md) + 512; // Extra space for formatting
 
     // Add space for additional directories
     for (int i = 0; i < state->additional_dirs_count; i++) {
@@ -1893,12 +1932,29 @@ char* build_system_prompt(ConversationState *state) {
 
     // Add git status if available
     if (git_status && offset < (int)prompt_size) {
-        snprintf(prompt + offset, prompt_size - offset, "\n%s\n", git_status);
+        offset += snprintf(prompt + offset, prompt_size - offset, "\n%s\n", git_status);
+    }
+
+    // Add CLAUDE.md content if available
+    if (claude_md && offset < (int)prompt_size) {
+        offset += snprintf(prompt + offset, prompt_size - offset,
+            "\n<system-reminder>\n"
+            "As you answer the user's questions, you can use the following context:\n"
+            "# claudeMd\n"
+            "Codebase and user instructions are shown below. Be sure to adhere to these instructions. "
+            "IMPORTANT: These instructions OVERRIDE any default behavior and you MUST follow them exactly as written.\n\n"
+            "Contents of %s/CLAUDE.md (project instructions, checked into the codebase):\n\n"
+            "%s\n\n"
+            "      IMPORTANT: this context may or may not be relevant to your tasks. "
+            "You should not respond to this context unless it is highly relevant to your task.\n"
+            "</system-reminder>\n",
+            working_dir, claude_md);
     }
 
     free(date);
     free(os_version);
     free(git_status);
+    free(claude_md);
 
     return prompt;
 }
@@ -3022,6 +3078,12 @@ int main(int argc, char *argv[]) {
     char *system_prompt = build_system_prompt(&state);
     if (system_prompt) {
         add_system_message(&state, system_prompt);
+
+        // Debug: print system prompt if DEBUG_PROMPT environment variable is set
+        if (getenv("DEBUG_PROMPT")) {
+            printf("\n=== SYSTEM PROMPT (DEBUG) ===\n%s\n=== END SYSTEM PROMPT ===\n\n", system_prompt);
+        }
+
         free(system_prompt);
         LOG_DEBUG("System prompt added with environment context");
     } else {

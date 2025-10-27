@@ -383,15 +383,29 @@ The C implementation now includes automatic environment context building, matchi
 - **Repository status**: Clean or modified (based on `git status --porcelain`)
 - **Recent commits**: Last 5 commits with hash and message
 
+### CLAUDE.md Injection
+**NEW**: The system now automatically reads and injects the contents of `CLAUDE.md` from the working directory into the system prompt, matching the behavior of the official Claude Code CLI. This allows you to provide project-specific instructions that the AI will follow.
+
+- **Automatic detection**: If `CLAUDE.md` exists in the working directory, it's automatically included
+- **Formatted as system-reminder**: The content is wrapped in `<system-reminder>` tags to ensure proper context handling
+- **Same format as official CLI**: Uses the exact format as Claude Code, including the "claudeMd" header
+
+**Testing the CLAUDE.md injection:**
+```bash
+# Set DEBUG_PROMPT to see the full system prompt including CLAUDE.md
+DEBUG_PROMPT=1 ./build/claude
+```
+
 ### Implementation Details
-The context is built using these functions (lines 970-1140):
+The context is built using these functions (lines 1838-1960):
 - `get_current_date()`: Gets date in YYYY-MM-DD format using `strftime()`
 - `is_git_repo()`: Checks for `.git` directory
 - `exec_git_command()`: Executes git commands via `popen()`
 - `get_git_status()`: Gathers branch, status, and recent commits
 - `get_platform()`: Returns platform string via compiler macros
 - `get_os_version()`: Executes `uname -sr` to get OS info
-- `build_system_prompt()`: Assembles complete system message with all context
+- `read_claude_md()`: Reads CLAUDE.md file from working directory if present
+- `build_system_prompt()`: Assembles complete system message with all context including CLAUDE.md
 
 The context is automatically added as a system message at conversation start (in `main()` before TUI initialization), ensuring the AI has full awareness of the working environment.
 
