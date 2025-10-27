@@ -301,15 +301,15 @@ $(TEST_EDIT_TARGET): $(SRC) $(TEST_EDIT_SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(
 	@echo "✓ Edit tool test build successful!"
 	@echo ""
 
-# Test target for Input handler - compiles test suite with claude.c functions
-$(TEST_INPUT_TARGET): $(SRC) $(TEST_INPUT_SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(TODO_OBJ)
+# Test target for Input handler - compiles test suite with lineedit.c functions
+$(TEST_INPUT_TARGET): $(LINEEDIT_SRC) $(TEST_INPUT_SRC) $(LOGGER_OBJ)
 	@mkdir -p $(BUILD_DIR)
-	@echo "Compiling claude.c for input testing..."
-	@$(CC) $(CFLAGS) -DTEST_BUILD -Dmain=unused_main -c -o $(BUILD_DIR)/claude_input_test.o $(SRC)
+	@echo "Compiling lineedit.c for input testing..."
+	@$(CC) $(CFLAGS) -DTEST_BUILD -c -o $(BUILD_DIR)/lineedit_input_test.o $(LINEEDIT_SRC)
 	@echo "Compiling Input handler test suite..."
 	@$(CC) $(CFLAGS) -c -o $(BUILD_DIR)/test_input.o $(TEST_INPUT_SRC)
 	@echo "Linking test executable..."
-	@$(CC) -o $(TEST_INPUT_TARGET) $(BUILD_DIR)/claude_input_test.o $(BUILD_DIR)/test_input.o $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(TODO_OBJ) $(LDFLAGS)
+	@$(CC) -o $(TEST_INPUT_TARGET) $(BUILD_DIR)/lineedit_input_test.o $(BUILD_DIR)/test_input.o $(LOGGER_OBJ) $(LDFLAGS)
 	@echo ""
 	@echo "✓ Input handler test build successful!"
 	@echo ""
