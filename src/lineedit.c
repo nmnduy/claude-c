@@ -16,6 +16,60 @@
 #include <signal.h>
 
 #define INITIAL_BUFFER_SIZE 4096
+#define DEFAULT_HISTORY_SIZE 100
+
+// ============================================================================
+// History Management
+// ============================================================================
+
+// Initialize history
+static void history_init(History *hist) {
+    hist->capacity = DEFAULT_HISTORY_SIZE;
+    hist->entries = malloc(sizeof(char*) * (size_t)hist->capacity);
+    if (!hist->entries) {
+        LOG_ERROR("Failed to allocate history buffer");
+        exit(1);
+    }
+    hist->count = 0;
+    hist->position = -1;
+}
+
+// Add entry to history (avoids duplicates of last entry)
+static void history_add(History *hist, const char *entry) {
+    if (!entry || entry[0] == '\0') {
+        return;  // Don't add empty entries
+    }
+
+    // Don't add if it's the same as the last entry
+    if (hist->count > 0 && strcmp(hist->entries[hist->count - 1], entry) == 0) {
+        return;
+    }
+
+    // If at capacity, remove oldest entry
+    if (hist->count >= hist->capacity) {
+        free(hist->entries[0]);
+        memmove(&hist->entries[0], &hist->entries[1],
+                sizeof(char*) * (size_t)(hist->capacity - 1));
+        hist->count--;
+    }
+
+    // Add new entry
+    hist->entries[hist->count] = strdup(entry);
+    hist->count++;
+    hist->position = -1;  // Reset navigation position
+}
+
+// Free history
+static void history_free(History *hist) {
+    for (int i = 0; i < hist->count; i++) {
+        free(hist->entries[i]);
+    }
+    free(hist->entries);
+    hist->entries = NULL;
+    hist->count = 0;
+    hist->capacity = 0;
+    hist->position = -1;
+}
 
 // ============================================================================
 // Terminal State Management - Ensures terminal is always restored
@@ -70,6 +124,53 @@ static void register_cleanup_handlers(void) {
 // ============================================================================
 // Helper Functions
 // ============================================================================
+
+// UTF-8 Helper Functions
+// UTF-8 encoding:
+// - 1 byte:  0xxxxxxx (0x00-0x7F, ASCII)
+// - 2 bytes: 110xxxxx 10xxxxxx (0xC0-0xDF start)
+// - 3 bytes: 1110xxxx 10xxxxxx 10xxxxxx (0xE0-0xEF start)
+// - 4 bytes: 11110xxx 10xxxxxx 10xxxxxx 10xxxxxx (0xF0-0xF7 start)
+
+// Get the number of bytes in a UTF-8 character from its first byte
+static int utf8_char_length(unsigned char first_byte) {
+    if ((first_byte & 0x80) == 0) return 1;  // 0xxxxxxx
+    if ((first_byte & 0xE0) == 0xC0) return 2;  // 110xxxxx
+    if ((first_byte & 0xF0) == 0xE0) return 3;  // 1110xxxx
+    if ((first_byte & 0xF8) == 0xF0) return 4;  // 11110xxx
+    return 1;  // Invalid, treat as single byte
+}
+
+// Check if a byte is a UTF-8 continuation byte (10xxxxxx)
+static int is_utf8_continuation(unsigned char byte) {
+    return (byte & 0xC0) == 0x80;
+}
+
+// Read a complete UTF-8 character from stdin
+// Returns the number of bytes read (1-4), or 0 on error
+// The character is stored in the buffer
+static int read_utf8_char(unsigned char *buffer, unsigned char first_byte) {
+    buffer[0] = first_byte;
+    int expected_length = utf8_char_length(first_byte);
+
+    if (expected_length == 1) {
+        return 1;  // ASCII, already have it
+    }
+
+    // Read continuation bytes
+    for (int i = 1; i < expected_length; i++) {
+        if (read(STDIN_FILENO, &buffer[i], 1) != 1) {
+            return 0;  // Read error
+        }
+
+        // Verify it's a valid continuation byte
+        if (!is_utf8_continuation(buffer[i])) {
+            return 1;  // Invalid UTF-8, return just the first byte
+        }
+    }
+
+    return expected_length;
+}
 
 // Check if character is word boundary
 static int is_word_boundary(char c) {
@@ -299,6 +400,7 @@ void lineedit_init(LineEditor *ed, CompletionFn completer, void *ctx) {
     ed->length = 0;
     ed->completer = completer;
     ed->completer_ctx = ctx;
+    history_init(&ed->history);
 }
 
 void lineedit_free(LineEditor *ed) {
@@ -307,6 +409,7 @@ void lineedit_free(LineEditor *ed) {
     ed->buffer_capacity = 0;
     ed->cursor = 0;
     ed->length = 0;
+    history_free(&ed->history);
 }
 
 void completion_free(CompletionResult *result) {
@@ -355,6 +458,9 @@ char* lineedit_readline(LineEditor *ed, const char *prompt) {
     ed->cursor = 0;
     int in_paste_mode = 0;  // Track if we're receiving pasted text
 
+    // Save current input when navigating history (so we can restore it)
+    char *saved_input = NULL;
+
     // Print initial prompt
     printf("%s", prompt);
     fflush(stdout);
@@ -365,6 +471,7 @@ char* lineedit_readline(LineEditor *ed, const char *prompt) {
         if (read(STDIN_FILENO, &c, 1) != 1) {
             // Error or EOF - cleanup handled by restore_terminal()
             restore_terminal();
+            free(saved_input);
             return NULL;
         }
 
@@ -405,6 +512,23 @@ char* lineedit_readline(LineEditor *ed, const char *prompt) {
                             in_paste_mode = 0;  // End of paste
                         }
                     }
+                } else if (seq[1] == '3') {
+                    // Delete key: \e[3~
+                    unsigned char tilde;
+                    if (read(STDIN_FILENO, &tilde, 1) == 1 && tilde == '~') {
+                        // Delete character at cursor (forward delete)
+                        if (ed->cursor < ed->length) {
+                            // Find the length of the UTF-8 character at cursor
+                            int char_len = utf8_char_length((unsigned char)ed->buffer[ed->cursor]);
+
+                            // Delete the character by moving subsequent text left
+                            memmove(&ed->buffer[ed->cursor],
+                                   &ed->buffer[ed->cursor + char_len],
+                                   ed->length - ed->cursor - char_len + 1);
+                            ed->length -= char_len;
+                            redraw_input_line(prompt, ed->buffer, ed->cursor);
+                        }
+                    }
                 } else if (seq[1] == 'D') {
                     // Left arrow
                     if (ed->cursor > 0) {
@@ -418,6 +542,55 @@ char* lineedit_readline(LineEditor *ed, const char *prompt) {
                         ed->cursor++;
                         printf("\033[C");  // Move cursor right
                         fflush(stdout);
+                    }
+                } else if (seq[1] == 'A') {
+                    // Up arrow - previous history entry
+                    if (ed->history.count > 0) {
+                        // Save current input if this is the first Up press
+                        if (ed->history.position == -1) {
+                            free(saved_input);
+                            saved_input = strdup(ed->buffer);
+                            ed->history.position = ed->history.count;
+                        }
+
+                        // Navigate to previous entry
+                        if (ed->history.position > 0) {
+                            ed->history.position--;
+                            const char *hist_entry = ed->history.entries[ed->history.position];
+                            strncpy(ed->buffer, hist_entry, ed->buffer_capacity - 1);
+                            ed->buffer[ed->buffer_capacity - 1] = '\0';
+                            ed->length = (int)strlen(ed->buffer);
+                            ed->cursor = ed->length;
+                            redraw_input_line(prompt, ed->buffer, ed->cursor);
+                        }
+                    }
+                } else if (seq[1] == 'B') {
+                    // Down arrow - next history entry
+                    if (ed->history.position != -1) {
+                        ed->history.position++;
+
+                        if (ed->history.position >= ed->history.count) {
+                            // Restore saved input
+                            if (saved_input) {
+                                strncpy(ed->buffer, saved_input, ed->buffer_capacity - 1);
+                                ed->buffer[ed->buffer_capacity - 1] = '\0';
+                                ed->length = (int)strlen(ed->buffer);
+                                ed->cursor = ed->length;
+                            } else {
+                                ed->buffer[0] = '\0';
+                                ed->length = 0;
+                                ed->cursor = 0;
+                            }
+                            ed->history.position = -1;
+                        } else {
+                            // Show next entry
+                            const char *hist_entry = ed->history.entries[ed->history.position];
+                            strncpy(ed->buffer, hist_entry, ed->buffer_capacity - 1);
+                            ed->buffer[ed->buffer_capacity - 1] = '\0';
+                            ed->length = (int)strlen(ed->buffer);
+                            ed->cursor = ed->length;
+                        }
+                        redraw_input_line(prompt, ed->buffer, ed->cursor);
                     }
                 } else if (seq[1] == 'H') {
                     // Home
@@ -441,6 +614,7 @@ char* lineedit_readline(LineEditor *ed, const char *prompt) {
             // Ctrl+D: EOF only (always exits, even if buffer has content)
             printf("\n");
             restore_terminal();
+            free(saved_input);
             return NULL;
         } else if (c == 11) {
             // Ctrl+K: kill to end of line
@@ -533,14 +707,40 @@ char* lineedit_readline(LineEditor *ed, const char *prompt) {
             } else {
                 printf("\a"); fflush(stdout);
             }
-        } else if (c >= 32 && c < 127) {
-            // Printable character
-            if (ed->length < (int)ed->buffer_capacity - 1) {
-                // Insert character at cursor position
-                memmove(&ed->buffer[ed->cursor + 1], &ed->buffer[ed->cursor], ed->length - ed->cursor + 1);
-                ed->buffer[ed->cursor] = c;
-                ed->length++;
-                ed->cursor++;
+        } else if (c >= 32) {
+            // Printable character (ASCII or UTF-8)
+            unsigned char utf8_buffer[4];
+            int char_bytes = 0;
+
+            // Check if this is a UTF-8 multibyte character
+            if (c >= 128) {
+                char_bytes = read_utf8_char(utf8_buffer, c);
+                if (char_bytes == 0) {
+                    // Read error, skip this character
+                    continue;
+                }
+            } else if (c >= 32 && c < 127) {
+                // ASCII printable character
+                utf8_buffer[0] = c;
+                char_bytes = 1;
+            } else {
+                // Control character, skip
+                continue;
+            }
+
+            // Check if we have space for the character
+            if (ed->length + char_bytes < (int)ed->buffer_capacity - 1) {
+                // Insert character bytes at cursor position
+                memmove(&ed->buffer[ed->cursor + char_bytes], &ed->buffer[ed->cursor],
+                        ed->length - ed->cursor + 1);
+
+                // Copy the UTF-8 character bytes
+                for (int i = 0; i < char_bytes; i++) {
+                    ed->buffer[ed->cursor + i] = utf8_buffer[i];
+                }
+
+                ed->length += char_bytes;
+                ed->cursor += char_bytes;
                 redraw_input_line(prompt, ed->buffer, ed->cursor);
             }
         }
@@ -548,6 +748,14 @@ char* lineedit_readline(LineEditor *ed, const char *prompt) {
 
     // Restore terminal to normal state
     restore_terminal();
+
+    // Add to history (if not empty)
+    if (ed->buffer[0] != '\0') {
+        history_add(&ed->history, ed->buffer);
+    }
+
+    // Cleanup
+    free(saved_input);
 
     return strdup(ed->buffer);
 }
