@@ -1351,7 +1351,11 @@ static cJSON* get_tool_definitions(int enable_caching) {
 
     cJSON *status_prop = cJSON_CreateObject();
     cJSON_AddStringToObject(status_prop, "type", "string");
-    cJSON_AddStringToObject(status_prop, "enum", "[\"pending\", \"in_progress\", \"completed\"]");
+    cJSON *status_enum = cJSON_CreateArray();
+    cJSON_AddItemToArray(status_enum, cJSON_CreateString("pending"));
+    cJSON_AddItemToArray(status_enum, cJSON_CreateString("in_progress"));
+    cJSON_AddItemToArray(status_enum, cJSON_CreateString("completed"));
+    cJSON_AddItemToObject(status_prop, "enum", status_enum);
     cJSON_AddStringToObject(status_prop, "description",
         "Current status of the task");
     cJSON_AddItemToObject(item_props, "status", status_prop);
