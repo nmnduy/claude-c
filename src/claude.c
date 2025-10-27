@@ -1050,15 +1050,30 @@ static Tool tools[] = {
 static const int num_tools = sizeof(tools) / sizeof(Tool);
 
 static cJSON* execute_tool(const char *tool_name, cJSON *input, ConversationState *state) {
+    // Time the tool execution
+    struct timespec start, end;
+    clock_gettime(CLOCK_MONOTONIC, &start);
+
+    cJSON *result = NULL;
     for (int i = 0; i < num_tools; i++) {
         if (strcmp(tools[i].name, tool_name) == 0) {
-            return tools[i].handler(input, state);
+            result = tools[i].handler(input, state);
+            break;
         }
     }
 
-    cJSON *error = cJSON_CreateObject();
-    cJSON_AddStringToObject(error, "error", "Unknown tool");
-    return error;
+    if (!result) {
+        result = cJSON_CreateObject();
+        cJSON_AddStringToObject(result, "error", "Unknown tool");
+    }
+
+    clock_gettime(CLOCK_MONOTONIC, &end);
+    long duration_ms = (end.tv_sec - start.tv_sec) * 1000 +
+                       (end.tv_nsec - start.tv_nsec) / 1000000;
+
+    LOG_INFO("Tool '%s' executed in %ld ms", tool_name, duration_ms);
+
+    return result;
 }
 
 // ============================================================================
@@ -1270,12 +1285,20 @@ static cJSON* call_api(ConversationState *state) {
     int retry_count = 0;
     int backoff_ms = INITIAL_BACKOFF_MS;
 
+    // Overall API call timing
+    struct timespec call_start, call_end;
+    clock_gettime(CLOCK_MONOTONIC, &call_start);
+
     // Debug: Log API URL to detect corruption
     LOG_DEBUG("call_api: api_url=%s", state->api_url ? state->api_url : "(NULL)");
 
     // Check if prompt caching is enabled
     int enable_caching = is_prompt_caching_enabled();
     LOG_DEBUG("Prompt caching: %s", enable_caching ? "enabled" : "disabled");
+
+    // Time request building
+    struct timespec build_start, build_end;
+    clock_gettime(CLOCK_MONOTONIC, &build_start);
 
     // Build request body once (used for all retries)
     cJSON *request = cJSON_CreateObject();
@@ -1425,6 +1448,12 @@ static cJSON* call_api(ConversationState *state) {
     char *json_str = cJSON_PrintUnformatted(request);
     cJSON_Delete(request);
 
+    clock_gettime(CLOCK_MONOTONIC, &build_end);
+    long build_ms = (build_end.tv_sec - build_start.tv_sec) * 1000 +
+                    (build_end.tv_nsec - build_start.tv_nsec) / 1000000;
+    LOG_INFO("Request building took %ld ms (message count: %d, request size: %zu bytes)",
+             build_ms, state->count, strlen(json_str));
+
     // Keep copy of request for persistence logging
     char *request_copy = strdup(json_str);
 
@@ -1484,12 +1513,17 @@ static cJSON* call_api(ConversationState *state) {
             return NULL;
         }
 
+        LOG_DEBUG("Starting HTTP request to %s (retry %d/%d)", full_url, retry_count, MAX_RETRIES);
+
         // Perform request
         res = curl_easy_perform(curl);
 
         clock_gettime(CLOCK_MONOTONIC, &end);
         long duration_ms = (end.tv_sec - start.tv_sec) * 1000 +
                            (end.tv_nsec - start.tv_nsec) / 1000000;
+
+        LOG_INFO("HTTP request completed in %ld ms (response size: %zu bytes)",
+                 duration_ms, response.size);
 
         // Get HTTP status code
         long http_status = 0;
@@ -1527,7 +1561,16 @@ static cJSON* call_api(ConversationState *state) {
         }
 
         // Parse response
+        struct timespec parse_start, parse_end;
+        clock_gettime(CLOCK_MONOTONIC, &parse_start);
+
         cJSON *json_response = cJSON_Parse(response.output);
+
+        clock_gettime(CLOCK_MONOTONIC, &parse_end);
+        long parse_ms = (parse_end.tv_sec - parse_start.tv_sec) * 1000 +
+                        (parse_end.tv_nsec - parse_start.tv_nsec) / 1000000;
+        LOG_INFO("JSON parsing took %ld ms", parse_ms);
+
         if (!json_response) {
             LOG_ERROR("Failed to parse JSON response");
 
@@ -1699,12 +1742,20 @@ static cJSON* call_api(ConversationState *state) {
         free(json_str);
         free(response.output);
 
+        // Log total API call duration
+        clock_gettime(CLOCK_MONOTONIC, &call_end);
+        long total_ms = (call_end.tv_sec - call_start.tv_sec) * 1000 +
+                        (call_end.tv_nsec - call_start.tv_nsec) / 1000000;
+        LOG_INFO("Total API call took %ld ms (build: %ld ms, HTTP: %ld ms, parse: %ld ms, tools: %d)",
+                 total_ms, build_ms, duration_ms, parse_ms, tool_count);
+
         return json_response;
     }
 
     // Max retries exceeded (shouldn't reach here normally)
     free(request_copy);
     free(json_str);
+    LOG_ERROR("API call failed after %d retries", MAX_RETRIES);
     return NULL;
 }
 
@@ -2182,6 +2233,10 @@ void clear_conversation(ConversationState *state) {
 }
 
 static void process_response(ConversationState *state, cJSON *response, TUIState *tui) {
+    // Time the entire response processing
+    struct timespec proc_start, proc_end;
+    clock_gettime(CLOCK_MONOTONIC, &proc_start);
+
     // OpenAI response format
     cJSON *choices = cJSON_GetObjectItem(response, "choices");
     if (!choices || !cJSON_IsArray(choices) || cJSON_GetArraySize(choices) == 0) {
@@ -2234,6 +2289,12 @@ static void process_response(ConversationState *state, cJSON *response, TUIState
         if (!tui) {
             printf("\n");
         }
+
+        LOG_INFO("Processing %d tool call(s)", tool_count);
+
+        // Time tool execution phase
+        struct timespec tool_start, tool_end;
+        clock_gettime(CLOCK_MONOTONIC, &tool_start);
 
         // Parallel tool execution
         ContentBlock *results = calloc(tool_count, sizeof(ContentBlock));
@@ -2327,6 +2388,11 @@ static void process_response(ConversationState *state, cJSON *response, TUIState
             pthread_join(threads[i], NULL);
         }
 
+        clock_gettime(CLOCK_MONOTONIC, &tool_end);
+        long tool_exec_ms = (tool_end.tv_sec - tool_start.tv_sec) * 1000 +
+                            (tool_end.tv_nsec - tool_start.tv_nsec) / 1000000;
+        LOG_INFO("All %d tool(s) completed in %ld ms", thread_count, tool_exec_ms);
+
         // If interrupted, clean up and return
         if (interrupted) {
             if (!tui) {
@@ -2415,8 +2481,20 @@ static void process_response(ConversationState *state, cJSON *response, TUIState
 
         // Free results array; content of results will be freed in cleanup
         free(results);
+
+        clock_gettime(CLOCK_MONOTONIC, &proc_end);
+        long proc_ms = (proc_end.tv_sec - proc_start.tv_sec) * 1000 +
+                       (proc_end.tv_nsec - proc_start.tv_nsec) / 1000000;
+        LOG_INFO("Response processing completed in %ld ms (tools: %ld ms, recursion included)",
+                 proc_ms, tool_exec_ms);
         return;
     }
+
+    // No tools - just log completion time
+    clock_gettime(CLOCK_MONOTONIC, &proc_end);
+    long proc_ms = (proc_end.tv_sec - proc_start.tv_sec) * 1000 +
+                   (proc_end.tv_nsec - proc_start.tv_nsec) / 1000000;
+    LOG_INFO("Response processing completed in %ld ms (no tools)", proc_ms);
 }
 
 // ============================================================================
