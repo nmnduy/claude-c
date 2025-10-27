@@ -2416,6 +2416,13 @@ void clear_conversation(ConversationState *state) {
 
     // Reset message count (keeping system message)
     state->count = system_msg_count;
+
+    // Clear todo list
+    if (state->todo_list) {
+        todo_free(state->todo_list);
+        todo_init(state->todo_list);
+        LOG_DEBUG("Todo list cleared and reinitialized");
+    }
 }
 
 static void process_response(ConversationState *state, cJSON *response, TUIState *tui) {
@@ -2996,14 +3003,26 @@ int main(int argc, char *argv[]) {
     state.session_id = session_id;
     state.persistence_db = persistence_db;
 
+    // Initialize todo list
+    state.todo_list = malloc(sizeof(TodoList));
+    if (state.todo_list) {
+        todo_init(state.todo_list);
+        LOG_DEBUG("Todo list initialized");
+    } else {
+        LOG_ERROR("Failed to allocate memory for todo list");
+    }
+
     // Check for allocation failures
-    if (!state.api_key || !state.api_url || !state.model) {
+    if (!state.api_key || !state.api_url || !state.model || !state.todo_list) {
         LOG_ERROR("Failed to allocate memory for conversation state");
         fprintf(stderr, "Error: Memory allocation failed\n");
         free(state.api_key);
         free(state.api_url);
         free(state.model);
         free(state.working_dir);
+        if (state.todo_list) {
+            free(state.todo_list);
+        }
         curl_global_cleanup();
         return 1;
     }
@@ -3058,6 +3077,14 @@ int main(int argc, char *argv[]) {
         free(state.additional_dirs[i]);
     }
     free(state.additional_dirs);
+
+    // Cleanup todo list
+    if (state.todo_list) {
+        todo_free(state.todo_list);
+        free(state.todo_list);
+        state.todo_list = NULL;
+        LOG_DEBUG("Todo list cleaned up");
+    }
 
     free(state.api_key);
     free(state.api_url);
