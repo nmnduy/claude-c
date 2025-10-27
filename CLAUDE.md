@@ -228,13 +228,16 @@ export CLAUDE_C_THEME="/Users/username/code/claude-c/colorschemes/gruvbox-dark.c
 ./build/claude-c
 ```
 
-**Default locations (checked in order):**
-1. `$CLAUDE_C_THEME` environment variable
-2. `$XDG_CONFIG_HOME/claude-c/theme.conf` (typically `~/.config/claude-c/theme.conf`)
-3. `$HOME/.claude-c/theme.conf`
-4. Built-in defaults
+**Theme loading:**
+- The `CLAUDE_C_THEME` environment variable must point to a `.conf` file
+- If not set or file doesn't exist, the system uses standard ANSI fallback colors (from `src/fallback_colors.h`)
+- No built-in hardcoded themes—Kitty themes must be provided explicitly
 
-**Implementation location:** `src/colorscheme.h` (will be refactored to `src/theme.h`)
+**Future:** Additional default locations may be checked:
+- `$XDG_CONFIG_HOME/claude-c/theme.conf` (typically `~/.config/claude-c/theme.conf`)
+- `$HOME/.claude-c/theme.conf`
+
+**Implementation location:** `src/colorscheme.h`, fallback colors in `src/fallback_colors.h`
 
 #### Available Themes
 
@@ -276,7 +279,7 @@ export CLAUDE_C_THEME="/Users/username/code/claude-c/colorschemes/gruvbox-dark.c
 
 #### Theme File Format
 
-Themes use Kitty's simple key-value format:
+Themes use Kitty's **standard** key-value format. The implementation uses ONLY standard Kitty color names—no custom extensions:
 
 ```conf
 # Comments start with #
@@ -284,31 +287,51 @@ background #282a36
 foreground #f8f8f2
 cursor #bbbbbb
 
-# 16 ANSI colors (color0-15)
+# Cursor colors
+cursor_text_color #111111
+
+# Selection colors
+selection_background #fffacd
+selection_foreground #000000
+
+# Standard ANSI colors (0-7)
 color0 #000000
 color1 #ff5555
 color2 #50fa7b
-# ... etc
+color3 #cecb00
+color4 #0d73cc
+color5 #cb1ed1
+color6 #0dcdcd
+color7 #dddddd
 
-# Optional TUI-specific overrides
-assistant_fg #8be9fd
-user_fg #50fa7b
-status_bg #44475a
-error_fg #ff5555
+# Bright ANSI colors (8-15)
+color8 #767676
+color9 #f2201f
+color10 #23fd00
+color11 #fffd00
+color12 #1a8fff
+color13 #fd28ff
+color14 #14ffff
+color15 #ffffff
 ```
+
+**Important:** The implementation does NOT support custom TUI-specific keys. It uses only standard Kitty theme keys.
 
 #### Color Mappings
 
-The TUI maps Kitty colors to UI elements:
+The TUI maps **standard Kitty colors** to UI elements. If a required color is missing from the theme file, a warning is printed:
 
-| TUI Element | Kitty Key (Primary) | Kitty Key (Fallback) |
-|-------------|---------------------|----------------------|
-| Assistant text | `foreground` | `assistant_fg` |
-| User text | `color2` (green) | `user_fg` |
-| Status bar | `color3` (yellow) | `status_bg` |
-| Headers | `color6` (cyan) | `color4` (blue), `header_fg` |
-| Errors | `color1` (red) | `error_fg` |
-| Background | `background` | - |
+| TUI Element | Kitty Key | Notes |
+|-------------|-----------|-------|
+| Assistant text | `foreground`, then `color6` if available | Uses cyan (color6) to override foreground for better visibility |
+| User text | `color2` (green) | Standard ANSI green |
+| Status bar | `color3` (yellow) | Standard ANSI yellow |
+| Tool output | `color3` (yellow) | Same as status |
+| Headers | `color6` (cyan), fallback to `color4` (blue) | Cyan preferred, blue as fallback |
+| Errors | `color1` (red) | Standard ANSI red |
+| Background | `background` | Only used by ncurses-based TUI (not yet implemented) |
+
+**Warning system:** If a theme file is missing any critical colors (`foreground`, `color1`, `color2`, `color3`, `color6`), warnings are printed to stderr when the theme loads.
 
 #### Adding New Themes
 
@@ -337,19 +360,33 @@ export CLAUDE_C_THEME="./colorschemes/nord.conf"
 5. Converts hex colors to RGB, then to ncurses color numbers
 6. Initializes ncurses color pairs
 
-**Implementation (~100 lines of C):**
+**Implementation (~250 lines of C in `src/colorscheme.h`):**
 ```c
-// Pseudo-code structure
+// Core data structures
 typedef struct {
     int r, g, b;  // 0-255
 } RGB;
 
-RGB parse_hex_color(const char *hex);  // "#RRGGBB" -> RGB
-int rgb_to_ncurses_color(RGB rgb);     // RGB -> closest color0-255
+typedef struct {
+    RGB foreground_rgb;
+    RGB assistant_rgb;  // Defaults to foreground, overridden by color6 (cyan)
+    RGB user_rgb;       // color2 (green)
+    RGB status_rgb;     // color3 (yellow)
+    RGB error_rgb;      // color1 (red)
+    RGB header_rgb;     // color6 (cyan), fallback to color4 (blue)
+} Theme;
 
-Theme load_theme(const char *path) {
-    FILE *f = fopen(path, "r");
-    char line[256], key[64], value[32];
+// Parse "#RRGGBB" hex string to RGB struct
+RGB parse_hex_color(const char *hex);
+
+// Convert RGB to ANSI 256-color code (e.g., "\033[38;5;123m")
+void rgb_to_ansi_code(RGB rgb, char *buf, size_t bufsize);
+
+// Load theme from Kitty .conf file
+int load_kitty_theme(const char *filepath, Theme *theme) {
+    // Tracks which colors were found
+    int found_foreground = 0, found_color1 = 0, found_color2 = 0;
+    int found_color3 = 0, found_color6 = 0;
 
     while (fgets(line, sizeof(line), f)) {
         if (line[0] == '#') continue;  // Skip comments
@@ -357,32 +394,49 @@ Theme load_theme(const char *path) {
 
         RGB rgb = parse_hex_color(value);
 
-        if (strcmp(key, "foreground") == 0)
-            theme.assistant = rgb_to_ncurses_color(rgb);
-        // ... more mappings
+        // Map ONLY standard Kitty keys
+        if (strcmp(key, "foreground") == 0) {
+            theme->foreground_rgb = rgb;
+            theme->assistant_rgb = rgb;  // Default
+            found_foreground = 1;
+        }
+        else if (strcmp(key, "color6") == 0) {
+            theme->header_rgb = rgb;
+            // Override assistant with cyan for better visibility
+            if (found_foreground) theme->assistant_rgb = rgb;
+            found_color6 = 1;
+        }
+        // ... more standard color mappings
     }
-    return theme;
+
+    // Warn if critical colors missing
+    if (!found_foreground) fprintf(stderr, "Warning: missing 'foreground'\n");
+    if (!found_color2) fprintf(stderr, "Warning: missing 'color2' (green)\n");
+    // ... etc
+
+    return parsed_count > 0;
 }
 ```
 
 **Technical Details:**
-- Supports 256-color terminals (automatically detects terminal capability)
-- Hex colors (#RRGGBB) converted to ncurses color numbers
+- Supports 256-color terminals using ANSI escape codes `\033[38;5;Nm`
+- Hex colors (#RRGGBB) converted to RGB, then to closest 256-color palette index
 - Grayscale colors (232-255) for subtle backgrounds
 - RGB cube (16-231) for full color spectrum
-- Fallback to 8-color mode for legacy terminals
+- No hardcoded fallbacks—if theme load fails, returns -1 and uses ANSI_FALLBACK_* codes
+- Warning messages printed to stderr for missing critical colors
 
 **Why Kitty's format:**
 - ✅ Zero dependencies - no parser library (TOML/YAML) needed
 - ✅ Trivial C implementation - just `fgets()` + `sscanf()`
 - ✅ 300+ themes available from [kitty-themes](https://github.com/dexpota/kitty-themes)
-- ✅ Direct compatibility with Kitty terminal themes
+- ✅ Direct compatibility with Kitty terminal themes (no modifications needed)
 - ✅ Fast parsing - no complex grammar
 - ✅ Human-readable and hand-editable
 - ✅ Aligns with project philosophy: minimal dependencies, simple C
 
 **Compatibility:**
-Most Kitty themes work without modification. The TUI maps standard Kitty color keys to UI elements automatically using the fallback hierarchy shown in the color mappings table.
+Standard Kitty themes work without modification. The implementation maps only standard Kitty color keys (`foreground`, `color0-15`) to TUI elements. No custom keys or extensions required.
 
 ### TODO List System
 

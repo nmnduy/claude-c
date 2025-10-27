@@ -139,6 +139,7 @@ static int get_colorscheme_color(ColorschemeElement element, char *buf, size_t b
 }
 
 // Load Kitty theme from file
+// Uses ONLY standard Kitty color names: foreground, background, color0-15
 static int load_kitty_theme(const char *filepath, Theme *theme) {
     LOG_INFO("[THEME] Loading Kitty theme from: %s", filepath);
 
@@ -153,6 +154,13 @@ static int load_kitty_theme(const char *filepath, Theme *theme) {
     char line[1024];
     int line_num = 0;
     int parsed_count = 0;
+
+    // Track which required colors we found
+    int found_foreground = 0;
+    int found_color1 = 0;  // red (errors)
+    int found_color2 = 0;  // green (user)
+    int found_color3 = 0;  // yellow (status)
+    int found_color6 = 0;  // cyan (headers/assistant fallback)
 
     while (fgets(line, sizeof(line), f)) {
         line_num++;
@@ -177,37 +185,48 @@ static int load_kitty_theme(const char *filepath, Theme *theme) {
 
             RGB rgb = parse_hex_color(value);
 
-            // Map Kitty color keys to TUI elements
+            // Map ONLY standard Kitty color keys to TUI elements
             if (strcmp(key, "foreground") == 0) {
                 theme->foreground_rgb = rgb;
+                theme->assistant_rgb = rgb;  // Use foreground for assistant text by default
                 parsed_count++;
-                LOG_DEBUG("[THEME]   -> Set foreground_rgb = RGB(%d,%d,%d)", rgb.r, rgb.g, rgb.b);
+                found_foreground = 1;
+                LOG_DEBUG("[THEME]   -> Set foreground_rgb and assistant_rgb = RGB(%d,%d,%d)", rgb.r, rgb.g, rgb.b);
             }
-            else if (strcmp(key, "assistant_fg") == 0) {
-                theme->assistant_rgb = rgb;
-                parsed_count++;
-                LOG_DEBUG("[THEME]   -> Set assistant_rgb = RGB(%d,%d,%d)", rgb.r, rgb.g, rgb.b);
-            }
-            else if (strcmp(key, "color2") == 0 || strcmp(key, "user_fg") == 0) {
+            else if (strcmp(key, "color2") == 0) {
                 theme->user_rgb = rgb;
                 parsed_count++;
+                found_color2 = 1;
                 LOG_DEBUG("[THEME]   -> Set user_rgb = RGB(%d,%d,%d)", rgb.r, rgb.g, rgb.b);
             }
-            else if (strcmp(key, "color3") == 0 || strcmp(key, "status_bg") == 0) {
+            else if (strcmp(key, "color3") == 0) {
                 theme->status_rgb = rgb;
                 parsed_count++;
+                found_color3 = 1;
                 LOG_DEBUG("[THEME]   -> Set status_rgb = RGB(%d,%d,%d)", rgb.r, rgb.g, rgb.b);
             }
-            else if (strcmp(key, "color1") == 0 || strcmp(key, "error_fg") == 0) {
+            else if (strcmp(key, "color1") == 0) {
                 theme->error_rgb = rgb;
                 parsed_count++;
+                found_color1 = 1;
                 LOG_DEBUG("[THEME]   -> Set error_rgb = RGB(%d,%d,%d)", rgb.r, rgb.g, rgb.b);
             }
-            else if (strcmp(key, "color4") == 0 || strcmp(key, "color6") == 0 ||
-                     strcmp(key, "header_fg") == 0) {
+            else if (strcmp(key, "color6") == 0) {
+                theme->header_rgb = rgb;
+                // Also override assistant_rgb with cyan if available (more visible than foreground)
+                if (found_foreground) {
+                    theme->assistant_rgb = rgb;
+                    LOG_DEBUG("[THEME]   -> Overriding assistant_rgb with color6 (cyan) = RGB(%d,%d,%d)", rgb.r, rgb.g, rgb.b);
+                }
+                parsed_count++;
+                found_color6 = 1;
+                LOG_DEBUG("[THEME]   -> Set header_rgb = RGB(%d,%d,%d)", rgb.r, rgb.g, rgb.b);
+            }
+            else if (strcmp(key, "color4") == 0 && !found_color6) {
+                // Fallback to color4 (blue) for header if color6 not found
                 theme->header_rgb = rgb;
                 parsed_count++;
-                LOG_DEBUG("[THEME]   -> Set header_rgb = RGB(%d,%d,%d)", rgb.r, rgb.g, rgb.b);
+                LOG_DEBUG("[THEME]   -> Set header_rgb (fallback to color4) = RGB(%d,%d,%d)", rgb.r, rgb.g, rgb.b);
             }
         }
     }
@@ -215,11 +234,28 @@ static int load_kitty_theme(const char *filepath, Theme *theme) {
     fclose(f);
     LOG_DEBUG("[THEME] Parsed %d color mappings", parsed_count);
 
+    // Print warnings for missing critical colors
+    if (!found_foreground) {
+        fprintf(stderr, "\033[33mWarning: Theme missing 'foreground' color\033[0m\n");
+    }
+    if (!found_color2) {
+        fprintf(stderr, "\033[33mWarning: Theme missing 'color2' (green, used for user text)\033[0m\n");
+    }
+    if (!found_color3) {
+        fprintf(stderr, "\033[33mWarning: Theme missing 'color3' (yellow, used for status)\033[0m\n");
+    }
+    if (!found_color1) {
+        fprintf(stderr, "\033[33mWarning: Theme missing 'color1' (red, used for errors)\033[0m\n");
+    }
+    if (!found_color6) {
+        fprintf(stderr, "\033[33mWarning: Theme missing 'color6' (cyan, used for headers)\033[0m\n");
+    }
+
     return parsed_count > 0;
 }
 
 // Initialize colorscheme system with optional Kitty theme file
-// If filepath is NULL or file doesn't exist, uses default colors
+// If filepath is NULL or file doesn't exist, falls back to standard ANSI colors
 // Returns 0 on success, -1 on failure
 // Note: This doesn't require ncurses - works with raw ANSI codes
 static int init_colorscheme(const char *filepath) {
@@ -233,24 +269,21 @@ static int init_colorscheme(const char *filepath) {
             g_theme_loaded = 1;
             return 0;
         }
-        LOG_WARN("[THEME] Failed to load custom theme, falling back to defaults");
+        LOG_WARN("[THEME] Failed to load custom theme from %s", filepath);
     } else {
         LOG_DEBUG("[THEME] No custom theme path provided");
     }
 
-    // Fall back to default colors
-    LOG_DEBUG("[THEME] Using default colors");
+    // No theme loaded - warn user and rely on fallback ANSI colors
+    fprintf(stderr, "\033[33mWarning: No Kitty theme loaded, using standard ANSI fallback colors\033[0m\n");
+    fprintf(stderr, "  Set CLAUDE_C_THEME environment variable to a .conf file to use custom colors\n");
+    fprintf(stderr, "  Example: export CLAUDE_C_THEME=\"./colorschemes/dracula.conf\"\n");
 
-    // Set default RGB values for ANSI codes
-    g_theme.foreground_rgb = (RGB){221, 221, 221};  // Light gray (default terminal text)
-    g_theme.assistant_rgb = (RGB){100, 149, 237};   // Cornflower blue
-    g_theme.user_rgb = (RGB){80, 250, 123};         // Bright green
-    g_theme.status_rgb = (RGB){241, 250, 140};      // Yellow
-    g_theme.error_rgb = (RGB){255, 85, 85};         // Red
-    g_theme.header_rgb = (RGB){139, 233, 253};      // Cyan
-    g_theme_loaded = 1;
+    // Don't set g_theme_loaded = 1, so get_colorscheme_color() will return -1
+    // and code will fall back to ANSI_FALLBACK_* constants from fallback_colors.h
+    g_theme_loaded = 0;
 
-    return 0;
+    return -1;  // Indicate no theme loaded
 }
 
 #endif // COLORSCHEME_H
