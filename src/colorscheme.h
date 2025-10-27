@@ -5,9 +5,21 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
-#include <ncurses.h>
 #include <math.h>
 #include "logger.h"
+
+// Basic ANSI color constants (from ncurses)
+#define COLOR_BLACK 0
+#define COLOR_RED 1
+#define COLOR_GREEN 2
+#define COLOR_YELLOW 3
+#define COLOR_BLUE 4
+#define COLOR_MAGENTA 5
+#define COLOR_CYAN 6
+#define COLOR_WHITE 7
+
+// Extended color support flag (for 256-color terminals)
+#define COLORS 256
 
 // TUI color pair assignments
 #define PAIR_ASSISTANT  1  // Assistant text
@@ -288,22 +300,6 @@ static int load_kitty_theme(const char *filepath, Theme *theme) {
     LOG_DEBUG("[THEME] Parsed %d color mappings", parsed_count);
 
     return parsed_count > 0;
-}
-
-// Apply theme to ncurses
-static void apply_theme(Theme *theme) {
-    LOG_DEBUG("[THEME] Applying theme to ncurses");
-    LOG_DEBUG("[THEME]   PAIR_ASSISTANT: fg=%d bg=%d", theme->assistant_fg, theme->background);
-    LOG_DEBUG("[THEME]   PAIR_USER: fg=%d bg=%d", theme->user_fg, theme->background);
-    LOG_DEBUG("[THEME]   PAIR_STATUS: fg=%d bg=%d", COLOR_BLACK, theme->status_bg);
-    LOG_DEBUG("[THEME]   PAIR_HEADER: fg=%d bg=%d", theme->header_fg, theme->background);
-    LOG_DEBUG("[THEME]   PAIR_ERROR: fg=%d bg=%d", theme->error_fg, theme->background);
-
-    init_pair(PAIR_ASSISTANT, theme->assistant_fg, theme->background);
-    init_pair(PAIR_USER, theme->user_fg, theme->background);
-    init_pair(PAIR_STATUS, COLOR_BLACK, theme->status_bg);
-    init_pair(PAIR_HEADER, theme->header_fg, theme->background);
-    init_pair(PAIR_ERROR, theme->error_fg, theme->background);
 }
 
 // Initialize colorscheme system with optional Kitty theme file
