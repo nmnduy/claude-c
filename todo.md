@@ -45,9 +45,11 @@ Abort trap: 6
 ⠸ Processing tool results...
 ```
 
+- [ ] pasting still causes enter
 - [x] large paste fails. how does node js claude prevents that and show X lines pasted.
 - [x] pressing Esc will wait for tool to finish but there is no indicator
     - [ ] 'esc' doesn't show interrupted right away.
+    - [ ] 'esc' should interrupt certain tools right away and dont wait
 - [ ] logs are not flushed often?
 - [ ] are we logging enough? are all log records go to the same log file?
 - [x] all log records should have session id tag. sessions are essential and each run has a new session id
@@ -118,3 +120,4 @@ Abort trap: 6
 
 ∴ Thought for 1s (ctrl+o to show thinking)
 ```
+- [ ] where Search tool?
