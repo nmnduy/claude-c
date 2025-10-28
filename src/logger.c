@@ -22,6 +22,7 @@ static char g_log_path[512] = {0};
 static long g_max_size_bytes = 10 * 1024 * 1024;  // 10 MB default
 static int g_max_backups = 5;  // Keep 5 backup files
 static char g_session_id[64] = {0};  // Session ID for log tagging
+static int g_always_flush = 0;  // Default to buffered for better performance
 
 // Level names for output
 static const char *level_names[] = {
@@ -219,6 +220,14 @@ int log_init(void) {
         return -1;
     }
 
+    // Check for flush mode environment variable
+    const char *flush_mode_env = getenv("CLAUDE_LOG_FLUSH");
+    if (flush_mode_env && strcmp(flush_mode_env, "always") == 0) {
+        g_always_flush = 1;
+    } else {
+        g_always_flush = 0;  // Default to buffered for better performance
+    }
+
     return log_init_with_path(log_path);
 }
 
@@ -277,6 +286,12 @@ void log_set_session_id(const char *session_id) {
     pthread_mutex_unlock(&g_log_mutex);
 }
 
+void log_set_flush_mode(int always_flush) {
+    pthread_mutex_lock(&g_log_mutex);
+    g_always_flush = always_flush;
+    pthread_mutex_unlock(&g_log_mutex);
+}
+
 void log_message(LogLevel level, const char *file, int line,
                 const char *func, const char *fmt, ...) {
     // Quick check without lock for performance
@@ -330,8 +345,8 @@ void log_message(LogLevel level, const char *file, int line,
 
     fprintf(g_log_file, "\n");
 
-    // Auto-flush on WARN and ERROR for immediate visibility
-    if (level >= LOG_LEVEL_WARN) {
+    // Flush based on configured mode
+    if (g_always_flush || level >= LOG_LEVEL_WARN) {
         fflush(g_log_file);
     }
 
