@@ -213,6 +213,55 @@ export OPENAI_API_KEY="your-api-key"
 ./build/claude-c "your prompt here"
 ```
 
+### Environment Variables
+
+The application is configured via environment variables, providing flexibility for different deployment scenarios.
+
+**API Configuration:**
+- `OPENAI_API_KEY` - Your Anthropic API key (required)
+- `OPENAI_API_BASE` - Override API endpoint (default: https://api.anthropic.com/v1/messages)
+- `OPENAI_MODEL` or `ANTHROPIC_MODEL` - Model to use (default: claude-sonnet-4-20250514)
+- `DISABLE_PROMPT_CACHING` - Set to 1 to disable prompt caching (default: enabled)
+
+**Logging and Persistence:**
+- `CLAUDE_C_LOG_PATH` - Full path to log file (e.g., `/var/log/claude.log`)
+- `CLAUDE_C_LOG_DIR` - Directory for logs (will use `claude.log` filename)
+- `CLAUDE_LOG_LEVEL` - Minimum log level: `DEBUG`, `INFO`, `WARN`, `ERROR` (default: INFO)
+- `CLAUDE_C_DB_PATH` - Path to SQLite database for API call history (default: `~/.local/share/claude-c/api_calls.db`)
+
+**UI Customization:**
+- `CLAUDE_C_THEME` - Path to Kitty theme file (e.g., `./colorschemes/dracula.conf`)
+
+**Example configuration:**
+```bash
+# API settings
+export OPENAI_API_KEY="sk-ant-..."
+export OPENAI_MODEL="claude-sonnet-4-20250514"
+
+# Custom log and database locations
+export CLAUDE_C_LOG_DIR="$HOME/logs/claude"
+export CLAUDE_C_DB_PATH="$HOME/data/claude-api-calls.db"
+
+# Enable debug logging
+export CLAUDE_LOG_LEVEL="DEBUG"
+
+# Use Dracula theme
+export CLAUDE_C_THEME="./colorschemes/dracula.conf"
+
+# Disable caching for testing
+export DISABLE_PROMPT_CACHING=1
+```
+
+**Log path precedence:**
+1. If `CLAUDE_C_LOG_PATH` is set, use that exact path
+2. If `CLAUDE_C_LOG_DIR` is set, use `$CLAUDE_C_LOG_DIR/claude.log`
+3. Otherwise, no logging to file (stderr only)
+
+**Database path:**
+- Default location: `~/.local/share/claude-c/api_calls.db`
+- Parent directory is created automatically if it doesn't exist
+- Database stores API call history, request/response pairs, and timestamps
+
 ### Color Theme System
 
 The TUI uses **Kitty terminal's theme format** - a simple key-value configuration system with zero dependencies. The project includes several pre-built themes in the `colorschemes/` directory and supports any Kitty theme from the 300+ available themes.
