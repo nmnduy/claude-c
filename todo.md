@@ -8,6 +8,11 @@
 - [ ] add retries to falied API calls
 - [ ] implement instruction queue. so user can keep typing
 
+- [ ]
+```sh
+[2025-10-28 02:18:55] [sess_1761635777_511588dc] WARN  [indicators.h:53] get_spinner_color_tool: Using fallback color for spinner (tool)
+```
+
 ```sh
 [Tool: Grep] "User.*printf" in /Users/dunguyen/fgit/claude-c/src
 [Assistant]
@@ -62,7 +67,7 @@ Abort trap: 6
 [Error] Write failed: Failed to resolve path
 [Tool: Bash] ls -la
 
-- [ ]
+- [x]
 ```sh
 [Tool: TodoWrite] (null)
 ⠸ Processing tool results...
