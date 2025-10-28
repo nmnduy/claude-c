@@ -167,7 +167,7 @@ int commands_execute(ConversationState *state, const char *input) {
     if (!input || input[0] != '/') return -1;
     const char *cmd_line = input + 1;
     const char *space = strchr(cmd_line, ' ');
-    size_t cmd_len = space ? (space - cmd_line) : strlen(cmd_line);
+    size_t cmd_len = space ? (size_t)(space - cmd_line) : strlen(cmd_line);
     const char *args = space ? space + 1 : "";
     for (int i = 0; i < command_count; i++) {
         const Command *cmd = command_registry[i];
@@ -195,21 +195,21 @@ CompletionResult* commands_tab_completer(const char *line, int cursor_pos, void 
     (void)ctx;  // Suppress unused parameter warning
     if (!line || line[0] != '/') return NULL;
     const char *space = strchr(line, ' ');
-    int cmd_name_len = space ? (space - line - 1) : ((int)strlen(line) - 1);
+    int cmd_name_len = space ? (int)(space - line - 1) : ((int)strlen(line) - 1);
     int name_end_pos = cmd_name_len + 1;
     if (cursor_pos <= name_end_pos) {
         // Complete command names
         int match_count = 0;
         for (int i = 0; i < command_count; i++) {
-            if (strncmp(command_registry[i]->name, line + 1, cmd_name_len) == 0) match_count++;
+            if (strncmp(command_registry[i]->name, line + 1, (size_t)cmd_name_len) == 0) match_count++;
         }
         if (match_count == 0) return NULL;
         CompletionResult *res = malloc(sizeof(CompletionResult));
-        res->options = malloc(sizeof(char*) * match_count);
+        res->options = malloc(sizeof(char*) * (size_t)match_count);
         res->count = 0; res->selected = 0;
         for (int i = 0; i < command_count; i++) {
             const char *name = command_registry[i]->name;
-            if (strncmp(name, line + 1, cmd_name_len) == 0) {
+            if (strncmp(name, line + 1, (size_t)cmd_name_len) == 0) {
                 char *opt = malloc(strlen(name) + 2);
                 snprintf(opt, strlen(name) + 2, "/%s", name);
                 res->options[res->count++] = opt;

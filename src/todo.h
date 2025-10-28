@@ -27,7 +27,7 @@ typedef struct {
 } TodoItem;
 
 // TODO list container
-typedef struct {
+typedef struct TodoList {
     TodoItem *items;
     size_t count;
     size_t capacity;
