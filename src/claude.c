@@ -10,6 +10,7 @@
 
 #define _POSIX_C_SOURCE 200809L
 #define _DARWIN_C_SOURCE
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -346,7 +347,8 @@ STATIC char* read_file(const char *path) {
 
     char *content = malloc((size_t)fsize + 1);
     if (content) {
-        fread(content, 1, (size_t)fsize, f);
+        size_t bytes_read = fread(content, 1, (size_t)fsize, f);
+        (void)bytes_read; // Suppress unused result warning
         content[fsize] = 0;
     }
 
@@ -365,7 +367,8 @@ STATIC int write_file(const char *path, const char *content) {
     // Create directory recursively (ignore errors if directory already exists)
     char mkdir_cmd[PATH_MAX];
     snprintf(mkdir_cmd, sizeof(mkdir_cmd), "mkdir -p '%s' 2>/dev/null", dir_path);
-    system(mkdir_cmd);
+    int mkdir_result = system(mkdir_cmd);
+    (void)mkdir_result; // Suppress unused result warning
     
     free(path_copy);
     
