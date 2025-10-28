@@ -1871,6 +1871,56 @@ static cJSON* call_api(ConversationState *state) {
             return NULL;
         }
 
+        // Check HTTP status code - must be 2xx for success
+        if (http_status < 200 || http_status >= 300) {
+            LOG_ERROR("API returned HTTP error status: %ld", http_status);
+            LOG_DEBUG("Response body: %s", response.output);
+
+            char error_msg[256];
+            snprintf(error_msg, sizeof(error_msg), "HTTP error %ld", http_status);
+
+            // Log HTTP error
+            if (state->persistence_db) {
+                persistence_log_api_call(
+                    state->persistence_db,
+                    state->session_id,
+                    state->api_url,
+                    request_copy,
+                    response.output,
+                    state->model,
+                    "error",
+                    (int)http_status,
+                    error_msg,
+                    duration_ms,
+                    0
+                );
+            }
+
+            // Try to extract error message from response body if it's JSON
+            cJSON *error_json = cJSON_Parse(response.output);
+            if (error_json) {
+                cJSON *error_obj = cJSON_GetObjectItem(error_json, "error");
+                if (error_obj) {
+                    cJSON *message = cJSON_GetObjectItem(error_obj, "message");
+                    if (message && cJSON_IsString(message)) {
+                        snprintf(error_msg, sizeof(error_msg), "API error (%ld): %s",
+                                http_status, message->valuestring);
+                    }
+                }
+                cJSON_Delete(error_json);
+            }
+
+            print_error(error_msg);
+
+            free(request_copy);
+            free(json_str);
+            if (using_bedrock && api_payload != json_str) {
+                free(api_payload);
+            }
+            free(response.output);
+            return NULL;
+        }
+
         // Parse response
         struct timespec parse_start, parse_end;
         clock_gettime(CLOCK_MONOTONIC, &parse_start);
