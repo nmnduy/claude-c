@@ -1,5 +1,7 @@
 - [x] why so many linse between [Assistant] and everything else?
 
+- [ ] implement instruction queue. so user can keep typing
+
 ```sh
 [Tool: Grep] "User.*printf" in /Users/dunguyen/fgit/claude-c/src
 [Assistant]
