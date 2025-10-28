@@ -1899,6 +1899,7 @@ static cJSON* call_api(ConversationState *state) {
 #ifndef TEST_BUILD
         // Convert Bedrock response to OpenAI format if using Bedrock
         if (using_bedrock) {
+            LOG_DEBUG("Converting Bedrock response to OpenAI format...");
             cJSON *converted_response = bedrock_convert_response(response.output);
             if (!converted_response) {
                 LOG_ERROR("Failed to convert Bedrock response to OpenAI format");
@@ -1912,6 +1913,23 @@ static cJSON* call_api(ConversationState *state) {
                 return NULL;
             }
             LOG_DEBUG("Converted Bedrock response to OpenAI format");
+
+            // Debug: log key fields of converted response
+            cJSON *choices = cJSON_GetObjectItem(converted_response, "choices");
+            if (choices && cJSON_IsArray(choices) && cJSON_GetArraySize(choices) > 0) {
+                cJSON *choice = cJSON_GetArrayItem(choices, 0);
+                cJSON *finish_reason = cJSON_GetObjectItem(choice, "finish_reason");
+                cJSON *message = cJSON_GetObjectItem(choice, "message");
+                if (finish_reason && cJSON_IsString(finish_reason)) {
+                    LOG_DEBUG("  finish_reason: %s", finish_reason->valuestring);
+                }
+                if (message) {
+                    cJSON *tool_calls = cJSON_GetObjectItem(message, "tool_calls");
+                    int tc_count = tool_calls && cJSON_IsArray(tool_calls) ? cJSON_GetArraySize(tool_calls) : 0;
+                    LOG_DEBUG("  tool_calls count: %d", tc_count);
+                }
+            }
+
             cJSON_Delete(json_response);
             json_response = converted_response;
         }

@@ -482,6 +482,9 @@ char* bedrock_convert_request(const char *openai_request) {
     // AWS Bedrock uses Anthropic's native format, not OpenAI format
     // We need to convert from OpenAI to Anthropic format
 
+    LOG_DEBUG("=== BEDROCK REQUEST CONVERSION START ===");
+    LOG_DEBUG("OpenAI request length: %zu bytes", strlen(openai_request));
+
     cJSON *openai_json = cJSON_Parse(openai_request);
     if (!openai_json) {
         LOG_ERROR("Failed to parse OpenAI request");
@@ -604,9 +607,11 @@ char* bedrock_convert_request(const char *openai_request) {
                 }
             } else if (strcmp(role_str, "tool") == 0) {
                 // Tool results are handled as user messages with tool_result blocks
+                LOG_DEBUG("Converting tool result message to Anthropic format");
                 cJSON *tool_call_id = cJSON_GetObjectItem(msg, "tool_call_id");
 
                 if (tool_call_id && cJSON_IsString(tool_call_id)) {
+                    LOG_DEBUG("  tool_call_id: %s", tool_call_id->valuestring);
                     cJSON *tool_msg = cJSON_CreateObject();
                     cJSON_AddStringToObject(tool_msg, "role", "user");
 
@@ -615,14 +620,25 @@ char* bedrock_convert_request(const char *openai_request) {
                     cJSON_AddStringToObject(tool_result_block, "type", "tool_result");
                     cJSON_AddStringToObject(tool_result_block, "tool_use_id", tool_call_id->valuestring);
 
+                    // AWS Bedrock/Anthropic requires tool_result.content to be a string,
+                    // not a JSON object. Keep it as a string even if it contains JSON.
                     if (cJSON_IsString(content)) {
-                        // Try to parse as JSON first
-                        cJSON *parsed = cJSON_Parse(content->valuestring);
-                        if (parsed) {
-                            cJSON_AddItemToObject(tool_result_block, "content", parsed);
+                        cJSON_AddStringToObject(tool_result_block, "content", content->valuestring);
+                        LOG_DEBUG("  tool_result content length: %zu chars", strlen(content->valuestring));
+                    } else if (cJSON_IsArray(content)) {
+                        // If content is already an array of content blocks, use it directly
+                        cJSON_AddItemToObject(tool_result_block, "content", cJSON_Duplicate(content, 1));
+                        LOG_DEBUG("  tool_result content: array with %d blocks", cJSON_GetArraySize(content));
+                    } else {
+                        // Fallback: convert any other type to string
+                        char *content_str = cJSON_PrintUnformatted(content);
+                        if (content_str) {
+                            cJSON_AddStringToObject(tool_result_block, "content", content_str);
+                            free(content_str);
                         } else {
-                            cJSON_AddStringToObject(tool_result_block, "content", content->valuestring);
+                            cJSON_AddStringToObject(tool_result_block, "content", "");
                         }
+                        LOG_WARN("  tool_result content was not a string, converted to JSON string");
                     }
 
                     cJSON_AddItemToArray(content_array, tool_result_block);
@@ -687,6 +703,10 @@ char* bedrock_convert_request(const char *openai_request) {
 
     char *result = cJSON_PrintUnformatted(anthropic_json);
 
+    LOG_DEBUG("Anthropic request created, length: %zu bytes", result ? strlen(result) : 0);
+    LOG_DEBUG("Messages in request: %d", cJSON_GetArraySize(anthropic_messages));
+    LOG_DEBUG("=== BEDROCK REQUEST CONVERSION END ===");
+
     cJSON_Delete(openai_json);
     cJSON_Delete(anthropic_json);
 
@@ -696,6 +716,10 @@ char* bedrock_convert_request(const char *openai_request) {
 cJSON* bedrock_convert_response(const char *bedrock_response) {
     // AWS Bedrock returns Anthropic's native format
     // We need to convert it to OpenAI format
+
+    LOG_DEBUG("=== BEDROCK RESPONSE CONVERSION START ===");
+    LOG_DEBUG("Bedrock response length: %zu bytes", strlen(bedrock_response));
+    LOG_DEBUG("First 200 chars of response: %.200s", bedrock_response);
 
     cJSON *anthropic_json = cJSON_Parse(bedrock_response);
     if (!anthropic_json) {
@@ -743,20 +767,31 @@ cJSON* bedrock_convert_response(const char *bedrock_response) {
     cJSON *tool_calls = NULL;
     char *text_content = NULL;
 
+    int content_block_count = content && cJSON_IsArray(content) ? cJSON_GetArraySize(content) : 0;
+    LOG_DEBUG("Content blocks in response: %d", content_block_count);
+
     if (content && cJSON_IsArray(content)) {
+        int block_index = 0;
         cJSON *block = NULL;
         cJSON_ArrayForEach(block, content) {
             cJSON *type = cJSON_GetObjectItem(block, "type");
-            if (!type || !cJSON_IsString(type)) continue;
+            if (!type || !cJSON_IsString(type)) {
+                LOG_WARN("Content block %d has no type", block_index);
+                block_index++;
+                continue;
+            }
 
             const char *type_str = type->valuestring;
+            LOG_DEBUG("Processing content block %d: type=%s", block_index, type_str);
 
             if (strcmp(type_str, "text") == 0) {
                 cJSON *text = cJSON_GetObjectItem(block, "text");
                 if (text && cJSON_IsString(text)) {
                     text_content = text->valuestring;
+                    LOG_DEBUG("  Text content length: %zu chars", strlen(text_content));
                 }
             } else if (strcmp(type_str, "tool_use") == 0) {
+                LOG_DEBUG("  Found tool_use block!");
                 if (!tool_calls) {
                     tool_calls = cJSON_CreateArray();
                 }
@@ -766,6 +801,7 @@ cJSON* bedrock_convert_response(const char *bedrock_response) {
                 cJSON *tool_id = cJSON_GetObjectItem(block, "id");
                 if (tool_id && cJSON_IsString(tool_id)) {
                     cJSON_AddStringToObject(tool_call, "id", tool_id->valuestring);
+                    LOG_DEBUG("    tool_use id: %s", tool_id->valuestring);
                 }
 
                 cJSON_AddStringToObject(tool_call, "type", "function");
@@ -774,18 +810,22 @@ cJSON* bedrock_convert_response(const char *bedrock_response) {
                 cJSON *name = cJSON_GetObjectItem(block, "name");
                 if (name && cJSON_IsString(name)) {
                     cJSON_AddStringToObject(function, "name", name->valuestring);
+                    LOG_DEBUG("    tool_use name: %s", name->valuestring);
                 }
 
                 cJSON *input = cJSON_GetObjectItem(block, "input");
                 if (input) {
                     char *input_str = cJSON_PrintUnformatted(input);
                     cJSON_AddStringToObject(function, "arguments", input_str);
+                    LOG_DEBUG("    tool_use arguments length: %zu chars", strlen(input_str));
                     free(input_str);
                 }
 
                 cJSON_AddItemToObject(tool_call, "function", function);
                 cJSON_AddItemToArray(tool_calls, tool_call);
+                LOG_DEBUG("    tool_call added to array");
             }
+            block_index++;
         }
     }
 
@@ -805,20 +845,28 @@ cJSON* bedrock_convert_response(const char *bedrock_response) {
 
     // Add finish_reason
     cJSON *stop_reason = cJSON_GetObjectItem(anthropic_json, "stop_reason");
+    const char *final_finish_reason = "stop";  // default
     if (stop_reason && cJSON_IsString(stop_reason)) {
         const char *reason = stop_reason->valuestring;
+        LOG_DEBUG("Anthropic stop_reason: %s", reason);
         if (strcmp(reason, "end_turn") == 0) {
-            cJSON_AddStringToObject(choice, "finish_reason", "stop");
+            final_finish_reason = "stop";
         } else if (strcmp(reason, "tool_use") == 0) {
-            cJSON_AddStringToObject(choice, "finish_reason", "tool_calls");
+            final_finish_reason = "tool_calls";
         } else if (strcmp(reason, "max_tokens") == 0) {
-            cJSON_AddStringToObject(choice, "finish_reason", "length");
+            final_finish_reason = "length";
         } else {
-            cJSON_AddStringToObject(choice, "finish_reason", reason);
+            final_finish_reason = reason;
         }
     } else {
-        cJSON_AddStringToObject(choice, "finish_reason", "stop");
+        LOG_WARN("No stop_reason in Anthropic response, defaulting to 'stop'");
     }
+
+    cJSON_AddStringToObject(choice, "finish_reason", final_finish_reason);
+    LOG_DEBUG("OpenAI finish_reason: %s", final_finish_reason);
+
+    int tool_calls_count = tool_calls ? cJSON_GetArraySize(tool_calls) : 0;
+    LOG_DEBUG("Tool calls in converted response: %d", tool_calls_count);
 
     cJSON_AddItemToArray(choices, choice);
     cJSON_AddItemToObject(openai_json, "choices", choices);
@@ -845,6 +893,10 @@ cJSON* bedrock_convert_response(const char *bedrock_response) {
 
         cJSON_AddItemToObject(openai_json, "usage", usage);
     }
+
+    LOG_DEBUG("=== BEDROCK RESPONSE CONVERSION END ===");
+    LOG_DEBUG("Converted response - finish_reason: %s, tool_calls: %d, has_text: %s",
+              final_finish_reason, tool_calls_count, text_content ? "yes" : "no");
 
     cJSON_Delete(anthropic_json);
     return openai_json;
