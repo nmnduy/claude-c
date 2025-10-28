@@ -3,7 +3,7 @@
 
 - [x] print todo list after creating it or when updating the TODO list
 - [ ] {"message":"Too many tokens, please wait before trying again."}. if api responded with this then handle appropriately
-- [ ] write state and logs to ./.claude-c by default
+- [x] write state and logs to ./.claude-c by default
 - [x] ctrl + l to clear input box
 - [x] env var for custom log dir and api call db file
 - [ ] rotation for api call db files
@@ -52,8 +52,8 @@ Abort trap: 6
 - [x] pressing Esc will wait for tool to finish but there is no indicator
     - [ ] 'esc' doesn't show interrupted right away.
     - [ ] 'esc' should interrupt certain tools right away and dont wait
+- [ ] ctrl + c twice to exit. dont exit right away on ctrl + c
 - [ ] logs are not flushed often?
-- [ ] are we logging enough? are all log records go to the same log file?
 - [x] all log records should have session id tag. sessions are essential and each run has a new session id
 
 - [ ] rust build messes up the terminal
