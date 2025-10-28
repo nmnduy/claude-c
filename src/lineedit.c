@@ -883,6 +883,12 @@ char* lineedit_readline(LineEditor *ed, const char *prompt) {
                 ed->cursor = 0;
                 redraw_input_line(prompt, ed->buffer, ed->cursor);
             }
+        } else if (c == 12) {
+            // Ctrl+L: clear entire input box
+            ed->buffer[0] = '\0';
+            ed->length = 0;
+            ed->cursor = 0;
+            redraw_input_line(prompt, ed->buffer, ed->cursor);
         } else if (c == 127 || c == 8) {
             // Backspace
             if (buffer_backspace(ed) > 0) {
