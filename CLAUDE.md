@@ -227,7 +227,7 @@ The application is configured via environment variables, providing flexibility f
 - `CLAUDE_C_LOG_PATH` - Full path to log file (e.g., `/var/log/claude.log`)
 - `CLAUDE_C_LOG_DIR` - Directory for logs (will use `claude.log` filename)
 - `CLAUDE_LOG_LEVEL` - Minimum log level: `DEBUG`, `INFO`, `WARN`, `ERROR` (default: INFO)
-- `CLAUDE_C_DB_PATH` - Path to SQLite database for API call history (default: `~/.local/share/claude-c/api_calls.db`)
+- `CLAUDE_C_DB_PATH` - Path to SQLite database for API call history (default: `./.claude-c/api_calls.db`)
 
 **UI Customization:**
 - `CLAUDE_C_THEME` - Path to Kitty theme file (e.g., `./colorschemes/dracula.conf`)
@@ -255,12 +255,18 @@ export DISABLE_PROMPT_CACHING=1
 **Log path precedence:**
 1. If `CLAUDE_C_LOG_PATH` is set, use that exact path
 2. If `CLAUDE_C_LOG_DIR` is set, use `$CLAUDE_C_LOG_DIR/claude.log`
-3. Otherwise, no logging to file (stderr only)
+3. `./.claude-c/logs/claude.log` (project-local, created automatically)
+4. `~/.local/share/claude-c/logs/claude.log` (user-global fallback)
+5. `/tmp/claude-c.log` (last resort)
 
-**Database path:**
-- Default location: `~/.local/share/claude-c/api_calls.db`
-- Parent directory is created automatically if it doesn't exist
-- Database stores API call history, request/response pairs, and timestamps
+**Database path precedence:**
+1. If `CLAUDE_C_DB_PATH` is set, use that exact path
+2. `./.claude-c/api_calls.db` (project-local, created automatically)
+3. `$XDG_DATA_HOME/claude-c/api_calls.db` (if XDG_DATA_HOME is set)
+4. `~/.local/share/claude-c/api_calls.db` (user-global fallback)
+5. `./api_calls.db` (last resort)
+
+**Note:** The `./.claude-c` directory is created automatically in the current working directory. This allows each project to maintain its own logs and API call history, making it easier to track and debug project-specific issues.
 
 ### Color Theme System
 

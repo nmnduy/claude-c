@@ -11,6 +11,13 @@
  *   CLAUDE_C_LOG_PATH - Full path to log file (e.g., /tmp/myapp.log)
  *   CLAUDE_C_LOG_DIR  - Directory for logs (uses claude.log as filename)
  *   CLAUDE_LOG_LEVEL  - Minimum log level: DEBUG, INFO, WARN, ERROR
+ *
+ * Default Log Location Priority:
+ *   1. $CLAUDE_C_LOG_PATH (if set)
+ *   2. $CLAUDE_C_LOG_DIR/claude.log (if set)
+ *   3. ./.claude-c/logs/claude.log (project-local, created automatically)
+ *   4. ~/.local/share/claude-c/logs/claude.log
+ *   5. /tmp/claude-c.log (fallback)
  */
 
 #ifndef LOGGER_H
