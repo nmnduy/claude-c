@@ -6,6 +6,7 @@
 
 #include "lineedit.h"
 #include "logger.h"
+#include "paste_handler.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -363,9 +364,16 @@ calculate_cursor_position(
 
 // Redraw the input line with cursor at correct position
 // Handles both manual newlines and automatic terminal wrapping
-static void redraw_input_line(const char *prompt, const char *buffer, int cursor_pos) {
+// If force_reset is true, doesn't use previous position (useful after display disruption)
+static void redraw_input_line_internal(const char *prompt, const char *buffer, int cursor_pos, int force_reset) {
     static int previous_lines_total = 0;  // Total lines occupied by previous input
     static int previous_term_width = 0;   // Terminal width from previous draw
+
+    // Force reset when display has been disrupted
+    if (force_reset) {
+        previous_lines_total = 0;
+        previous_term_width = 0;
+    }
 
     int buffer_len = (int)strlen(buffer);
     int prompt_len = visible_strlen(prompt);
@@ -375,11 +383,11 @@ static void redraw_input_line(const char *prompt, const char *buffer, int cursor
     // because the line wrapping has changed and our saved position is invalid
     int terminal_resized = (previous_term_width != 0 && previous_term_width != term_width);
 
-    // Move cursor up to start of previous input (unless terminal was resized)
-    if (previous_lines_total > 0 && !terminal_resized) {
+    // Move cursor up to start of previous input (unless terminal was resized or forced reset)
+    if (previous_lines_total > 0 && !terminal_resized && !force_reset) {
         printf("\033[%dA", previous_lines_total);
-    } else if (terminal_resized) {
-        // Terminal was resized: can't rely on old position, so move to start of line
+    } else if (terminal_resized || force_reset) {
+        // Terminal was resized or display disrupted: move to start of line
         // and clear everything from here down before redrawing
         printf("\r");
     }
@@ -415,6 +423,11 @@ static void redraw_input_line(const char *prompt, const char *buffer, int cursor
     // Store state for next redraw
     previous_lines_total = cursor_line;
     previous_term_width = term_width;
+}
+
+// Wrapper for normal redraw (no reset)
+static void redraw_input_line(const char *prompt, const char *buffer, int cursor_pos) {
+    redraw_input_line_internal(prompt, buffer, cursor_pos, 0);
 }
 
 // ============================================================================
@@ -612,6 +625,126 @@ static int buffer_delete_range(LineEditor *ed, int start, int end) {
 }
 
 // ============================================================================
+// Paste Handling
+// ============================================================================
+
+/**
+ * Handle completed paste - sanitize, optionally prompt, and insert into buffer
+ * Returns: 1 if paste was accepted, 0 if rejected/error
+ */
+static int handle_paste_complete(LineEditor *ed, PasteState *paste_state, 
+                                 const char *prompt) {
+    size_t paste_len = 0;
+    const char *paste_content = paste_get_content(paste_state, &paste_len);
+    
+    if (!paste_content || paste_len == 0) {
+        return 0;
+    }
+    
+    // Create a copy for sanitization
+    char *sanitized = malloc(paste_len + 1);
+    if (!sanitized) {
+        fprintf(stderr, "\nError: Failed to allocate memory for paste\n");
+        return 0;
+    }
+    memcpy(sanitized, paste_content, paste_len);
+    sanitized[paste_len] = '\0';
+    
+    // Sanitize with default options
+    PasteSanitizeOptions opts = {
+        .remove_control_chars = 1,
+        .normalize_newlines = 1,
+        .trim_whitespace = 1,
+        .collapse_multiple_newlines = 1
+    };
+    size_t sanitized_len = paste_sanitize(sanitized, paste_len, &opts);
+    
+    // For large pastes, prompt user
+    if (sanitized_len > PASTE_WARN_THRESHOLD) {
+        // Clear screen first to avoid display corruption
+        // (the line editor's display will be disrupted by our prompts)
+        printf("\r\033[J");  // Clear from cursor down
+        fflush(stdout);
+
+        printf("\n\033[33m⚠️  Large paste detected (%zu bytes)\033[0m\n", sanitized_len);
+
+        // Show preview
+        char *preview = paste_get_preview(sanitized, sanitized_len, 200);
+        if (preview) {
+            printf("Preview:\n\033[90m%s\033[0m\n", preview);
+            free(preview);
+        }
+
+        printf("\nPress \033[32m[y]\033[0m to accept paste: ");
+        fflush(stdout);
+        
+        // Read choice using read() instead of getchar() to work with raw mode
+        unsigned char choice_buf;
+        ssize_t ret = read(STDIN_FILENO, &choice_buf, 1);
+        if (ret <= 0) {
+            free(sanitized);
+            return 0;
+        }
+        char choice = (char)choice_buf;
+        
+        if (choice != 'y' && choice != 'Y') {
+            printf("\n\033[33mPaste cancelled.\033[0m\n");
+            free(sanitized);
+            // Give user time to see the message
+            usleep(500000);  // 500ms
+            // Use force_reset=1 because display was disrupted by prompts
+            redraw_input_line_internal(prompt, ed->buffer, ed->cursor, 1);
+            return 0;
+        }
+
+        printf("\n\033[32mPaste accepted.\033[0m\n");
+        // Give user time to see the message
+        usleep(300000);  // 300ms
+    }
+    
+    // Check if paste will fit in buffer (with room for existing content)
+    size_t needed = (size_t)ed->length + sanitized_len + 1;
+    if (needed > ed->buffer_capacity) {
+        // Expand buffer
+        size_t new_capacity = ed->buffer_capacity;
+        while (new_capacity < needed) {
+            new_capacity *= 2;
+        }
+        char *new_buffer = realloc(ed->buffer, new_capacity);
+        if (!new_buffer) {
+            fprintf(stderr, "\nError: Failed to expand buffer for paste\n");
+            free(sanitized);
+            return 0;
+        }
+        ed->buffer = new_buffer;
+        ed->buffer_capacity = new_capacity;
+    }
+    
+    // Insert pasted content at cursor position
+    if (ed->cursor < ed->length) {
+        // Make room by shifting existing content
+        memmove(&ed->buffer[(size_t)ed->cursor + sanitized_len], 
+                &ed->buffer[ed->cursor], 
+                (size_t)(ed->length - ed->cursor + 1));
+    }
+    
+    // Copy sanitized paste into buffer
+    memcpy(&ed->buffer[ed->cursor], sanitized, sanitized_len);
+    ed->cursor += (int)sanitized_len;
+    ed->length += (int)sanitized_len;
+    ed->buffer[ed->length] = '\0';
+    
+    free(sanitized);
+
+    // Redraw line with pasted content
+    // Use force_reset=1 if we showed the large paste warning (display was disrupted)
+    int was_large = (sanitized_len > PASTE_WARN_THRESHOLD);
+    redraw_input_line_internal(prompt, ed->buffer, ed->cursor, was_large ? 1 : 0);
+
+    return 1;
+}
+
+// ============================================================================
 // API Implementation
 // ============================================================================
 
@@ -688,7 +821,13 @@ char* lineedit_readline(LineEditor *ed, const char *prompt) {
     memset(ed->buffer, 0, ed->buffer_capacity);
     ed->length = 0;
     ed->cursor = 0;
-    int in_paste_mode = 0;  // Track if we're receiving pasted text
+
+    // Initialize paste handler
+    PasteState *paste_state = paste_state_init();
+    if (!paste_state) {
+        restore_terminal();
+        return NULL;
+    }
 
     // Save current input when navigating history (so we can restore it)
     char *saved_input = NULL;
@@ -704,6 +843,7 @@ char* lineedit_readline(LineEditor *ed, const char *prompt) {
             // Error or EOF - cleanup handled by restore_terminal()
             restore_terminal();
             free(saved_input);
+            paste_state_free(paste_state);
             return NULL;
         }
 
@@ -754,10 +894,17 @@ char* lineedit_readline(LineEditor *ed, const char *prompt) {
                     }
                     if (paste_bytes_read == 3 &&
                         paste_seq[0] == '0' && paste_seq[1] == '0' && paste_seq[2] == '~') {
-                        in_paste_mode = 1;  // Start of paste
+                        // Start of paste - enter paste collection mode
+                        paste_state->in_paste = 1;
+                        paste_state->buffer_size = 0;
                     } else if (paste_bytes_read == 3 &&
                                paste_seq[0] == '0' && paste_seq[1] == '1' && paste_seq[2] == '~') {
-                        in_paste_mode = 0;  // End of paste
+                        // End of paste - process the collected content
+                        paste_state->in_paste = 0;
+                        if (paste_state->buffer_size > 0) {
+                            handle_paste_complete(ed, paste_state, prompt);
+                            paste_state_reset(paste_state);
+                        }
                     } else {
                         // Not a valid paste sequence - push bytes back to queue
                         for (int i = paste_bytes_read - 1; i >= 0; i--) {
@@ -896,12 +1043,9 @@ char* lineedit_readline(LineEditor *ed, const char *prompt) {
             }
         } else if (c == '\n') {
             // Ctrl+J (ASCII 10): Insert newline character for multiline input
-            if (in_paste_mode) {
-                // In paste mode, insert newline as a regular character
-                unsigned char newline = '\n';
-                if (buffer_insert_char(ed, &newline, 1) == 0) {
-                    redraw_input_line(prompt, ed->buffer, ed->cursor);
-                }
+            if (paste_state->in_paste) {
+                // In paste mode, buffer the newline
+                paste_buffer_add_char(paste_state, (char)c);
             } else {
                 // Normal mode: Ctrl+J inserts newline
                 unsigned char newline = '\n';
@@ -960,6 +1104,18 @@ char* lineedit_readline(LineEditor *ed, const char *prompt) {
             }
         } else if (c >= 32) {
             // Printable character (ASCII or UTF-8)
+            
+            // If in paste mode, buffer character instead of inserting
+            if (paste_state->in_paste) {
+                if (paste_buffer_add_char(paste_state, (char)c) < 0) {
+                    // Buffer overflow
+                    fprintf(stderr, "\n\033[31mError: Paste buffer overflow (>1MB)\033[0m\n");
+                    paste_state_reset(paste_state);
+                    redraw_input_line(prompt, ed->buffer, ed->cursor);
+                }
+                continue;
+            }
+            
             unsigned char utf8_buffer[4];
             int char_bytes = 0;
 
@@ -996,6 +1152,7 @@ char* lineedit_readline(LineEditor *ed, const char *prompt) {
 
     // Cleanup
     free(saved_input);
+    paste_state_free(paste_state);
 
     return strdup(ed->buffer);
 }
