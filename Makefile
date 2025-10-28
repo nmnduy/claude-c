@@ -20,14 +20,20 @@ UNAME_S := $(shell uname -s)
 ifeq ($(UNAME_S),Darwin)
     # macOS - check for Homebrew installation
     HOMEBREW_PREFIX := $(shell brew --prefix 2>/dev/null)
-    ifneq ($(HOMEBREW_PREFIX),)
-        CFLAGS += -I$(HOMEBREW_PREFIX)/include
-        DEBUG_CFLAGS += -I$(HOMEBREW_PREFIX)/include
-        LDFLAGS += -L$(HOMEBREW_PREFIX)/lib
-        DEBUG_LDFLAGS += -L$(HOMEBREW_PREFIX)/lib
+    ifeq ($(HOMEBREW_PREFIX),)
+        # Fallback to common Homebrew paths if brew command not found
+        ifeq ($(shell uname -m),arm64)
+            # Apple Silicon (M1/M2/M3)
+            HOMEBREW_PREFIX := /opt/homebrew
+        else
+            # Intel Mac
+            HOMEBREW_PREFIX := /usr/local
+        endif
     endif
-    LDFLAGS += -lcjson
-    DEBUG_LDFLAGS += -lcjson
+    CFLAGS += -I$(HOMEBREW_PREFIX)/include
+    DEBUG_CFLAGS += -I$(HOMEBREW_PREFIX)/include
+    LDFLAGS += -L$(HOMEBREW_PREFIX)/lib -lcjson
+    DEBUG_LDFLAGS += -L$(HOMEBREW_PREFIX)/lib -lcjson
 else ifeq ($(UNAME_S),Linux)
     # Linux
     LDFLAGS += -lcjson
