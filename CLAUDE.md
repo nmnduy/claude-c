@@ -2,9 +2,9 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-# Next major milestone
+# TODO
 
-Have a working version of `claude` with TUI ideally using the established library `ncurses`. Should have conversational code edit. Configuration via environment variables.
+./todo.md
 
 ## Project Overview
 

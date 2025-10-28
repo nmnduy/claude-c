@@ -2,7 +2,7 @@
 - [x] why so many linse between [Assistant] and everything else?
 
 - [x] ctrl + l to clear input box
-- [ ] env var for custom log dir and api call db file
+- [x] env var for custom log dir and api call db file
 - [ ] rotation for api call db files
 - [ ] pasting still fucks up the terminal
 - [ ] add retries to falied API calls
