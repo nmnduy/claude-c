@@ -60,7 +60,7 @@ jobs:
         $env:CMAKE_TOOLCHAIN_FILE = "$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
         
         # Create a simple CMakeLists.txt for Windows build
-        @"
+        $cmakeContent = @"
 cmake_minimum_required(VERSION 3.15)
 project(claude-c C)
 
@@ -91,7 +91,8 @@ target_link_libraries(claude-c
 )
 
 target_compile_definitions(claude-c PRIVATE _POSIX_C_SOURCE=200809L)
-"@ | Out-File -FilePath CMakeLists.txt -Encoding UTF8
+"@
+        $cmakeContent | Out-File -FilePath CMakeLists.txt -Encoding UTF8
 
         mkdir build
         cd build
