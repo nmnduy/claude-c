@@ -43,6 +43,7 @@ TEST_LINEEDIT_TARGET = $(BUILD_DIR)/test_lineedit
 TEST_TODO_TARGET = $(BUILD_DIR)/test_todo
 TEST_TODO_WRITE_TARGET = $(BUILD_DIR)/test_todo_write
 TEST_TIMING_TARGET = $(BUILD_DIR)/test_tool_timing
+TEST_PASTE_TARGET = $(BUILD_DIR)/test_paste
 QUERY_TOOL = $(BUILD_DIR)/query_logs
 SRC = src/claude.c
 LOGGER_SRC = src/logger.c
@@ -69,9 +70,10 @@ TEST_READ_SRC = tests/test_read.c
 TEST_LINEEDIT_SRC = tests/test_lineedit.c
 TEST_TODO_SRC = tests/test_todo.c
 TEST_TODO_WRITE_SRC = tests/test_todo_write.c
+TEST_PASTE_SRC = tests/test_paste.c
 QUERY_TOOL_SRC = tools/query_logs.c
 
-.PHONY: all clean check-deps install test test-edit test-input test-read test-lineedit test-todo test-todo-write query-tool debug analyze sanitize-ub sanitize-all sanitize-leak valgrind memscan version show-version update-version bump-patch build
+.PHONY: all clean check-deps install test test-edit test-input test-read test-lineedit test-todo test-todo-write test-paste query-tool debug analyze sanitize-ub sanitize-all sanitize-leak valgrind memscan version show-version update-version bump-patch build
 
 all: check-deps $(TARGET)
 
@@ -81,7 +83,7 @@ debug: check-deps $(BUILD_DIR)/claude-c-debug
 
 query-tool: check-deps $(QUERY_TOOL)
 
-test: test-edit test-input test-read test-lineedit test-todo test-timing
+test: test-edit test-input test-read test-lineedit test-todo test-paste test-timing
 
 test-edit: check-deps $(TEST_EDIT_TARGET)
 	@echo ""
@@ -118,6 +120,12 @@ test-todo-write: check-deps $(TEST_TODO_WRITE_TARGET)
 	@echo "Running TodoWrite tool tests..."
 	@echo ""
 	@./$(TEST_TODO_WRITE_TARGET)
+
+test-paste: check-deps $(TEST_PASTE_TARGET)
+	@echo ""
+	@echo "Running Paste Handler tests..."
+	@echo ""
+	@./$(TEST_PASTE_TARGET)
 
 test-timing: check-deps $(TEST_TIMING_TARGET)
 	@echo ""
@@ -425,6 +433,15 @@ $(TEST_TODO_WRITE_TARGET): $(SRC) $(TEST_TODO_WRITE_SRC) $(LOGGER_OBJ) $(PERSIST
 	@echo "✓ TodoWrite tool test build successful!"
 	@echo ""
 
+# Test target for Paste Handler - tests paste detection and sanitization
+$(TEST_PASTE_TARGET): $(TEST_PASTE_SRC)
+	@mkdir -p $(BUILD_DIR)
+	@echo "Compiling Paste Handler test suite..."
+	@$(CC) $(CFLAGS) -o $(TEST_PASTE_TARGET) $(TEST_PASTE_SRC)
+	@echo ""
+	@echo "✓ Paste Handler test build successful!"
+	@echo ""
+
 # Test target for tool timing - ensures no 60-second delays
 $(TEST_TIMING_TARGET): tests/test_tool_timing.c
 	@mkdir -p $(BUILD_DIR)
@@ -467,6 +484,7 @@ help:
 	@echo "  make test-read - Build and run Read tool tests only"
 	@echo "  make test-lineedit - Build and run Line Editor wrapping tests only"
 	@echo "  make test-todo - Build and run TODO list tests only"
+	@echo "  make test-paste - Build and run Paste Handler tests only"
 	@echo "  make query-tool - Build the API call log query utility"
 	@echo "  make clean     - Remove built files"
 	@echo "  make install   - Install to \$$HOME/.local/bin as claude-c (default)"

@@ -36,11 +36,15 @@ static const char *SPINNER_CIRCLE[] = {"◜", "◠", "◝", "◞", "◡", "◟"}
 // Color codes - use theme system with fallbacks
 static inline const char* get_spinner_color_status(void) {
     static char color_buf[32];
+    static int warned = 0;
     if (get_colorscheme_color(COLORSCHEME_STATUS, color_buf, sizeof(color_buf)) == 0) {
         return color_buf;
     }
-    // Log warning when falling back to default color
-    LOG_WARN("Using fallback color for spinner (status)");
+    // Log warning when falling back to default color (only once)
+    if (!warned) {
+        LOG_WARN("Using fallback color for spinner (status)");
+        warned = 1;
+    }
     return ANSI_FALLBACK_YELLOW;
 }
 
@@ -56,11 +60,15 @@ static const char* get_spinner_color_tool(void) {
 
 static const char* get_spinner_color_success(void) {
     static char color_buf[32];
+    static int warned = 0;
     if (get_colorscheme_color(COLORSCHEME_USER, color_buf, sizeof(color_buf)) == 0) {
         return color_buf;
     }
-    // Log warning when falling back to default color
-    LOG_WARN("Using fallback color for spinner (success)");
+    // Log warning when falling back to default color (only once)
+    if (!warned) {
+        LOG_WARN("Using fallback color for spinner (success)");
+        warned = 1;
+    }
     return ANSI_FALLBACK_GREEN;
 }
 
