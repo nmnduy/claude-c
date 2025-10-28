@@ -450,20 +450,24 @@ int bedrock_validate_credentials(AWSCredentials *creds, const char *profile) {
 
     (void)profile;  // Unused parameter
 
-    // Set environment variables for the validation call
-    char env_cmd[1024];
-    snprintf(env_cmd, sizeof(env_cmd),
-             "AWS_ACCESS_KEY_ID='%s' AWS_SECRET_ACCESS_KEY='%s' %s aws sts get-caller-identity --region %s 2>&1",
-             creds->access_key_id,
-             creds->secret_access_key,
-             creds->session_token ? "AWS_SESSION_TOKEN='" : "",
-             creds->region ? creds->region : "us-west-2");
-
+    // Build command properly with session token if present
+    char env_cmd[2048];
     if (creds->session_token) {
-        strncat(env_cmd, creds->session_token, sizeof(env_cmd) - strlen(env_cmd) - 1);
-        strncat(env_cmd, "' ", sizeof(env_cmd) - strlen(env_cmd) - 1);
+        snprintf(env_cmd, sizeof(env_cmd),
+                 "AWS_ACCESS_KEY_ID='%s' AWS_SECRET_ACCESS_KEY='%s' AWS_SESSION_TOKEN='%s' aws sts get-caller-identity --region %s 2>&1",
+                 creds->access_key_id,
+                 creds->secret_access_key,
+                 creds->session_token,
+                 creds->region ? creds->region : "us-west-2");
+    } else {
+        snprintf(env_cmd, sizeof(env_cmd),
+                 "AWS_ACCESS_KEY_ID='%s' AWS_SECRET_ACCESS_KEY='%s' aws sts get-caller-identity --region %s 2>&1",
+                 creds->access_key_id,
+                 creds->secret_access_key,
+                 creds->region ? creds->region : "us-west-2");
     }
 
+    LOG_DEBUG("Validating credentials with command: %s", env_cmd);
     char *output = exec_command(env_cmd);
     int valid = 0;
 
@@ -471,13 +475,18 @@ int bedrock_validate_credentials(AWSCredentials *creds, const char *profile) {
         // Check if output contains error messages
         if (strstr(output, "ExpiredToken") || strstr(output, "InvalidToken") ||
             strstr(output, "AccessDenied")) {
-            LOG_WARN("AWS credentials are invalid or expired");
+            LOG_WARN("AWS credentials are invalid or expired: %s", output);
             valid = 0;
         } else if (strstr(output, "UserId") || strstr(output, "Account")) {
             LOG_INFO("AWS credentials validated successfully");
             valid = 1;
+        } else {
+            LOG_WARN("Unexpected output from credential validation: %s", output);
+            valid = 0;
         }
         free(output);
+    } else {
+        LOG_WARN("Failed to execute credential validation command");
     }
 
     return valid;
