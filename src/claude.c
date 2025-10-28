@@ -1927,8 +1927,13 @@ static cJSON* call_api(ConversationState *state) {
             char error_msg[256];
             snprintf(error_msg, sizeof(error_msg), "HTTP error %ld", http_status);
 
-            // Check if this is a retryable 5xx server error (but not 501 Not Implemented)
-            int is_server_error_retryable = (http_status >= 500 && http_status < 600 && http_status != 501);
+            // Check if this is a retryable HTTP error
+            // 408: Request Timeout - server asks to retry
+            // 429: Rate Limit - needs exponential backoff
+            // 5xx: Server errors (except 501 Not Implemented)
+            int is_http_retryable = (http_status == 408 ||
+                                     http_status == 429 ||
+                                     (http_status >= 500 && http_status < 600 && http_status != 501));
 
             // Log HTTP error
             if (state->persistence_db) {
@@ -1961,12 +1966,14 @@ static cJSON* call_api(ConversationState *state) {
                 cJSON_Delete(error_json);
             }
 
-            // Retry on 5xx server errors
-            if (is_server_error_retryable && retry_count < MAX_RETRIES) {
+            // Retry on retryable HTTP errors (408, 429, 5xx)
+            if (is_http_retryable && retry_count < MAX_RETRIES) {
                 char retry_msg[256];
-                snprintf(retry_msg, sizeof(retry_msg), "%s. Server error - retrying in %d ms...", error_msg, backoff_ms);
+                const char *error_type = (http_status == 429) ? "Rate limit" :
+                                        (http_status == 408) ? "Request timeout" : "Server error";
+                snprintf(retry_msg, sizeof(retry_msg), "%s. %s - retrying in %d ms...", error_msg, error_type, backoff_ms);
                 print_error(retry_msg);
-                LOG_WARN("Retrying after server error %ld (attempt %d/%d)", http_status, retry_count + 1, MAX_RETRIES);
+                LOG_WARN("Retrying after HTTP %ld (%s) (attempt %d/%d)", http_status, error_type, retry_count + 1, MAX_RETRIES);
 
                 // Sleep and retry
                 usleep((useconds_t)(backoff_ms * 1000));
@@ -1978,6 +1985,39 @@ static cJSON* call_api(ConversationState *state) {
 
                 free(response.output);
                 continue; // Retry the request
+            }
+
+            // Check if this is an AWS Bedrock authentication error (403/400)
+            if (using_bedrock && retry_count < MAX_RETRIES &&
+                (http_status == 403 || http_status == 400)) {
+
+                // Try to handle auth error - this will check the error message
+                // and refresh credentials if it matches auth error patterns
+                if (bedrock_handle_auth_error(state->bedrock_config, http_status, error_msg)) {
+                    LOG_INFO("Bedrock credentials refreshed, retrying request (attempt %d/%d)",
+                             retry_count + 1, MAX_RETRIES);
+
+                    // Log the retry attempt
+                    if (state->persistence_db) {
+                        persistence_log_api_call(
+                            state->persistence_db,
+                            state->session_id,
+                            state->api_url,
+                            request_copy,
+                            response.output,
+                            state->model,
+                            "error",
+                            (int)http_status,
+                            "AWS credentials expired - refreshed and retrying",
+                            duration_ms,
+                            0
+                        );
+                    }
+
+                    retry_count++;
+                    free(response.output);
+                    continue; // Retry with fresh credentials
+                }
             }
 
             print_error(error_msg);
@@ -2094,33 +2134,6 @@ static cJSON* call_api(ConversationState *state) {
 
             // Check if this is a rate limit error (429)
             int is_rate_limit = (http_status == 429 || strcmp(err_code, "429") == 0);
-
-            // Check if this is an AWS authentication error and attempt recovery
-            if (using_bedrock && retry_count < MAX_RETRIES) {
-                if (bedrock_handle_auth_error(state->bedrock_config, http_status, err_msg)) {
-                    // Credentials were refreshed, log and retry
-                    if (state->persistence_db) {
-                        persistence_log_api_call(
-                            state->persistence_db,
-                            state->session_id,
-                            state->api_url,
-                            request_copy,
-                            response.output,
-                            state->model,
-                            "error",
-                            (int)http_status,
-                            "AWS credentials expired - refreshed and retrying",
-                            duration_ms,
-                            0
-                        );
-                    }
-
-                    retry_count++;
-                    cJSON_Delete(json_response);
-                    free(response.output);
-                    continue; // Retry the request with fresh credentials
-                }
-            }
 
             if (is_rate_limit && retry_count < MAX_RETRIES) {
                 // Retry with exponential backoff
