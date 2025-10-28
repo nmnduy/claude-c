@@ -8,10 +8,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a pure C implementation of a coding agent that interacts with Anthropic's Claude API. It's a lightweight, single-file port (~1000 lines) of the core functionality from the TypeScript Claude Code CLI.
+This is a pure C implementation of a coding agent that interacts with Anthropic's Claude API. It's a lightweight, modular port of the core functionality from the TypeScript Claude Code CLI.
 
 **Key characteristics:**
-- Single-file architecture in `src/claude.c`
+- Modular architecture with clean separation into focused modules
 - Standard C11 with POSIX support
 - Direct API integration via libcurl
 - Implements 7 core tools: Bash, Read, Write, Edit, Glob, Grep, TodoWrite
