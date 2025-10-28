@@ -55,6 +55,42 @@ static void persistence_log_api_call(
     long duration_ms,
     int tool_count
 ) { (void)db; (void)session_id; (void)url; (void)request; (void)response; (void)model; (void)status; (void)code; (void)error_msg; (void)duration_ms; (void)tool_count; }
+
+// Stub Bedrock types and functions
+typedef struct {
+    char *access_key_id;
+    char *secret_access_key;
+    char *session_token;
+    char *region;
+    char *profile;
+} AWSCredentials;
+
+typedef struct BedrockConfigStruct {
+    int enabled;
+    char *region;
+    char *model_id;
+    char *endpoint;
+    AWSCredentials *creds;
+} BedrockConfig;
+
+static int bedrock_is_enabled(void) { return 0; }
+static BedrockConfig* bedrock_config_init(const char *model_id) { (void)model_id; return NULL; }
+static void bedrock_config_free(BedrockConfig *config) { (void)config; }
+static char* bedrock_convert_request(const char *openai_request) { (void)openai_request; return NULL; }
+static cJSON* bedrock_convert_response(const char *bedrock_response) { (void)bedrock_response; return NULL; }
+static struct curl_slist* bedrock_sign_request(
+    struct curl_slist *headers,
+    const char *method,
+    const char *url,
+    const char *payload,
+    const AWSCredentials *creds,
+    const char *region,
+    const char *service
+) { (void)method; (void)url; (void)payload; (void)creds; (void)region; (void)service; return headers; }
+static int bedrock_handle_auth_error(BedrockConfig *config, long http_status, const char *error_message) {
+    (void)config; (void)http_status; (void)error_message;
+    return 0;
+}
 #else
 // Normal build: use actual implementations
 #include "logger.h"
