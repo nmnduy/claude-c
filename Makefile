@@ -9,6 +9,12 @@ DEBUG_LDFLAGS = -lcurl -lpthread -lsqlite3 -fsanitize=address
 # Installation prefix (can be overridden via command line)
 INSTALL_PREFIX ?= $(HOME)/.local
 
+# Version management
+VERSION_FILE := VERSION
+VERSION := $(shell cat $(VERSION_FILE) 2>/dev/null || echo "unknown")
+BUILD_DATE := $(shell date +%Y-%m-%d)
+VERSION_H := src/version.h
+
 # Detect OS for cJSON library linking
 UNAME_S := $(shell uname -s)
 ifeq ($(UNAME_S),Darwin)
@@ -63,9 +69,11 @@ TEST_TODO_SRC = tests/test_todo.c
 TEST_TODO_WRITE_SRC = tests/test_todo_write.c
 QUERY_TOOL_SRC = tools/query_logs.c
 
-.PHONY: all clean check-deps install test test-edit test-input test-read test-lineedit test-todo test-todo-write query-tool debug analyze sanitize-ub sanitize-all sanitize-leak valgrind memscan
+.PHONY: all clean check-deps install test test-edit test-input test-read test-lineedit test-todo test-todo-write query-tool debug analyze sanitize-ub sanitize-all sanitize-leak valgrind memscan version show-version update-version bump-patch build
 
 all: check-deps $(TARGET)
+
+build: check-deps $(TARGET)
 
 debug: check-deps $(BUILD_DIR)/claude-c-debug
 
@@ -115,13 +123,58 @@ test-timing: check-deps $(TEST_TIMING_TARGET)
 	@echo ""
 	@./$(TEST_TIMING_TARGET)
 
-$(TARGET): $(SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(LINEEDIT_OBJ) $(COMMANDS_OBJ) $(COMPLETION_OBJ) $(TUI_OBJ) $(TODO_OBJ)
+$(TARGET): $(SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(LINEEDIT_OBJ) $(COMMANDS_OBJ) $(COMPLETION_OBJ) $(TUI_OBJ) $(TODO_OBJ) $(VERSION_H)
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CFLAGS) -o $(TARGET) $(SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(LINEEDIT_OBJ) $(COMMANDS_OBJ) $(COMPLETION_OBJ) $(TUI_OBJ) $(TODO_OBJ) $(LDFLAGS)
 	@echo ""
 	@echo "✓ Build successful!"
+	@echo "Version: $(VERSION)"
 	@echo "Run: ./$(TARGET) \"your prompt here\""
 	@echo ""
+
+# Generate version.h from VERSION file
+$(VERSION_H): $(VERSION_FILE)
+	@echo "Generating version.h..."
+	@mkdir -p src
+	@# Parse version string (e.g., "1.2.3-beta.1" -> 1, 2, 3)
+	@VERSION_MAJOR=$$(echo "$(VERSION)" | sed 's/^\([0-9]*\)\..*/\1/' | head -1); \
+	VERSION_MINOR=$$(echo "$(VERSION)" | sed 's/^[0-9]*\.\([0-9]*\)\..*/\1/' | head -1); \
+	VERSION_PATCH=$$(echo "$(VERSION)" | sed 's/^[0-9]*\.[0-9]*\.\([0-9]*\).*/\1/' | head -1); \
+	VERSION_NUMBER=$$(printf "%d" $$(($$VERSION_MAJOR * 65536 + $$VERSION_MINOR * 256 + $$VERSION_PATCH))); \
+	printf "0x%06x" $$VERSION_NUMBER > /tmp/version_num.tmp; \
+	VERSION_HEX=$$(cat /tmp/version_num.tmp); \
+	rm -f /tmp/version_num.tmp; \
+	{ \
+	echo "/*"; \
+	echo " * version.h - Central version management for Claude C"; \
+	echo " *"; \
+	echo " * This file provides a single source of truth for version information."; \
+	echo " * It's automatically generated from the VERSION file during build."; \
+	echo " */"; \
+	echo ""; \
+	echo "#ifndef VERSION_H"; \
+	echo "#define VERSION_H"; \
+	echo ""; \
+	echo "// Version string (e.g., \"0.0.2\", \"1.0.0\", \"1.2.3-beta.1\")"; \
+	echo "#define CLAUDE_C_VERSION \"$(VERSION)\""; \
+	echo ""; \
+	echo "// Version components for programmatic use"; \
+	echo "#define CLAUDE_C_VERSION_MAJOR $$VERSION_MAJOR"; \
+	echo "#define CLAUDE_C_VERSION_MINOR $$VERSION_MINOR"; \
+	echo "#define CLAUDE_C_VERSION_PATCH $$VERSION_PATCH"; \
+	echo ""; \
+	echo "// Version as numeric value for comparisons (e.g., 0x000002)"; \
+	echo "#define CLAUDE_C_VERSION_NUMBER $$VERSION_HEX"; \
+	echo ""; \
+	echo "// Build timestamp (automatically generated)"; \
+	echo "#define CLAUDE_C_BUILD_TIMESTAMP \"$(BUILD_DATE)\""; \
+	echo ""; \
+	echo "// Full version string with build info"; \
+	echo "#define CLAUDE_C_VERSION_FULL \"$(VERSION) (built $(BUILD_DATE))\""; \
+	echo ""; \
+	echo "#endif // VERSION_H"; \
+	} > $(VERSION_H)
+	@echo "✓ Version: $(VERSION)"
 
 # Debug build with AddressSanitizer for finding memory bugs
 $(BUILD_DIR)/claude-c-debug: $(SRC) $(LOGGER_SRC) $(PERSISTENCE_SRC) $(MIGRATIONS_SRC) $(LINEEDIT_SRC) $(COMMANDS_SRC) $(COMPLETION_SRC) $(TUI_SRC) $(TODO_SRC)
@@ -412,6 +465,12 @@ help:
 	@echo "  make install INSTALL_PREFIX=/opt - Install to /opt/bin (requires sudo)"
 	@echo "  make check-deps - Check if all dependencies are installed"
 	@echo ""
+	@echo "Version Management:"
+	@echo "  make version        - Show current version"
+	@echo "  make show-version   - Show detailed version information"
+	@echo "  make bump-patch     - Increment patch version (e.g., 0.0.2 → 0.0.3)"
+	@echo "  make update-version VERSION=1.0.0 - Set specific version number"
+	@echo ""
 	@echo "Memory Bug Scanning:"
 	@echo "  make memscan      - Run comprehensive memory analysis (recommended)"
 	@echo "  make analyze      - Run static analysis (clang/gcc analyzer)"
@@ -435,3 +494,61 @@ help:
 	@echo "  apt-get install libcurl4-openssl-dev libcjson-dev libsqlite3-dev valgrind"
 	@echo "  or"
 	@echo "  yum install libcurl-devel cjson-devel sqlite-devel valgrind"
+
+# Version management targets
+version:
+	@echo "$(VERSION)"
+
+show-version: $(VERSION_H)
+	@echo "Claude C - Pure C Edition"
+	@echo "Version: $(VERSION)"
+	@echo "Build date: $(BUILD_DATE)"
+	@echo "Version file: $(VERSION_FILE)"
+	@echo "Version header: $(VERSION_H)"
+	@if [ -f "$(TARGET)" ]; then \
+		echo "Binary: $(TARGET)"; \
+		./$(TARGET) --version 2>/dev/null || echo "Binary version: not available"; \
+	fi
+
+update-version:
+	@if [ -z "$(VERSION)" ]; then \
+		echo "Error: VERSION parameter required"; \
+		echo "Usage: make update-version VERSION=1.0.0"; \
+		exit 1; \
+	fi
+	@echo "Updating version to $(VERSION)..."
+	@echo "$(VERSION)" > $(VERSION_FILE)
+	@echo "✓ Updated $(VERSION_FILE) to $(VERSION)"
+	@echo "Run 'make clean && make' to rebuild with new version"
+
+bump-patch:
+	@echo "Current version: $(VERSION)"
+	@CURRENT_VERSION="$(VERSION)"; \
+	VERSION_MAJOR=$$(echo "$$CURRENT_VERSION" | sed 's/^\([0-9]*\)\..*/\1/'); \
+	VERSION_MINOR=$$(echo "$$CURRENT_VERSION" | sed 's/^[0-9]*\.\([0-9]*\)\..*/\1/'); \
+	VERSION_PATCH=$$(echo "$$CURRENT_VERSION" | sed 's/^[0-9]*\.[0-9]*\.\([0-9]*\).*/\1/'); \
+	NEW_PATCH=$$((VERSION_PATCH + 1)); \
+	NEW_VERSION="$$VERSION_MAJOR.$$VERSION_MINOR.$$NEW_PATCH"; \
+	echo "Bumping patch version: $$CURRENT_VERSION → $$NEW_VERSION"; \
+	echo "$$NEW_VERSION" > $(VERSION_FILE); \
+	echo "✓ Version bumped to $$NEW_VERSION"; \
+	echo ""; \
+	echo "Regenerating version.h..."; \
+	rm -f $(VERSION_H); \
+	$(MAKE) $(VERSION_H); \
+	echo ""; \
+	echo "Staging version files..."; \
+	git add $(VERSION_FILE) $(VERSION_H); \
+	git commit -m "chore: bump version to $$NEW_VERSION"; \
+	echo ""; \
+	echo "Creating git tag v$$NEW_VERSION..."; \
+	git tag -a "v$$NEW_VERSION" -m "Release v$$NEW_VERSION"; \
+	echo ""; \
+	echo "Pushing to remote..."; \
+	git push origin master; \
+	git push origin "v$$NEW_VERSION"; \
+	echo ""; \
+	echo "✓ Version $$NEW_VERSION released successfully!"; \
+	echo "  - Committed: $(VERSION_FILE) and $(VERSION_H)"; \
+	echo "  - Tagged: v$$NEW_VERSION"; \
+	echo "  - Pushed to remote"
