@@ -44,6 +44,7 @@ TEST_TODO_TARGET = $(BUILD_DIR)/test_todo
 TEST_TODO_WRITE_TARGET = $(BUILD_DIR)/test_todo_write
 TEST_TIMING_TARGET = $(BUILD_DIR)/test_tool_timing
 TEST_PASTE_TARGET = $(BUILD_DIR)/test_paste
+TEST_RETRY_JITTER_TARGET = $(BUILD_DIR)/test_retry_jitter
 QUERY_TOOL = $(BUILD_DIR)/query_logs
 SRC = src/claude.c
 LOGGER_SRC = src/logger.c
@@ -71,9 +72,10 @@ TEST_LINEEDIT_SRC = tests/test_lineedit.c
 TEST_TODO_SRC = tests/test_todo.c
 TEST_TODO_WRITE_SRC = tests/test_todo_write.c
 TEST_PASTE_SRC = tests/test_paste.c
+TEST_RETRY_JITTER_SRC = tests/test_retry_jitter.c
 QUERY_TOOL_SRC = tools/query_logs.c
 
-.PHONY: all clean check-deps install test test-edit test-input test-read test-lineedit test-todo test-todo-write test-paste query-tool debug analyze sanitize-ub sanitize-all sanitize-leak valgrind memscan version show-version update-version bump-patch build
+.PHONY: all clean check-deps install test test-edit test-input test-read test-lineedit test-todo test-todo-write test-paste test-retry-jitter query-tool debug analyze sanitize-ub sanitize-all sanitize-leak valgrind memscan version show-version update-version bump-patch build
 
 all: check-deps $(TARGET)
 
@@ -126,6 +128,12 @@ test-paste: check-deps $(TEST_PASTE_TARGET)
 	@echo "Running Paste Handler tests..."
 	@echo ""
 	@./$(TEST_PASTE_TARGET)
+
+test-retry-jitter: check-deps $(TEST_RETRY_JITTER_TARGET)
+	@echo ""
+	@echo "Running Retry Jitter tests..."
+	@echo ""
+	@./$(TEST_RETRY_JITTER_TARGET)
 
 test-timing: check-deps $(TEST_TIMING_TARGET)
 	@echo ""
@@ -442,6 +450,15 @@ $(TEST_PASTE_TARGET): $(TEST_PASTE_SRC)
 	@echo "✓ Paste Handler test build successful!"
 	@echo ""
 
+# Test target for Retry Jitter - tests exponential backoff with jitter
+$(TEST_RETRY_JITTER_TARGET): $(TEST_RETRY_JITTER_SRC)
+	@mkdir -p $(BUILD_DIR)
+	@echo "Compiling Retry Jitter test suite..."
+	@$(CC) $(CFLAGS) -o $(TEST_RETRY_JITTER_TARGET) $(TEST_RETRY_JITTER_SRC) -lm
+	@echo ""
+	@echo "✓ Retry Jitter test build successful!"
+	@echo ""
+
 # Test target for tool timing - ensures no 60-second delays
 $(TEST_TIMING_TARGET): tests/test_tool_timing.c
 	@mkdir -p $(BUILD_DIR)
@@ -485,6 +502,7 @@ help:
 	@echo "  make test-lineedit - Build and run Line Editor wrapping tests only"
 	@echo "  make test-todo - Build and run TODO list tests only"
 	@echo "  make test-paste - Build and run Paste Handler tests only"
+	@echo "  make test-retry-jitter - Build and run Retry Jitter tests only"
 	@echo "  make query-tool - Build the API call log query utility"
 	@echo "  make clean     - Remove built files"
 	@echo "  make install   - Install to \$$HOME/.local/bin as claude-c (default)"

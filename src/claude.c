@@ -1527,6 +1527,7 @@ static void add_cache_control(cJSON *obj) {
 static cJSON* call_api(ConversationState *state) {
     int retry_count = 0;
     int backoff_ms = INITIAL_BACKOFF_MS;
+    int total_wait_ms = 0;  // Track total wait time across all retries
 
     // Overall API call timing
     struct timespec call_start, call_end;
@@ -1892,13 +1893,35 @@ static cJSON* call_api(ConversationState *state) {
 
             // Retry on transient network errors
             if (is_retryable && retry_count < MAX_RETRIES) {
+                // Add jitter: reduce delay by 0-25% randomly to prevent thundering herd
+                int rand_val = rand();
+                double jitter = 1.0 - ((double)rand_val / RAND_MAX) * 0.25;
+                int actual_delay_ms = (int)(backoff_ms * jitter);
+
+                // Check if this retry would exceed total wait time limit
+                if (total_wait_ms + actual_delay_ms > MAX_TOTAL_WAIT_MS) {
+                    actual_delay_ms = MAX_TOTAL_WAIT_MS - total_wait_ms;
+                    if (actual_delay_ms <= 0) {
+                        LOG_ERROR("Maximum total wait time (%d ms) exceeded", MAX_TOTAL_WAIT_MS);
+                        print_error("Maximum retry wait time exceeded");
+                        free(response.output);
+                        free(request_copy);
+                        free(json_str);
+                        if (using_bedrock && api_payload != json_str) {
+                            free(api_payload);
+                        }
+                        return NULL;
+                    }
+                }
+
                 char retry_msg[256];
-                snprintf(retry_msg, sizeof(retry_msg), "Network error: %s. Retrying in %d ms...", error_msg, backoff_ms);
+                snprintf(retry_msg, sizeof(retry_msg), "Network error: %s. Retrying in %d ms...", error_msg, actual_delay_ms);
                 print_error(retry_msg);
-                LOG_WARN("Retrying after network error (attempt %d/%d)", retry_count + 1, MAX_RETRIES);
+                LOG_WARN("Retrying after network error (attempt %d/%d, total wait: %d ms)", retry_count + 1, MAX_RETRIES, total_wait_ms + actual_delay_ms);
 
                 // Sleep and retry
-                usleep((useconds_t)(backoff_ms * 1000));
+                usleep((useconds_t)(actual_delay_ms * 1000));
+                total_wait_ms += actual_delay_ms;
                 backoff_ms = (int)(backoff_ms * BACKOFF_MULTIPLIER);
                 if (backoff_ms > MAX_BACKOFF_MS) {
                     backoff_ms = MAX_BACKOFF_MS;
@@ -1968,15 +1991,36 @@ static cJSON* call_api(ConversationState *state) {
 
             // Retry on retryable HTTP errors (408, 429, 5xx)
             if (is_http_retryable && retry_count < MAX_RETRIES) {
+                // Add jitter: reduce delay by 0-25% randomly to prevent thundering herd
+                double jitter = 1.0 - ((double)rand() / RAND_MAX) * 0.25;
+                int actual_delay_ms = (int)(backoff_ms * jitter);
+
+                // Check if this retry would exceed total wait time limit
+                if (total_wait_ms + actual_delay_ms > MAX_TOTAL_WAIT_MS) {
+                    actual_delay_ms = MAX_TOTAL_WAIT_MS - total_wait_ms;
+                    if (actual_delay_ms <= 0) {
+                        LOG_ERROR("Maximum total wait time (%d ms) exceeded", MAX_TOTAL_WAIT_MS);
+                        print_error("Maximum retry wait time exceeded");
+                        free(response.output);
+                        free(request_copy);
+                        free(json_str);
+                        if (using_bedrock && api_payload != json_str) {
+                            free(api_payload);
+                        }
+                        return NULL;
+                    }
+                }
+
                 char retry_msg[256];
                 const char *error_type = (http_status == 429) ? "Rate limit" :
                                         (http_status == 408) ? "Request timeout" : "Server error";
-                snprintf(retry_msg, sizeof(retry_msg), "%s. %s - retrying in %d ms...", error_msg, error_type, backoff_ms);
+                snprintf(retry_msg, sizeof(retry_msg), "%s. %s - retrying in %d ms...", error_msg, error_type, actual_delay_ms);
                 print_error(retry_msg);
-                LOG_WARN("Retrying after HTTP %ld (%s) (attempt %d/%d)", http_status, error_type, retry_count + 1, MAX_RETRIES);
+                LOG_WARN("Retrying after HTTP %ld (%s) (attempt %d/%d, total wait: %d ms)", http_status, error_type, retry_count + 1, MAX_RETRIES, total_wait_ms + actual_delay_ms);
 
                 // Sleep and retry
-                usleep((useconds_t)(backoff_ms * 1000));
+                usleep((useconds_t)(actual_delay_ms * 1000));
+                total_wait_ms += actual_delay_ms;
                 backoff_ms = (int)(backoff_ms * BACKOFF_MULTIPLIER);
                 if (backoff_ms > MAX_BACKOFF_MS) {
                     backoff_ms = MAX_BACKOFF_MS;
@@ -2136,9 +2180,30 @@ static cJSON* call_api(ConversationState *state) {
             int is_rate_limit = (http_status == 429 || strcmp(err_code, "429") == 0);
 
             if (is_rate_limit && retry_count < MAX_RETRIES) {
+                // Add jitter: reduce delay by 0-25% randomly to prevent thundering herd
+                double jitter = 1.0 - ((double)rand() / RAND_MAX) * 0.25;
+                int actual_delay_ms = (int)(backoff_ms * jitter);
+
+                // Check if this retry would exceed total wait time limit
+                if (total_wait_ms + actual_delay_ms > MAX_TOTAL_WAIT_MS) {
+                    actual_delay_ms = MAX_TOTAL_WAIT_MS - total_wait_ms;
+                    if (actual_delay_ms <= 0) {
+                        LOG_ERROR("Maximum total wait time (%d ms) exceeded", MAX_TOTAL_WAIT_MS);
+                        print_error("Maximum retry wait time exceeded");
+                        cJSON_Delete(json_response);
+                        free(response.output);
+                        free(request_copy);
+                        free(json_str);
+                        if (using_bedrock && api_payload != json_str) {
+                            free(api_payload);
+                        }
+                        return NULL;
+                    }
+                }
+
                 // Retry with exponential backoff
                 char retry_msg[256];
-                snprintf(retry_msg, sizeof(retry_msg), "Rate limit exceeded. Retrying in %d ms...", backoff_ms);
+                snprintf(retry_msg, sizeof(retry_msg), "Rate limit exceeded. Retrying in %d ms...", actual_delay_ms);
                 print_error(retry_msg);
 
                 // Log this attempt
@@ -2159,7 +2224,8 @@ static cJSON* call_api(ConversationState *state) {
                 }
 
                 // Sleep and retry
-                usleep((useconds_t)(backoff_ms * 1000)); // usleep takes microseconds
+                usleep((useconds_t)(actual_delay_ms * 1000)); // usleep takes microseconds
+                total_wait_ms += actual_delay_ms;
                 backoff_ms = (int)(backoff_ms * BACKOFF_MULTIPLIER);
                 if (backoff_ms > MAX_BACKOFF_MS) {
                     backoff_ms = MAX_BACKOFF_MS;
@@ -3341,6 +3407,9 @@ int main(int argc, char *argv[]) {
 
     // Initialize CURL
     curl_global_init(CURL_GLOBAL_DEFAULT);
+
+    // Initialize random number generator for retry jitter
+    srand((unsigned int)time(NULL));
 
     // Initialize logging system
     if (log_init() != 0) {

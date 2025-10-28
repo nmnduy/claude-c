@@ -26,9 +26,10 @@
 #define MAX_MESSAGES 10000
 
 // Retry configuration for rate limiting (429 errors)
-#define MAX_RETRIES 3                    // Maximum number of retry attempts
+#define MAX_RETRIES 2                    // Maximum number of retry attempts
 #define INITIAL_BACKOFF_MS 1000          // Initial backoff delay in milliseconds
-#define MAX_BACKOFF_MS 10000             // Maximum backoff delay in milliseconds (10 seconds)
+#define MAX_BACKOFF_MS 60000             // Maximum backoff delay in milliseconds (60 seconds)
+#define MAX_TOTAL_WAIT_MS 150000         // Maximum total wait time across all retries (2.5 minutes)
 #define BACKOFF_MULTIPLIER 2.0           // Exponential backoff multiplier
 
 // ============================================================================
