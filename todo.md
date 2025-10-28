@@ -53,7 +53,7 @@ Abort trap: 6
     - [ ] 'esc' doesn't show interrupted right away.
     - [ ] 'esc' should interrupt certain tools right away and dont wait
 - [ ] ctrl + c twice to exit. dont exit right away on ctrl + c
-- [ ] logs are not flushed often?
+- [x] logs are not flushed often?
 - [x] all log records should have session id tag. sessions are essential and each run has a new session id
 
 - [ ] rust build messes up the terminal
