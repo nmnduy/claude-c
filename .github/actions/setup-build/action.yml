@@ -1,0 +1,38 @@
+name: 'Setup Build Environment'
+description: 'Install dependencies for claude-c builds'
+inputs:
+  os:
+    description: 'Operating system'
+    required: true
+  compiler:
+    description: 'Compiler to use (gcc/clang)'
+    required: false
+    default: 'gcc'
+
+runs:
+  using: 'composite'
+  steps:
+  - name: Install dependencies (Ubuntu)
+    if: inputs.os == 'ubuntu-latest'
+    shell: bash
+    run: |
+      sudo apt-get update
+      sudo apt-get install -y libcurl4-openssl-dev libcjson-dev sqlite3 libsqlite3-dev build-essential
+      
+  - name: Install dependencies (macOS)
+    if: inputs.os == 'macos-latest'
+    shell: bash
+    run: |
+      brew install curl cjson sqlite3
+      
+  - name: Install dependencies (Windows)
+    if: inputs.os == 'windows-latest'
+    shell: powershell
+    run: |
+      # Install vcpkg for Windows dependencies
+      if (!(Test-Path vcpkg)) {
+        git clone https://github.com/Microsoft/vcpkg.git
+        ./vcpkg/bootstrap-vcpkg.bat
+      }
+      ./vcpkg integrate install
+      ./vcpkg install curl[crypto]:x64-windows cjson sqlite3:x64-windows
