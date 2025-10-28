@@ -2982,22 +2982,7 @@ static void process_response(ConversationState *state, cJSON *response, TUIState
 
 // Advanced input handler with readline-like keybindings
 static void interactive_mode(ConversationState *state) {
-    // Initialize colorscheme FIRST (before any colored output)
-    const char *theme = getenv("CLAUDE_C_THEME");
-    if (theme && strlen(theme) > 0) {
-        char theme_path[512];
-        snprintf(theme_path, sizeof(theme_path), "colorschemes/%s.conf", theme);
-        if (init_colorscheme(theme_path) != 0) {
-            LOG_WARN("Failed to load colorscheme '%s', using default", theme);
-        }
-    } else {
-        // Try to load default theme
-        if (init_colorscheme("colorschemes/kitty-default.conf") != 0) {
-            LOG_WARN("Failed to load default colorscheme");
-        }
-    }
-
-    // Display startup banner with theme colors
+    // Display startup banner with theme colors (colorscheme already initialized in main())
     char color_code[32];
     const char *banner_color;
     if (get_colorscheme_color(COLORSCHEME_ASSISTANT, color_code, sizeof(color_code)) == 0) {
@@ -3276,6 +3261,32 @@ int main(int argc, char *argv[]) {
     LOG_INFO("Application started");
     LOG_INFO("API URL: %s", api_base);
     LOG_INFO("Model: %s", model);
+
+    // Initialize colorscheme EARLY (before any colored output/spinners)
+    const char *theme = getenv("CLAUDE_C_THEME");
+    if (theme && strlen(theme) > 0) {
+        char theme_path[512];
+        // Check if theme is an absolute path or relative path
+        if (theme[0] == '/' || theme[0] == '~' || strstr(theme, ".conf")) {
+            // Absolute path or already has .conf extension - use as-is
+            snprintf(theme_path, sizeof(theme_path), "%s", theme);
+        } else {
+            // Relative name without extension - add colorschemes/ prefix and .conf extension
+            snprintf(theme_path, sizeof(theme_path), "colorschemes/%s.conf", theme);
+        }
+        if (init_colorscheme(theme_path) != 0) {
+            LOG_WARN("Failed to load colorscheme '%s', will use ANSI fallback colors", theme);
+        } else {
+            LOG_DEBUG("Colorscheme loaded successfully from: %s", theme_path);
+        }
+    } else {
+        // Try to load default theme
+        if (init_colorscheme("colorschemes/kitty-default.conf") != 0) {
+            LOG_DEBUG("No default colorscheme found, using ANSI fallback colors");
+        } else {
+            LOG_DEBUG("Default colorscheme loaded from: colorschemes/kitty-default.conf");
+        }
+    }
 
     // Initialize persistence layer
     PersistenceDB *persistence_db = persistence_init(NULL);  // NULL = use default path
