@@ -56,22 +56,22 @@ jobs:
         cp LICENSE claude-c-${{ matrix.name }}-x86_64/ 2>/dev/null || echo "No LICENSE file found"
 
         # Add installation instructions
-        cat > claude-c-${{ matrix.name }}-x86_64/INSTALL.txt << 'EOF'
-Claude C - Pure C Edition
-
-Installation:
-1. Extract the archive
-2. Copy claude-c to your desired location (e.g., /usr/local/bin)
-3. Make the binary executable: chmod +x claude-c
-4. Set your API key: export OPENAI_API_KEY="your-api-key"
-5. Run: ./claude-c "your prompt"
-
-Dependencies:
-- Linux: libcurl, cjson, sqlite3 (usually pre-installed)
-- macOS: brew install curl cjson sqlite3 (if needed)
-
-For more information, see README.md
-EOF
+        {
+          echo "Claude C - Pure C Edition"
+          echo ""
+          echo "Installation:"
+          echo "1. Extract the archive"
+          echo "2. Copy claude-c to your desired location (e.g., /usr/local/bin)"
+          echo "3. Make the binary executable: chmod +x claude-c"
+          echo "4. Set your API key: export OPENAI_API_KEY=\"your-api-key\""
+          echo "5. Run: ./claude-c \"your prompt\""
+          echo ""
+          echo "Dependencies:"
+          echo "- Linux: libcurl, cjson, sqlite3 (usually pre-installed)"
+          echo "- macOS: brew install curl cjson sqlite3 (if needed)"
+          echo ""
+          echo "For more information, see README.md"
+        } > claude-c-${{ matrix.name }}-x86_64/INSTALL.txt
 
     - name: Create archive
       run: |
