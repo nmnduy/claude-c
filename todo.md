@@ -1,6 +1,7 @@
 - [ ] fix release.yaml
 - [x] why so many linse between [Assistant] and everything else?
 
+- [ ] {"message":"Too many tokens, please wait before trying again."}. if api responded with this then handle appropriately
 - [ ] write state and logs to ./.claude-c by default
 - [x] ctrl + l to clear input box
 - [x] env var for custom log dir and api call db file
@@ -121,4 +122,7 @@ Abort trap: 6
 ∴ Thought for 1s (ctrl+o to show thinking)
 ```
 - [ ] where Search tool?
+- [ ] better Edit tool?
+    - [ ] use bash commands to find line range
+    - [ ] use bash commands to insert text at lines
 - [ ] add Sleep tool. agent can wait for certain thing to happen before continuing with work
