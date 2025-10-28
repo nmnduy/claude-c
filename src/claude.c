@@ -1711,11 +1711,16 @@ static cJSON* call_api(ConversationState *state) {
 
 #ifndef TEST_BUILD
     if (state->bedrock_config && state->bedrock_config->enabled) {
+        LOG_DEBUG("=== BEDROCK API CALL START ===");
+        LOG_DEBUG("Using AWS Bedrock endpoint: %s", state->api_url);
+        LOG_DEBUG("Model: %s, Region: %s", state->bedrock_config->model_id, state->bedrock_config->region);
+
         // Bedrock mode: use Bedrock endpoint directly (already includes /invoke path)
         snprintf(full_url, sizeof(full_url), "%s", state->api_url);
         using_bedrock = 1;
 
         // Convert OpenAI format to Bedrock/Anthropic format
+        LOG_DEBUG("Converting OpenAI request format to Bedrock/Anthropic format...");
         char *bedrock_payload = bedrock_convert_request(json_str);
         if (!bedrock_payload) {
             LOG_ERROR("Failed to convert request to Bedrock format");
@@ -1765,6 +1770,7 @@ static cJSON* call_api(ConversationState *state) {
 #ifndef TEST_BUILD
         if (using_bedrock && state->bedrock_config) {
             // Bedrock mode: use SigV4 signing
+            LOG_DEBUG("Signing Bedrock request with AWS SigV4...");
             headers = bedrock_sign_request(
                 headers,
                 "POST",
@@ -1785,7 +1791,7 @@ static cJSON* call_api(ConversationState *state) {
                 }
                 return NULL;
             }
-            LOG_DEBUG("Request signed with AWS SigV4");
+            LOG_DEBUG("Bedrock request signed successfully");
         } else
 #endif
         {
@@ -1871,6 +1877,56 @@ static cJSON* call_api(ConversationState *state) {
             return NULL;
         }
 
+        // Check HTTP status code - must be 2xx for success
+        if (http_status < 200 || http_status >= 300) {
+            LOG_ERROR("API returned HTTP error status: %ld", http_status);
+            LOG_DEBUG("Response body: %s", response.output);
+
+            char error_msg[256];
+            snprintf(error_msg, sizeof(error_msg), "HTTP error %ld", http_status);
+
+            // Log HTTP error
+            if (state->persistence_db) {
+                persistence_log_api_call(
+                    state->persistence_db,
+                    state->session_id,
+                    state->api_url,
+                    request_copy,
+                    response.output,
+                    state->model,
+                    "error",
+                    (int)http_status,
+                    error_msg,
+                    duration_ms,
+                    0
+                );
+            }
+
+            // Try to extract error message from response body if it's JSON
+            cJSON *error_json = cJSON_Parse(response.output);
+            if (error_json) {
+                cJSON *error_obj = cJSON_GetObjectItem(error_json, "error");
+                if (error_obj) {
+                    cJSON *message = cJSON_GetObjectItem(error_obj, "message");
+                    if (message && cJSON_IsString(message)) {
+                        snprintf(error_msg, sizeof(error_msg), "API error (%ld): %s",
+                                http_status, message->valuestring);
+                    }
+                }
+                cJSON_Delete(error_json);
+            }
+
+            print_error(error_msg);
+
+            free(request_copy);
+            free(json_str);
+            if (using_bedrock && api_payload != json_str) {
+                free(api_payload);
+            }
+            free(response.output);
+            return NULL;
+        }
+
         // Parse response
         struct timespec parse_start, parse_end;
         clock_gettime(CLOCK_MONOTONIC, &parse_start);
@@ -1934,7 +1990,6 @@ static cJSON* call_api(ConversationState *state) {
                 free(response.output);
                 return NULL;
             }
-            LOG_DEBUG("Converted Bedrock response to OpenAI format");
 
             // Debug: log key fields of converted response
             cJSON *choices = cJSON_GetObjectItem(converted_response, "choices");
@@ -1943,14 +1998,16 @@ static cJSON* call_api(ConversationState *state) {
                 cJSON *finish_reason = cJSON_GetObjectItem(choice, "finish_reason");
                 cJSON *message = cJSON_GetObjectItem(choice, "message");
                 if (finish_reason && cJSON_IsString(finish_reason)) {
-                    LOG_DEBUG("  finish_reason: %s", finish_reason->valuestring);
+                    LOG_DEBUG("Converted response - finish_reason: %s", finish_reason->valuestring);
                 }
                 if (message) {
                     cJSON *tool_calls = cJSON_GetObjectItem(message, "tool_calls");
                     int tc_count = tool_calls && cJSON_IsArray(tool_calls) ? cJSON_GetArraySize(tool_calls) : 0;
-                    LOG_DEBUG("  tool_calls count: %d", tc_count);
+                    LOG_DEBUG("Converted response - tool_calls count: %d", tc_count);
                 }
             }
+            LOG_DEBUG("Bedrock response conversion complete");
+            LOG_DEBUG("=== BEDROCK API CALL END ===");
 
             cJSON_Delete(json_response);
             json_response = converted_response;
