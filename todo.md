@@ -5,7 +5,7 @@
 - [x] ctrl + l to clear input box
 - [x] env var for custom log dir and api call db file
 - [ ] rotation for api call db files
-- [ ] pasting still fucks up the terminal
+- [x] pasting still fucks up the terminal
 - [ ] add retries to falied API calls
 - [ ] implement instruction queue. so user can keep typing
 
@@ -13,35 +13,6 @@
 ```sh
 [2025-10-28 02:18:55] [sess_1761635777_511588dc] WARN  [indicators.h:53] get_spinner_color_tool: Using fallback color for spinner (tool)
 ```
-
-```sh
-[Tool: Grep] "User.*printf" in /Users/dunguyen/fgit/claude-c/src
-[Assistant]
-Let me search for how user input is displayed in non-TUI mode:
-
-
-[Tool: Grep] "\[User\]" in /Users/dunguyen/fgit/claude-c/src
-[Assistant]
-Let me check the main non-TUI conversation flow:
-
-
-[Tool: Read] claude.c:2900-2950
-[Assistant]
-Let me continue reading the main function to find the non-TUI flow:
-
-
-[Tool: Read] claude.c:2950-3000
-
-[Tool: Read] claude.c:3000-3050
-[Assistant]
-Now let me find the `interactive_mode` function:
-
-
-[Tool: Grep] "interactive_mode" in /Users/dunguyen/fgit/claude-c/src
-
-[Tool: Read] claude.c:2735-2800
-```
-
 
 - [x] why does it fail with failed to resolve path. isn't that path same dir? log debug more when we see this to help fixing the problem. maybe unit test this tool more.
 ```sh
