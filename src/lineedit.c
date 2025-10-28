@@ -15,6 +15,7 @@
 #include <ctype.h>
 #include <sys/ioctl.h>
 #include <signal.h>
+#include <time.h>
 #include <sys/select.h>
 #include <errno.h>
 
@@ -97,7 +98,36 @@ static void restore_terminal(void) {
     }
 }
 
-// Signal handler for Ctrl+C, SIGTERM, etc.
+// Ctrl+C double-press tracking
+static volatile sig_atomic_t g_sigint_count = 0;
+static volatile time_t g_last_sigint_time = 0;
+#define SIGINT_TIMEOUT_SECONDS 2
+
+// Signal handler for Ctrl+C
+static void sigint_handler(int signum) {
+    (void)signum;  // Unused parameter
+
+    time_t now = time(NULL);
+
+    // Check if this is a second Ctrl+C within timeout
+    if (g_sigint_count > 0 && (now - g_last_sigint_time) <= SIGINT_TIMEOUT_SECONDS) {
+        // Second Ctrl+C detected - exit immediately
+        restore_terminal();
+        fprintf(stderr, "\nExiting...\n");
+        _exit(130);  // Standard exit code for SIGINT
+    }
+
+    // First Ctrl+C - set flag and display message
+    g_sigint_count = 1;
+    g_last_sigint_time = now;
+
+    // Display message (safe for signal handler - using write())
+    const char *msg = "\n^C (Press Ctrl+C again within 2 seconds to exit)\n";
+    ssize_t ret = write(STDERR_FILENO, msg, strlen(msg));
+    (void)ret;  // Ignore write result in signal handler
+}
+
+// Signal handler for other termination signals (SIGTERM, SIGHUP, SIGQUIT)
 static void signal_handler(int signum) {
     restore_terminal();
 
@@ -116,7 +146,7 @@ static void register_cleanup_handlers(void) {
     atexit(restore_terminal);
 
     // Register signal handlers for common termination signals
-    signal(SIGINT, signal_handler);   // Ctrl+C
+    signal(SIGINT, sigint_handler);   // Ctrl+C (double-press to exit)
     signal(SIGTERM, signal_handler);  // kill command
     signal(SIGHUP, signal_handler);   // Terminal hangup
     signal(SIGQUIT, signal_handler);  /* Ctrl+\ */
@@ -632,15 +662,15 @@ static int buffer_delete_range(LineEditor *ed, int start, int end) {
  * Handle completed paste - sanitize, optionally prompt, and insert into buffer
  * Returns: 1 if paste was accepted, 0 if rejected/error
  */
-static int handle_paste_complete(LineEditor *ed, PasteState *paste_state, 
+static int handle_paste_complete(LineEditor *ed, PasteState *paste_state,
                                  const char *prompt) {
     size_t paste_len = 0;
     const char *paste_content = paste_get_content(paste_state, &paste_len);
-    
+
     if (!paste_content || paste_len == 0) {
         return 0;
     }
-    
+
     // Create a copy for sanitization
     char *sanitized = malloc(paste_len + 1);
     if (!sanitized) {
@@ -649,7 +679,7 @@ static int handle_paste_complete(LineEditor *ed, PasteState *paste_state,
     }
     memcpy(sanitized, paste_content, paste_len);
     sanitized[paste_len] = '\0';
-    
+
     // Sanitize with default options
     PasteSanitizeOptions opts = {
         .remove_control_chars = 1,
@@ -658,7 +688,7 @@ static int handle_paste_complete(LineEditor *ed, PasteState *paste_state,
         .collapse_multiple_newlines = 1
     };
     size_t sanitized_len = paste_sanitize(sanitized, paste_len, &opts);
-    
+
     // For large pastes, prompt user
     if (sanitized_len > PASTE_WARN_THRESHOLD) {
         // Clear screen first to avoid display corruption
@@ -677,7 +707,7 @@ static int handle_paste_complete(LineEditor *ed, PasteState *paste_state,
 
         printf("\nPress \033[32m[y]\033[0m to accept paste: ");
         fflush(stdout);
-        
+
         // Read choice using read() instead of getchar() to work with raw mode
         unsigned char choice_buf;
         ssize_t ret = read(STDIN_FILENO, &choice_buf, 1);
@@ -686,7 +716,7 @@ static int handle_paste_complete(LineEditor *ed, PasteState *paste_state,
             return 0;
         }
         char choice = (char)choice_buf;
-        
+
         if (choice != 'y' && choice != 'Y') {
             printf("\n\033[33mPaste cancelled.\033[0m\n");
             free(sanitized);
@@ -701,7 +731,7 @@ static int handle_paste_complete(LineEditor *ed, PasteState *paste_state,
         // Give user time to see the message
         usleep(300000);  // 300ms
     }
-    
+
     // Check if paste will fit in buffer (with room for existing content)
     size_t needed = (size_t)ed->length + sanitized_len + 1;
     if (needed > ed->buffer_capacity) {
@@ -719,21 +749,21 @@ static int handle_paste_complete(LineEditor *ed, PasteState *paste_state,
         ed->buffer = new_buffer;
         ed->buffer_capacity = new_capacity;
     }
-    
+
     // Insert pasted content at cursor position
     if (ed->cursor < ed->length) {
         // Make room by shifting existing content
-        memmove(&ed->buffer[(size_t)ed->cursor + sanitized_len], 
-                &ed->buffer[ed->cursor], 
+        memmove(&ed->buffer[(size_t)ed->cursor + sanitized_len],
+                &ed->buffer[ed->cursor],
                 (size_t)(ed->length - ed->cursor + 1));
     }
-    
+
     // Copy sanitized paste into buffer
     memcpy(&ed->buffer[ed->cursor], sanitized, sanitized_len);
     ed->cursor += (int)sanitized_len;
     ed->length += (int)sanitized_len;
     ed->buffer[ed->length] = '\0';
-    
+
     free(sanitized);
 
     // Redraw line with pasted content
@@ -1104,7 +1134,7 @@ char* lineedit_readline(LineEditor *ed, const char *prompt) {
             }
         } else if (c >= 32) {
             // Printable character (ASCII or UTF-8)
-            
+
             // If in paste mode, buffer character instead of inserting
             if (paste_state->in_paste) {
                 if (paste_buffer_add_char(paste_state, (char)c) < 0) {
@@ -1115,7 +1145,7 @@ char* lineedit_readline(LineEditor *ed, const char *prompt) {
                 }
                 continue;
             }
-            
+
             unsigned char utf8_buffer[4];
             int char_bytes = 0;
 

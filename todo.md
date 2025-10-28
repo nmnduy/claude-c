@@ -25,13 +25,13 @@
 
 - [x] can we use ctrl + J for new line. what trick this node js claude used to achieve this?
 
-- [ ] 
+- [ ]
 Goodbye!
 claude-c(35580,0x209b9a0c0) malloc: *** error for object 0x6f: pointer being freed was not allocated
 claude-c(35580,0x209b9a0c0) malloc: *** set a breakpoint in malloc_error_break to debug
 Abort trap: 6
 
-- [x] 
+- [x]
 [Tool: Write] claude_todo_list_todo.md
 [Error] Write failed: Failed to resolve path
 [Tool: Write] claude_todo_list_todo.md
@@ -52,8 +52,8 @@ Abort trap: 6
 - [x] pressing Esc will wait for tool to finish but there is no indicator
     - [ ] 'esc' doesn't show interrupted right away.
     - [ ] 'esc' should interrupt certain tools right away and dont wait
-- [ ] ctrl + c twice to exit. dont exit right away on ctrl + c
 - [x] logs are not flushed often?
+- [x] ctrl + c twice to exit. dont exit right away on ctrl + c
 - [x] all log records should have session id tag. sessions are essential and each run has a new session id
 
 - [ ] rust build messes up the terminal
