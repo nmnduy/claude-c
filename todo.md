@@ -121,3 +121,4 @@ Abort trap: 6
 ∴ Thought for 1s (ctrl+o to show thinking)
 ```
 - [ ] where Search tool?
+- [ ] add Sleep tool. agent can wait for certain thing to happen before continuing with work
