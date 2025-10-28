@@ -224,6 +224,9 @@ void bedrock_config_free(BedrockConfig *config) {
 }
 
 AWSCredentials* bedrock_load_credentials(const char *profile, const char *region) {
+    LOG_DEBUG("=== AWS CREDENTIAL LOADING START ===");
+    LOG_DEBUG("Requested profile: %s, region: %s", profile ? profile : "default", region ? region : "default");
+
     AWSCredentials *creds = calloc(1, sizeof(AWSCredentials));
     if (!creds) {
         LOG_ERROR("Failed to allocate AWSCredentials");
@@ -231,22 +234,47 @@ AWSCredentials* bedrock_load_credentials(const char *profile, const char *region
     }
 
     // Try environment variables first
+    LOG_DEBUG("Attempting to load credentials from environment variables...");
     const char *access_key = getenv(ENV_AWS_ACCESS_KEY_ID);
     const char *secret_key = getenv(ENV_AWS_SECRET_ACCESS_KEY);
     const char *session_token = getenv(ENV_AWS_SESSION_TOKEN);
 
     if (access_key && secret_key) {
+        LOG_DEBUG("Found credentials in environment variables");
         creds->access_key_id = strdup(access_key);
         creds->secret_access_key = strdup(secret_key);
         if (session_token) {
             creds->session_token = strdup(session_token);
         }
         creds->region = strdup(region ? region : "us-west-2");
+        creds->profile = strdup(profile ? profile : "default");
         LOG_INFO("Loaded AWS credentials from environment variables");
-        return creds;
+
+        // Validate credentials before returning
+        if (bedrock_validate_credentials(creds, creds->profile) == 1) {
+            LOG_INFO("AWS credentials validated successfully");
+            return creds;
+        } else {
+            LOG_WARN("AWS credentials from environment are invalid or expired");
+            LOG_DEBUG("Falling back to next credential source...");
+            bedrock_creds_free(creds);
+            creds = NULL;
+            // Fall through to try other methods
+        }
+    } else {
+        LOG_DEBUG("No credentials found in environment variables");
+    }
+
+    if (!creds) {
+        creds = calloc(1, sizeof(AWSCredentials));
+        if (!creds) {
+            LOG_ERROR("Failed to allocate AWSCredentials");
+            return NULL;
+        }
     }
 
     // Try AWS CLI to get credentials (use export-credentials for temp creds support)
+    LOG_DEBUG("Attempting to load credentials from AWS CLI export-credentials...");
     char command[512];
     const char *profile_arg = profile ? profile : "default";
 
@@ -282,13 +310,30 @@ AWSCredentials* bedrock_load_credentials(const char *profile, const char *region
             creds->profile = strdup(profile_arg);
             LOG_INFO("Loaded AWS credentials from AWS CLI (profile: %s, with_session_token: %s)",
                      profile_arg, creds->session_token ? "yes" : "no");
-            return creds;
+
+            // Validate credentials before returning
+            if (bedrock_validate_credentials(creds, profile_arg) == 1) {
+                LOG_INFO("AWS credentials validated successfully");
+                return creds;
+            } else {
+                LOG_WARN("AWS credentials from CLI are invalid or expired");
+                LOG_DEBUG("Falling back to next credential source...");
+                bedrock_creds_free(creds);
+                creds = calloc(1, sizeof(AWSCredentials));
+                if (!creds) {
+                    LOG_ERROR("Failed to allocate AWSCredentials");
+                    return NULL;
+                }
+                // Fall through to try other methods
+            }
         }
     } else {
+        LOG_DEBUG("No credentials found via export-credentials");
         free(export_output);
     }
 
     // Fallback: Try aws configure get for static credentials
+    LOG_DEBUG("Attempting to load credentials from AWS CLI configure get...");
     snprintf(command, sizeof(command),
              "aws configure get aws_access_key_id --profile %s 2>/dev/null",
              profile_arg);
@@ -305,13 +350,30 @@ AWSCredentials* bedrock_load_credentials(const char *profile, const char *region
         creds->region = strdup(region ? region : "us-west-2");
         creds->profile = strdup(profile_arg);
         LOG_INFO("Loaded AWS credentials from AWS CLI config (profile: %s)", profile_arg);
-        return creds;
+
+        // Validate credentials before returning
+        if (bedrock_validate_credentials(creds, profile_arg) == 1) {
+            LOG_INFO("AWS credentials validated successfully");
+            return creds;
+        } else {
+            LOG_WARN("AWS credentials from config are invalid or expired");
+            LOG_DEBUG("Falling back to SSO credential source...");
+            bedrock_creds_free(creds);
+            creds = calloc(1, sizeof(AWSCredentials));
+            if (!creds) {
+                LOG_ERROR("Failed to allocate AWSCredentials");
+                return NULL;
+            }
+            // Fall through to try SSO
+        }
+    } else {
+        LOG_DEBUG("No static credentials found in AWS config");
+        free(key_id);
+        free(secret);
     }
 
-    free(key_id);
-    free(secret);
-
     // Try AWS SSO
+    LOG_DEBUG("Attempting to load credentials via AWS SSO...");
     LOG_INFO("Attempting to load credentials via AWS SSO for profile: %s", profile_arg);
 
     // Check if profile uses SSO
@@ -321,6 +383,7 @@ AWSCredentials* bedrock_load_credentials(const char *profile, const char *region
     char *sso_url = exec_command(command);
 
     if (sso_url && strlen(sso_url) > 0) {
+        LOG_DEBUG("Profile %s has SSO configuration: %s", profile_arg, sso_url);
         LOG_INFO("Profile %s uses AWS SSO, attempting to get cached credentials", profile_arg);
         free(sso_url);
 
@@ -349,23 +412,45 @@ AWSCredentials* bedrock_load_credentials(const char *profile, const char *region
                 creds->region = strdup(region ? region : "us-west-2");
                 creds->profile = strdup(profile_arg);
                 LOG_INFO("Loaded AWS credentials from SSO cache");
-                return creds;
+
+                // Validate SSO credentials before returning
+                if (bedrock_validate_credentials(creds, profile_arg) == 1) {
+                    LOG_INFO("SSO credentials validated successfully");
+                    return creds;
+                } else {
+                    LOG_WARN("SSO credentials from cache are invalid or expired");
+                    LOG_DEBUG("Triggering SSO authentication to refresh credentials...");
+                    bedrock_creds_free(creds);
+
+                    // Credentials are invalid, authenticate and retry
+                    if (bedrock_authenticate(profile_arg) == 0) {
+                        LOG_DEBUG("Retrying credential load after authentication...");
+                        // Retry loading credentials after authentication
+                        return bedrock_load_credentials(profile, region);
+                    }
+                    return NULL;
+                }
             }
         } else {
+            LOG_DEBUG("No SSO credentials in export-credentials output");
             free(sso_export_output);
         }
 
-        // SSO credentials not found, need to authenticate
-        LOG_WARN("AWS SSO credentials not found or expired for profile: %s", profile_arg);
+        // SSO credentials not found in cache, need to authenticate
+        LOG_DEBUG("SSO credentials not in cache, authentication required");
+        LOG_WARN("AWS SSO credentials not found in cache for profile: %s", profile_arg);
         if (bedrock_authenticate(profile_arg) == 0) {
+            LOG_DEBUG("Retrying credential load after authentication...");
             // Retry loading credentials after authentication
             return bedrock_load_credentials(profile, region);
         }
     } else {
+        LOG_DEBUG("Profile %s does not use SSO", profile_arg);
         free(sso_url);
     }
 
     LOG_ERROR("Failed to load AWS credentials from any source");
+    LOG_DEBUG("=== AWS CREDENTIAL LOADING FAILED ===");
     bedrock_creds_free(creds);
     return NULL;
 }
@@ -388,20 +473,24 @@ int bedrock_validate_credentials(AWSCredentials *creds, const char *profile) {
 
     (void)profile;  // Unused parameter
 
-    // Set environment variables for the validation call
-    char env_cmd[1024];
-    snprintf(env_cmd, sizeof(env_cmd),
-             "AWS_ACCESS_KEY_ID='%s' AWS_SECRET_ACCESS_KEY='%s' %s aws sts get-caller-identity --region %s 2>&1",
-             creds->access_key_id,
-             creds->secret_access_key,
-             creds->session_token ? "AWS_SESSION_TOKEN='" : "",
-             creds->region ? creds->region : "us-west-2");
-
+    // Build command properly with session token if present
+    char env_cmd[2048];
     if (creds->session_token) {
-        strncat(env_cmd, creds->session_token, sizeof(env_cmd) - strlen(env_cmd) - 1);
-        strncat(env_cmd, "' ", sizeof(env_cmd) - strlen(env_cmd) - 1);
+        snprintf(env_cmd, sizeof(env_cmd),
+                 "AWS_ACCESS_KEY_ID='%s' AWS_SECRET_ACCESS_KEY='%s' AWS_SESSION_TOKEN='%s' aws sts get-caller-identity --region %s 2>&1",
+                 creds->access_key_id,
+                 creds->secret_access_key,
+                 creds->session_token,
+                 creds->region ? creds->region : "us-west-2");
+    } else {
+        snprintf(env_cmd, sizeof(env_cmd),
+                 "AWS_ACCESS_KEY_ID='%s' AWS_SECRET_ACCESS_KEY='%s' aws sts get-caller-identity --region %s 2>&1",
+                 creds->access_key_id,
+                 creds->secret_access_key,
+                 creds->region ? creds->region : "us-west-2");
     }
 
+    LOG_DEBUG("Validating credentials with command: %s", env_cmd);
     char *output = exec_command(env_cmd);
     int valid = 0;
 
@@ -409,13 +498,18 @@ int bedrock_validate_credentials(AWSCredentials *creds, const char *profile) {
         // Check if output contains error messages
         if (strstr(output, "ExpiredToken") || strstr(output, "InvalidToken") ||
             strstr(output, "AccessDenied")) {
-            LOG_WARN("AWS credentials are invalid or expired");
+            LOG_WARN("AWS credentials are invalid or expired: %s", output);
             valid = 0;
         } else if (strstr(output, "UserId") || strstr(output, "Account")) {
             LOG_INFO("AWS credentials validated successfully");
             valid = 1;
+        } else {
+            LOG_WARN("Unexpected output from credential validation: %s", output);
+            valid = 0;
         }
         free(output);
+    } else {
+        LOG_WARN("Failed to execute credential validation command");
     }
 
     return valid;
@@ -423,14 +517,16 @@ int bedrock_validate_credentials(AWSCredentials *creds, const char *profile) {
 
 int bedrock_authenticate(const char *profile) {
     // Log authentication attempt at the start
+    LOG_DEBUG("=== AWS AUTHENTICATION START ===");
     LOG_INFO("Authenticating with AWS Bedrock (profile: %s)", profile ? profile : "default");
-    
+
     // Check for custom authentication command first
     const char *custom_auth_cmd = getenv(ENV_AWS_AUTH_COMMAND);
     char command[1024];
 
     if (custom_auth_cmd && strlen(custom_auth_cmd) > 0) {
         // Use custom authentication command
+        LOG_DEBUG("Using custom authentication command: %s", custom_auth_cmd);
         LOG_INFO("Using custom authentication command from AWS_AUTH_COMMAND");
         printf("\nAWS credentials not found or expired. Starting authentication...\n");
         printf("Running custom auth command...\n\n");
@@ -443,6 +539,7 @@ int bedrock_authenticate(const char *profile) {
             if (!profile) profile = "default";
         }
 
+        LOG_DEBUG("Using AWS SSO login for profile: %s", profile);
         LOG_INFO("Starting AWS SSO login for profile: %s", profile);
         printf("\nAWS credentials not found or expired. Starting authentication...\n");
         printf("Running: aws sso login --profile %s\n\n", profile);
@@ -450,13 +547,16 @@ int bedrock_authenticate(const char *profile) {
         snprintf(command, sizeof(command), "aws sso login --profile %s", profile);
     }
 
+    LOG_DEBUG("Executing authentication command...");
     int result = system(command);
 
     if (result == 0) {
+        LOG_DEBUG("Authentication command completed with exit code 0");
         LOG_INFO("Authentication completed successfully");
         printf("\nAuthentication successful! Continuing...\n\n");
         return 0;
     } else {
+        LOG_DEBUG("Authentication command failed with exit code %d", result);
         LOG_ERROR("Authentication failed with exit code: %d", result);
         printf("\nAuthentication failed. Please check your AWS configuration.\n");
         return -1;
@@ -919,6 +1019,10 @@ struct curl_slist* bedrock_sign_request(
         return NULL;
     }
 
+    LOG_DEBUG("=== AWS SIGV4 REQUEST SIGNING START ===");
+    LOG_DEBUG("Signing request: %s %s (region=%s, service=%s, has_session_token=%s)",
+              method, url, region, service, creds->session_token ? "yes" : "no");
+
     // Get timestamps
     char *timestamp = get_iso8601_timestamp();
     char *datestamp = get_date_stamp();
@@ -1045,6 +1149,8 @@ struct curl_slist* bedrock_sign_request(
         snprintf(token_header, sizeof(token_header), "x-amz-security-token: %s", creds->session_token);
         headers = curl_slist_append(headers, token_header);
     }
+
+    LOG_DEBUG("Request signed successfully with AWS SigV4");
 
     // Cleanup
     free(timestamp);
