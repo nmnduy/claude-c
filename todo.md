@@ -1,5 +1,6 @@
 - [x] why so many linse between [Assistant] and everything else?
 
+- [ ] ctrl + l to clear input box
 - [ ] implement instruction queue. so user can keep typing
 
 ```sh
