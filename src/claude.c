@@ -1179,6 +1179,11 @@ STATIC cJSON* tool_todo_write(cJSON *params, ConversationState *state) {
         }
     }
 
+    // Render the updated todo list to terminal
+    if (added > 0) {
+        todo_render(state->todo_list);
+    }
+
     cJSON *result = cJSON_CreateObject();
     cJSON_AddStringToObject(result, "status", "success");
     cJSON_AddNumberToObject(result, "added", added);
