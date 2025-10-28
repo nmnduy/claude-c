@@ -17,51 +17,7 @@ A lightweight, modular implementation of a coding agent that interacts with an O
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────┐
-│         Main Entry Point                │
-│  - CLI argument parsing                 │
-│  - Environment setup                    │
-└─────────────┬───────────────────────────┘
-              │
-┌─────────────▼───────────────────────────┐
-│      Conversation Loop                  │
-│  - Message management                   │
-│  - API request/response handling        │
-└─────────────┬───────────────────────────┘
-              │
-    ┌─────────┼─────────┐
-    │                   │
-┌───▼──────────┐  ┌────▼──────────────┐
-│  API Client  │  │  Tool Executor    │
-│  - libcurl   │  │  - Bash           │
-│  - cJSON     │  │  - Read/Write     │
-│  - Logging   │  │  - Edit           │
-└──────────────┘  │  - Glob/Grep      │
-                  └───────────────────┘
-              │
-    ┌─────────┼─────────┐
-    │                   │
-┌───▼──────────┐  ┌────▼──────────────┐
-│   TUI/Theme  │  │   Persistence     │
-│  - Colors    │  │  - API history    │
-│  - Config    │  │  - Session data    │
-└──────────────┘  └───────────────────┘
-```
-
-### Module Structure
-
-```
-src/
-├── claude.c         # Main entry point and conversation loop
-├── commands.c       # Command-line argument parsing
-├── completion.c     # Auto-completion system
-├── lineedit.c       # Line editing and input handling
-├── logger.c         # Logging infrastructure
-├── migrations.c     # Data migration utilities
-├── persistence.c    # Data persistence and history
-└── tui.c           # Terminal UI and theme system
-```
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for detailed system architecture, module structure, and component design.
 
 ## Dependencies
 
