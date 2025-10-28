@@ -1,6 +1,7 @@
-- [ ] rewrite release.yaml
+- [ ] fix release.yaml
 - [x] why so many linse between [Assistant] and everything else?
 
+- [ ] write state and logs to ./.claude-c by default
 - [x] ctrl + l to clear input box
 - [x] env var for custom log dir and api call db file
 - [ ] rotation for api call db files
