@@ -223,8 +223,21 @@ void bedrock_config_free(BedrockConfig *config) {
     free(config);
 }
 
+// Internal helper with recursion depth tracking
+static AWSCredentials* bedrock_load_credentials_internal(const char *profile, const char *region, int depth);
+
 AWSCredentials* bedrock_load_credentials(const char *profile, const char *region) {
-    LOG_DEBUG("=== AWS CREDENTIAL LOADING START ===");
+    return bedrock_load_credentials_internal(profile, region, 0);
+}
+
+static AWSCredentials* bedrock_load_credentials_internal(const char *profile, const char *region, int depth) {
+    // Prevent infinite recursion
+    if (depth > 1) {
+        LOG_ERROR("Maximum credential loading retry depth exceeded");
+        return NULL;
+    }
+
+    LOG_DEBUG("=== AWS CREDENTIAL LOADING START (depth=%d) ===", depth);
     LOG_DEBUG("Requested profile: %s, region: %s", profile ? profile : "default", region ? region : "default");
 
     AWSCredentials *creds = calloc(1, sizeof(AWSCredentials));
@@ -426,7 +439,7 @@ AWSCredentials* bedrock_load_credentials(const char *profile, const char *region
                     if (bedrock_authenticate(profile_arg) == 0) {
                         LOG_DEBUG("Retrying credential load after authentication...");
                         // Retry loading credentials after authentication
-                        return bedrock_load_credentials(profile, region);
+                        return bedrock_load_credentials_internal(profile, region, depth + 1);
                     }
                     return NULL;
                 }
@@ -442,7 +455,7 @@ AWSCredentials* bedrock_load_credentials(const char *profile, const char *region
         if (bedrock_authenticate(profile_arg) == 0) {
             LOG_DEBUG("Retrying credential load after authentication...");
             // Retry loading credentials after authentication
-            return bedrock_load_credentials(profile, region);
+            return bedrock_load_credentials_internal(profile, region, depth + 1);
         }
     } else {
         LOG_DEBUG("Profile %s does not use SSO", profile_arg);
@@ -496,7 +509,9 @@ int bedrock_validate_credentials(AWSCredentials *creds, const char *profile) {
 
     if (output) {
         // Check if output contains error messages
-        if (strstr(output, "ExpiredToken") || strstr(output, "InvalidToken") ||
+        if (strstr(output, "ExpiredToken") || 
+            strstr(output, "InvalidToken") ||
+            strstr(output, "InvalidClientTokenId") ||
             strstr(output, "AccessDenied")) {
             LOG_WARN("AWS credentials are invalid or expired: %s", output);
             valid = 0;
@@ -526,6 +541,8 @@ int bedrock_authenticate(const char *profile) {
 
     if (custom_auth_cmd && strlen(custom_auth_cmd) > 0) {
         // Use custom authentication command
+        LOG_INFO("=== AWS AUTHENTICATION USING CUSTOM COMMAND ===");
+        LOG_INFO("AWS_AUTH_COMMAND=%s", custom_auth_cmd);
         LOG_DEBUG("Using custom authentication command: %s", custom_auth_cmd);
         LOG_INFO("Using custom authentication command from AWS_AUTH_COMMAND");
         printf("\nAWS credentials not found or expired. Starting authentication...\n");
@@ -561,6 +578,75 @@ int bedrock_authenticate(const char *profile) {
         printf("\nAuthentication failed. Please check your AWS configuration.\n");
         return -1;
     }
+}
+
+int bedrock_handle_auth_error(BedrockConfig *config, long http_status, const char *error_message) {
+    if (!config || !error_message) {
+        return 0;
+    }
+
+    // Check if this is a 400 or 403 error that might indicate expired AWS credentials
+    if (http_status != 400 && http_status != 403) {
+        return 0;
+    }
+
+    // Check for AWS authentication error patterns
+    int is_auth_error = 0;
+    if (strstr(error_message, "ExpiredToken") ||
+        strstr(error_message, "InvalidToken") ||
+        strstr(error_message, "InvalidClientTokenId") ||
+        strstr(error_message, "AccessDenied") ||
+        strstr(error_message, "TokenExpired") ||
+        strstr(error_message, "SignatureDoesNotMatch")) {
+        is_auth_error = 1;
+    }
+
+    if (!is_auth_error) {
+        return 0;
+    }
+
+    // Try to refresh AWS credentials
+    LOG_WARN("Detected AWS authentication error (HTTP %ld), attempting credential refresh", http_status);
+    printf("\nAWS credentials may be expired. Attempting to refresh...\n");
+
+    // Determine which profile to use for authentication
+    const char *profile = NULL;
+    if (config->creds && config->creds->profile) {
+        profile = config->creds->profile;
+    }
+
+    // Attempt to re-authenticate
+    int auth_result = bedrock_authenticate(profile);
+    if (auth_result != 0) {
+        LOG_ERROR("AWS credential refresh failed");
+        return 0;
+    }
+
+    // Authentication successful, reload credentials
+    LOG_INFO("Credential refresh successful, reloading AWS credentials");
+
+    // Store region before freeing old credentials
+    const char *region = config->region;
+
+    // Free old credentials
+    if (config->creds) {
+        bedrock_creds_free(config->creds);
+        config->creds = NULL;
+    }
+
+    // Reload credentials
+    AWSCredentials *new_creds = bedrock_load_credentials(profile, region);
+    if (!new_creds) {
+        LOG_ERROR("Failed to reload AWS credentials after authentication");
+        return 0;
+    }
+
+    // Update config with fresh credentials
+    config->creds = new_creds;
+
+    printf("Credentials refreshed. Retrying request...\n\n");
+    LOG_INFO("AWS credentials successfully refreshed and reloaded");
+    return 1;  // Signal that retry is appropriate
 }
 
 char* bedrock_build_endpoint(const char *region, const char *model_id) {
