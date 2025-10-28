@@ -3087,9 +3087,20 @@ int main(int argc, char *argv[]) {
         printf("  %s -h, --help    Show this help message\n", argv[0]);
         printf("  %s --version     Show version information\n\n", argv[0]);
         printf("Environment Variables:\n");
-        printf("  OPENAI_API_KEY       Required: Your OpenAI API key\n");
-        printf("  OPENAI_API_BASE      Optional: API base URL (default: %s)\n", API_BASE_URL);
-        printf("  OPENAI_MODEL         Optional: Model name (default: %s)\n\n", DEFAULT_MODEL);
+        printf("  API Configuration:\n");
+        printf("    OPENAI_API_KEY       Required: Your OpenAI API key\n");
+        printf("    OPENAI_API_BASE      Optional: API base URL (default: %s)\n", API_BASE_URL);
+        printf("    OPENAI_MODEL         Optional: Model name (default: %s)\n", DEFAULT_MODEL);
+        printf("    ANTHROPIC_MODEL      Alternative: Model name (fallback if OPENAI_MODEL not set)\n");
+        printf("    DISABLE_PROMPT_CACHING  Optional: Set to 1 to disable prompt caching\n\n");
+        printf("  Logging and Persistence:\n");
+        printf("    CLAUDE_C_LOG_PATH    Optional: Full path to log file\n");
+        printf("    CLAUDE_C_LOG_DIR     Optional: Directory for logs (uses claude.log filename)\n");
+        printf("    CLAUDE_LOG_LEVEL     Optional: Log level (DEBUG, INFO, WARN, ERROR)\n");
+        printf("    CLAUDE_C_DB_PATH     Optional: Path to SQLite database for API history\n");
+        printf("                         Default: ~/.local/share/claude-c/api_calls.db\n\n");
+        printf("  UI Customization:\n");
+        printf("    CLAUDE_C_THEME       Optional: Path to Kitty theme file\n\n");
         return 0;
     }
 
