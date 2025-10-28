@@ -2,6 +2,8 @@
 
 A lightweight, modular implementation of a coding agent that interacts with an Open API compatible API. This is a pure C port of the core functionality from the TypeScript/Node.js Claude Code CLI.
 
+![claude-c preview](assets/images/claude-c-preview.webp)
+
 ## Features
 
 - **Modular architecture**: Clean separation into focused modules (~2000+ lines total)
@@ -484,6 +486,8 @@ Typical performance on modern hardware:
 - API call: 1-5 seconds (depends on prompt complexity)
 - Tool execution: Varies by tool
 - Memory usage: ~10-20MB for typical conversation (modular architecture)
+
+![Memory usage analysis](assets/images/claude-c-memory-usage.webp)
 
 ### Performance Notes
 
