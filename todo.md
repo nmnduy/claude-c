@@ -2,6 +2,7 @@
 - [x] why so many linse between [Assistant] and everything else?
 
 - [x] ctrl + l to clear input box
+- [ ] env var for custom log dir and DB files
 - [ ] pasting still fucks up the terminal
 - [ ] add retries to falied API calls
 - [ ] implement instruction queue. so user can keep typing
