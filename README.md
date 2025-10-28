@@ -482,9 +482,7 @@ For production use, consider the official TypeScript version with full features.
 ## Performance
 
 Typical performance on modern hardware:
-- Startup: < 50ms (module loading overhead)
-- API call: 1-5 seconds (depends on prompt complexity)
-- Tool execution: Varies by tool
+- CPU: barely registers
 - Memory usage: ~10-20MB for typical conversation (modular architecture)
 
 ![Memory usage analysis](assets/images/claude-c-memory-usage.webp)
