@@ -15,18 +15,13 @@ jobs:
         compiler: [gcc, clang]
         
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
     
-    - name: Install dependencies (Ubuntu)
-      if: matrix.os == 'ubuntu-latest'
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y libcurl4-openssl-dev libcjson-dev sqlite3 libsqlite3-dev
-        
-    - name: Install dependencies (macOS)
-      if: matrix.os == 'macos-latest'
-      run: |
-        brew install curl cjson sqlite3
+    - name: Setup build environment
+      uses: ./.github/actions/setup-build
+      with:
+        os: ${{ matrix.os }}
+        compiler: ${{ matrix.compiler }}
         
     - name: Build with ${{ matrix.compiler }}
       run: |
