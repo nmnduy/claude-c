@@ -75,6 +75,11 @@ static void persistence_log_api_call(
 // TUI module
 #include "tui.h"
 
+// AWS Bedrock support
+#ifndef TEST_BUILD
+#include "aws_bedrock.h"
+#endif
+
 #ifdef TEST_BUILD
 #define main claude_main
 #endif
@@ -1693,9 +1698,33 @@ static cJSON* call_api(ConversationState *state) {
         return NULL;
     }
 
-    // Build full API URL by appending endpoint to base
+    // Build full API URL and prepare request payload
     char full_url[512];
-    snprintf(full_url, sizeof(full_url), "%s/v1/chat/completions", state->api_url);
+    char *api_payload = json_str;  // Default: use OpenAI format
+    int using_bedrock = 0;
+
+#ifndef TEST_BUILD
+    if (state->bedrock_config && state->bedrock_config->enabled) {
+        // Bedrock mode: use Bedrock endpoint directly (already includes /invoke path)
+        snprintf(full_url, sizeof(full_url), "%s", state->api_url);
+        using_bedrock = 1;
+
+        // Convert OpenAI format to Bedrock/Anthropic format
+        char *bedrock_payload = bedrock_convert_request(json_str);
+        if (!bedrock_payload) {
+            LOG_ERROR("Failed to convert request to Bedrock format");
+            free(request_copy);
+            free(json_str);
+            return NULL;
+        }
+        api_payload = bedrock_payload;
+        LOG_DEBUG("Converted request to Bedrock format (payload size: %zu bytes)", strlen(api_payload));
+    } else
+#endif
+    {
+        // Standard OpenAI mode: append /v1/chat/completions to base URL
+        snprintf(full_url, sizeof(full_url), "%s/v1/chat/completions", state->api_url);
+    }
 
     // Retry loop for handling rate limits
     while (retry_count <= MAX_RETRIES) {
@@ -1708,21 +1737,54 @@ static cJSON* call_api(ConversationState *state) {
             LOG_ERROR("Failed to initialize CURL");
             free(json_str);
             free(request_copy);
+            if (using_bedrock && api_payload != json_str) {
+                free(api_payload);
+            }
             return NULL;
         }
 
-        // Set up headers for OpenAI-compatible API
+        // Set up headers
         struct curl_slist *headers = NULL;
-        headers = curl_slist_append(headers, "Content-Type: application/json");
 
-        char auth_header[512];
-        snprintf(auth_header, sizeof(auth_header), "Authorization: Bearer %s", state->api_key);
-        headers = curl_slist_append(headers, auth_header);
+#ifndef TEST_BUILD
+        if (using_bedrock && state->bedrock_config) {
+            // Bedrock mode: use SigV4 signing
+            headers = bedrock_sign_request(
+                headers,
+                "POST",
+                full_url,
+                api_payload,
+                state->bedrock_config->creds,
+                state->bedrock_config->region,
+                AWS_BEDROCK_SERVICE
+            );
+
+            if (!headers) {
+                LOG_ERROR("Failed to sign Bedrock request");
+                curl_easy_cleanup(curl);
+                free(json_str);
+                free(request_copy);
+                if (api_payload != json_str) {
+                    free(api_payload);
+                }
+                return NULL;
+            }
+            LOG_DEBUG("Request signed with AWS SigV4");
+        } else
+#endif
+        {
+            // Standard mode: use Bearer token
+            headers = curl_slist_append(headers, "Content-Type: application/json");
+
+            char auth_header[512];
+            snprintf(auth_header, sizeof(auth_header), "Authorization: Bearer %s", state->api_key);
+            headers = curl_slist_append(headers, auth_header);
+        }
 
         // Configure CURL
         curl_easy_setopt(curl, CURLOPT_URL, full_url);
         curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-        curl_easy_setopt(curl, CURLOPT_POSTFIELDS, json_str);
+        curl_easy_setopt(curl, CURLOPT_POSTFIELDS, api_payload);
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
 
@@ -1801,6 +1863,13 @@ static cJSON* call_api(ConversationState *state) {
         if (!json_response) {
             LOG_ERROR("Failed to parse JSON response");
 
+#ifndef TEST_BUILD
+            // If Bedrock mode, the response format might be different
+            if (using_bedrock) {
+                LOG_DEBUG("Bedrock raw response: %s", response.output);
+            }
+#endif
+
             // Log parsing error
             if (state->persistence_db) {
                 persistence_log_api_call(
@@ -1820,9 +1889,33 @@ static cJSON* call_api(ConversationState *state) {
 
             free(request_copy);
             free(json_str);
+            if (using_bedrock && api_payload != json_str) {
+                free(api_payload);
+            }
             free(response.output);
             return NULL;
         }
+
+#ifndef TEST_BUILD
+        // Convert Bedrock response to OpenAI format if using Bedrock
+        if (using_bedrock) {
+            cJSON *converted_response = bedrock_convert_response(response.output);
+            if (!converted_response) {
+                LOG_ERROR("Failed to convert Bedrock response to OpenAI format");
+                cJSON_Delete(json_response);
+                free(request_copy);
+                free(json_str);
+                if (api_payload != json_str) {
+                    free(api_payload);
+                }
+                free(response.output);
+                return NULL;
+            }
+            LOG_DEBUG("Converted Bedrock response to OpenAI format");
+            cJSON_Delete(json_response);
+            json_response = converted_response;
+        }
+#endif
 
         // Check for API error response
         cJSON *error = cJSON_GetObjectItem(json_response, "error");
@@ -1967,6 +2060,9 @@ static cJSON* call_api(ConversationState *state) {
 
         free(request_copy);
         free(json_str);
+        if (using_bedrock && api_payload != json_str) {
+            free(api_payload);
+        }
         free(response.output);
 
         // Log total API call duration
@@ -1982,6 +2078,9 @@ static cJSON* call_api(ConversationState *state) {
     // Max retries exceeded (shouldn't reach here normally)
     free(request_copy);
     free(json_str);
+    if (using_bedrock && api_payload != json_str) {
+        free(api_payload);
+    }
     LOG_ERROR("API call failed after %d retries", MAX_RETRIES);
     return NULL;
 }
@@ -2983,22 +3082,58 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    // Check for API key
-    const char *api_key = getenv("OPENAI_API_KEY");
-    if (!api_key) {
-        LOG_ERROR("OPENAI_API_KEY environment variable not set");
-        return 1;
-    }
+#ifndef TEST_BUILD
+    // Check if Bedrock mode is enabled
+    int use_bedrock = bedrock_is_enabled();
+#else
+    int use_bedrock = 0;
+#endif
 
-    // Get optional API base and model from environment
-    const char *api_base = getenv("OPENAI_API_BASE");
-    if (!api_base) {
-        api_base = API_BASE_URL;
-    }
+    const char *api_key = NULL;
+    const char *api_base = NULL;
+    const char *model = NULL;
 
-    const char *model = getenv("OPENAI_MODEL");
-    if (!model) {
-        model = DEFAULT_MODEL;
+    if (use_bedrock) {
+        // Bedrock mode: API key not required, credentials loaded separately
+        // Get model from ANTHROPIC_MODEL environment variable
+        model = getenv("ANTHROPIC_MODEL");
+        if (!model) {
+            LOG_ERROR("ANTHROPIC_MODEL environment variable required when using AWS Bedrock");
+            fprintf(stderr, "Error: ANTHROPIC_MODEL environment variable not set\n");
+            fprintf(stderr, "Example: export ANTHROPIC_MODEL=us.anthropic.claude-sonnet-4-5-20250929-v1:0\n");
+            return 1;
+        }
+        // API key and base URL will be handled by Bedrock module
+        api_key = "bedrock";  // Placeholder
+        api_base = "bedrock"; // Will be overridden by Bedrock endpoint
+        LOG_INFO("Bedrock mode enabled, using model: %s", model);
+    } else {
+        // Standard mode: check for API key
+        api_key = getenv("OPENAI_API_KEY");
+        if (!api_key) {
+            LOG_ERROR("OPENAI_API_KEY environment variable not set");
+            fprintf(stderr, "Error: OPENAI_API_KEY environment variable not set\n");
+            fprintf(stderr, "\nTo use AWS Bedrock instead, set:\n");
+            fprintf(stderr, "  export CLAUDE_CODE_USE_BEDROCK=true\n");
+            fprintf(stderr, "  export ANTHROPIC_MODEL=us.anthropic.claude-sonnet-4-5-20250929-v1:0\n");
+            fprintf(stderr, "  export AWS_REGION=us-west-2\n");
+            fprintf(stderr, "  export AWS_PROFILE=your-profile\n");
+            return 1;
+        }
+
+        // Get optional API base and model from environment
+        api_base = getenv("OPENAI_API_BASE");
+        if (!api_base) {
+            api_base = API_BASE_URL;
+        }
+
+        model = getenv("OPENAI_MODEL");
+        if (!model) {
+            model = getenv("ANTHROPIC_MODEL");  // Try ANTHROPIC_MODEL as fallback
+            if (!model) {
+                model = DEFAULT_MODEL;
+            }
+        }
     }
 
     // Initialize CURL
@@ -3065,6 +3200,34 @@ int main(int argc, char *argv[]) {
     } else {
         LOG_ERROR("Failed to allocate memory for todo list");
     }
+
+#ifndef TEST_BUILD
+    // Initialize AWS Bedrock configuration if enabled
+    if (use_bedrock) {
+        state.bedrock_config = bedrock_config_init(model);
+        if (!state.bedrock_config) {
+            LOG_ERROR("Failed to initialize Bedrock configuration");
+            fprintf(stderr, "Error: Failed to initialize AWS Bedrock. Check your AWS credentials and configuration.\n");
+            free(state.api_key);
+            free(state.api_url);
+            free(state.model);
+            free(state.working_dir);
+            if (state.todo_list) {
+                free(state.todo_list);
+            }
+            curl_global_cleanup();
+            return 1;
+        }
+        // Override api_url with Bedrock endpoint
+        free(state.api_url);
+        state.api_url = strdup(state.bedrock_config->endpoint);
+        LOG_INFO("Bedrock configuration initialized, endpoint: %s", state.api_url);
+    } else {
+        state.bedrock_config = NULL;
+    }
+#else
+    state.bedrock_config = NULL;
+#endif
 
     // Check for allocation failures
     if (!state.api_key || !state.api_url || !state.model || !state.todo_list) {
@@ -3139,6 +3302,14 @@ int main(int argc, char *argv[]) {
         state.todo_list = NULL;
         LOG_DEBUG("Todo list cleaned up");
     }
+
+#ifndef TEST_BUILD
+    // Cleanup Bedrock configuration
+    if (state.bedrock_config) {
+        bedrock_config_free(state.bedrock_config);
+        LOG_DEBUG("Bedrock configuration cleaned up");
+    }
+#endif
 
     free(state.api_key);
     free(state.api_url);

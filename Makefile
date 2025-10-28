@@ -3,8 +3,8 @@
 CC ?= gcc
 CFLAGS = -Wall -Wextra -Wpedantic -Wformat=2 -Wconversion -Wshadow -Wcast-qual -Wcast-align -Wstrict-prototypes -Wmissing-prototypes -Wmissing-declarations -Wuninitialized -Warray-bounds -Wvla -Wwrite-strings -Wnull-dereference -Wimplicit-fallthrough -Wsign-conversion -Wsign-compare -Wfloat-equal -Wpointer-arith -Wbad-function-cast -Wstrict-overflow -Waggregate-return -Wredundant-decls -Wnested-externs -Winline -Wswitch-enum -Wswitch-default -Wenum-conversion -Wdisabled-optimization -O2 -std=c11 -D_POSIX_C_SOURCE=200809L -D_BSD_SOURCE=1 $(SANITIZERS)
 DEBUG_CFLAGS = -Wall -Wextra -Wpedantic -Wformat=2 -Wconversion -Wshadow -Wcast-qual -Wcast-align -Wstrict-prototypes -Wmissing-prototypes -Wmissing-declarations -Wuninitialized -Warray-bounds -Wvla -Wwrite-strings -Wnull-dereference -Wimplicit-fallthrough -Wsign-conversion -Wsign-compare -Wfloat-equal -Wpointer-arith -Wbad-function-cast -Wstrict-overflow -Waggregate-return -Wredundant-decls -Wnested-externs -Winline -Wswitch-enum -Wswitch-default -Wenum-conversion -Wdisabled-optimization -g -O0 -std=c11 -D_POSIX_C_SOURCE=200809L -D_BSD_SOURCE=1 -fsanitize=address -fno-omit-frame-pointer
-LDFLAGS = -lcurl -lpthread -lsqlite3 $(SANITIZERS)
-DEBUG_LDFLAGS = -lcurl -lpthread -lsqlite3 -fsanitize=address
+LDFLAGS = -lcurl -lpthread -lsqlite3 -lssl -lcrypto $(SANITIZERS)
+DEBUG_LDFLAGS = -lcurl -lpthread -lsqlite3 -lssl -lcrypto -fsanitize=address
 
 # Installation prefix (can be overridden via command line)
 INSTALL_PREFIX ?= $(HOME)/.local
@@ -61,6 +61,8 @@ TUI_SRC = src/tui.c
 TUI_OBJ = $(BUILD_DIR)/tui.o
 TODO_SRC = src/todo.c
 TODO_OBJ = $(BUILD_DIR)/todo.o
+AWS_BEDROCK_SRC = src/aws_bedrock.c
+AWS_BEDROCK_OBJ = $(BUILD_DIR)/aws_bedrock.o
 TEST_EDIT_SRC = tests/test_edit.c
 TEST_INPUT_SRC = tests/test_input.c
 TEST_READ_SRC = tests/test_read.c
@@ -123,9 +125,9 @@ test-timing: check-deps $(TEST_TIMING_TARGET)
 	@echo ""
 	@./$(TEST_TIMING_TARGET)
 
-$(TARGET): $(SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(LINEEDIT_OBJ) $(COMMANDS_OBJ) $(COMPLETION_OBJ) $(TUI_OBJ) $(TODO_OBJ) $(VERSION_H)
+$(TARGET): $(SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(LINEEDIT_OBJ) $(COMMANDS_OBJ) $(COMPLETION_OBJ) $(TUI_OBJ) $(TODO_OBJ) $(VERSION_H) $(AWS_BEDROCK_OBJ)
 	@mkdir -p $(BUILD_DIR)
-	$(CC) $(CFLAGS) -o $(TARGET) $(SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(LINEEDIT_OBJ) $(COMMANDS_OBJ) $(COMPLETION_OBJ) $(TUI_OBJ) $(TODO_OBJ) $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $(TARGET) $(SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(LINEEDIT_OBJ) $(COMMANDS_OBJ) $(COMPLETION_OBJ) $(TUI_OBJ) $(TODO_OBJ) $(AWS_BEDROCK_OBJ) $(LDFLAGS)
 	@echo ""
 	@echo "✓ Build successful!"
 	@echo "Version: $(VERSION)"
@@ -177,7 +179,7 @@ $(VERSION_H): $(VERSION_FILE)
 	@echo "✓ Version: $(VERSION)"
 
 # Debug build with AddressSanitizer for finding memory bugs
-$(BUILD_DIR)/claude-c-debug: $(SRC) $(LOGGER_SRC) $(PERSISTENCE_SRC) $(MIGRATIONS_SRC) $(LINEEDIT_SRC) $(COMMANDS_SRC) $(COMPLETION_SRC) $(TUI_SRC) $(TODO_SRC)
+$(BUILD_DIR)/claude-c-debug: $(SRC) $(LOGGER_SRC) $(PERSISTENCE_SRC) $(MIGRATIONS_SRC) $(LINEEDIT_SRC) $(COMMANDS_SRC) $(COMPLETION_SRC) $(TUI_SRC) $(TODO_SRC) $(AWS_BEDROCK_SRC)
 	@mkdir -p $(BUILD_DIR)
 	@echo "Building with AddressSanitizer (debug mode)..."
 	$(CC) $(DEBUG_CFLAGS) -c -o $(BUILD_DIR)/logger_debug.o $(LOGGER_SRC)
@@ -188,7 +190,8 @@ $(BUILD_DIR)/claude-c-debug: $(SRC) $(LOGGER_SRC) $(PERSISTENCE_SRC) $(MIGRATION
 	$(CC) $(DEBUG_CFLAGS) -c -o $(BUILD_DIR)/completion_debug.o $(COMPLETION_SRC)
 	$(CC) $(DEBUG_CFLAGS) -c -o $(BUILD_DIR)/tui_debug.o $(TUI_SRC)
 	$(CC) $(DEBUG_CFLAGS) -c -o $(BUILD_DIR)/todo_debug.o $(TODO_SRC)
-	$(CC) $(DEBUG_CFLAGS) -o $(BUILD_DIR)/claude-c-debug $(SRC) $(BUILD_DIR)/logger_debug.o $(BUILD_DIR)/persistence_debug.o $(BUILD_DIR)/migrations_debug.o $(BUILD_DIR)/lineedit_debug.o $(BUILD_DIR)/commands_debug.o $(BUILD_DIR)/completion_debug.o $(BUILD_DIR)/tui_debug.o $(BUILD_DIR)/todo_debug.o $(DEBUG_LDFLAGS)
+	$(CC) $(DEBUG_CFLAGS) -c -o $(BUILD_DIR)/aws_bedrock_debug.o $(AWS_BEDROCK_SRC)
+	$(CC) $(DEBUG_CFLAGS) -o $(BUILD_DIR)/claude-c-debug $(SRC) $(BUILD_DIR)/logger_debug.o $(BUILD_DIR)/persistence_debug.o $(BUILD_DIR)/migrations_debug.o $(BUILD_DIR)/lineedit_debug.o $(BUILD_DIR)/commands_debug.o $(BUILD_DIR)/completion_debug.o $(BUILD_DIR)/tui_debug.o $(BUILD_DIR)/todo_debug.o $(BUILD_DIR)/aws_bedrock_debug.o $(DEBUG_LDFLAGS)
 	@echo ""
 	@echo "✓ Debug build successful with AddressSanitizer!"
 	@echo "Run: ./$(BUILD_DIR)/claude-c-debug \"your prompt here\""
@@ -329,6 +332,10 @@ $(TODO_OBJ): $(TODO_SRC) src/todo.h
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c -o $(TODO_OBJ) $(TODO_SRC)
 
+$(AWS_BEDROCK_OBJ): $(AWS_BEDROCK_SRC) src/aws_bedrock.h src/logger.h
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c -o $(AWS_BEDROCK_OBJ) $(AWS_BEDROCK_SRC)
+
 # Query tool - utility to inspect API call logs
 $(QUERY_TOOL): $(QUERY_TOOL_SRC) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ)
 	@mkdir -p $(BUILD_DIR)
@@ -443,6 +450,8 @@ check-deps:
 	@echo "Checking dependencies..."
 	@command -v $(CC) >/dev/null 2>&1 || { echo "Error: gcc not found. Please install gcc."; exit 1; }
 	@command -v curl-config >/dev/null 2>&1 || { echo "Error: libcurl not found. Install with: brew install curl (macOS) or apt-get install libcurl4-openssl-dev (Linux)"; exit 1; }
+	@command -v pkg-config >/dev/null 2>&1 || { echo "Warning: pkg-config not found. May have issues detecting OpenSSL."; }
+	@pkg-config --exists openssl 2>/dev/null || { echo "Error: OpenSSL not found. Install with: brew install openssl (macOS) or apt-get install libssl-dev (Linux)"; exit 1; }
 	@echo "✓ All dependencies found"
 	@echo ""
 
@@ -484,16 +493,26 @@ help:
 	@echo "  - libcurl"
 	@echo "  - cJSON"
 	@echo "  - sqlite3"
+	@echo "  - OpenSSL (for AWS Bedrock support)"
 	@echo "  - pthread (usually included with OS)"
 	@echo "  - valgrind (optional, for memory leak detection)"
 	@echo ""
 	@echo "macOS installation:"
-	@echo "  brew install curl cjson sqlite3 valgrind"
+	@echo "  brew install curl cjson sqlite3 openssl valgrind"
 	@echo ""
 	@echo "Linux installation:"
-	@echo "  apt-get install libcurl4-openssl-dev libcjson-dev libsqlite3-dev valgrind"
+	@echo "  apt-get install libcurl4-openssl-dev libcjson-dev libsqlite3-dev libssl-dev valgrind"
 	@echo "  or"
-	@echo "  yum install libcurl-devel cjson-devel sqlite-devel valgrind"
+	@echo "  yum install libcurl-devel cjson-devel sqlite-devel openssl-devel valgrind"
+	@echo ""
+	@echo "AWS Bedrock Configuration:"
+	@echo "  export CLAUDE_CODE_USE_BEDROCK=true"
+	@echo "  export ANTHROPIC_MODEL=us.anthropic.claude-sonnet-4-5-20250929-v1:0"
+	@echo "  export AWS_REGION=us-west-2"
+	@echo "  export AWS_PROFILE=your-profile"
+	@echo ""
+	@echo "Optional - Custom Authentication:"
+	@echo "  export AWS_AUTH_COMMAND='cd /path/to/okta && bash script.sh'"
 
 # Version management targets
 version:

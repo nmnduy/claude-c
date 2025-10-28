@@ -41,6 +41,9 @@ struct PersistenceDB;
 // TodoList is defined in todo.h
 struct TodoList;
 
+// BedrockConfig is defined in aws_bedrock.h (opaque pointer)
+struct BedrockConfigStruct;
+
 // ============================================================================
 // Enums
 // ============================================================================
@@ -90,6 +93,7 @@ typedef struct ConversationState {
     char *session_id;               // Unique session identifier for this conversation
     struct PersistenceDB *persistence_db;  // For logging API calls to SQLite
     struct TodoList *todo_list;     // Task tracking list
+    struct BedrockConfigStruct *bedrock_config;  // AWS Bedrock configuration (NULL if not using Bedrock)
 } ConversationState;
 
 // ============================================================================
