@@ -31,7 +31,7 @@
 // );
 
 // Persistence handle - opaque structure for database connection
-typedef struct {
+typedef struct PersistenceDB {
     sqlite3 *db;
     char *db_path;
 } PersistenceDB;

@@ -271,7 +271,7 @@ static int check_for_esc(void) {
 
     // Set terminal to non-blocking mode
     new_term = old_term;
-    new_term.c_lflag &= ~(ICANON | ECHO);
+    new_term.c_lflag &= (tcflag_t)~(ICANON | ECHO);
     new_term.c_cc[VMIN] = 0;   // Non-blocking
     new_term.c_cc[VTIME] = 0;  // No timeout
     tcsetattr(STDIN_FILENO, TCSANOW, &new_term);
@@ -616,7 +616,7 @@ STATIC cJSON* tool_read(cJSON *params, ConversationState *state) {
         while (*pos) {
             if (*pos == '\n') {
                 // Found end of line
-                int line_len = pos - line_start + 1;  // Include the newline
+                int line_len = (int)(pos - line_start + 1);  // Include the newline
                 
                 // Check if this line should be included
                 int include = 1;
@@ -651,10 +651,10 @@ STATIC cJSON* tool_read(cJSON *params, ConversationState *state) {
         }
         
         // Handle last line (if file doesn't end with newline)
-        if (*line_start && (end_line < 0 || current_line <= end_line) && 
+        if (*line_start && (end_line < 0 || current_line <= end_line) &&
             (start_line < 0 || current_line >= start_line)) {
-            int line_len = strlen(line_start);
-            char *new_buffer = realloc(result_buffer, result_size + line_len + 1);
+            int line_len = (int)strlen(line_start);
+            char *new_buffer = realloc(result_buffer, result_size + (size_t)line_len + 1);
             if (!new_buffer) {
                 free(result_buffer);
                 free(content);
@@ -663,8 +663,8 @@ STATIC cJSON* tool_read(cJSON *params, ConversationState *state) {
                 return error;
             }
             result_buffer = new_buffer;
-            memcpy(result_buffer + result_size, line_start, line_len);
-            result_size += line_len;
+            memcpy(result_buffer + result_size, line_start, (size_t)line_len);
+            result_size += (size_t)line_len;
             result_buffer[result_size] = '\0';
             current_line++;
         }
@@ -792,7 +792,7 @@ static char* str_replace_all(const char *content, const char *old_str, const cha
     size_t old_len = strlen(old_str);
     size_t new_len = strlen(new_str);
     size_t content_len = strlen(content);
-    size_t result_len = content_len + (*replace_count) * (new_len - old_len);
+    size_t result_len = content_len + (size_t)(*replace_count) * (new_len - old_len);
 
     char *result = malloc(result_len + 1);
     if (!result) return NULL;
@@ -801,7 +801,7 @@ static char* str_replace_all(const char *content, const char *old_str, const cha
     const char *src = content;
 
     while ((pos = strstr(src, old_str)) != NULL) {
-        size_t len = pos - src;
+        size_t len = (size_t)(pos - src);
         memcpy(dest, src, len);
         dest += len;
         memcpy(dest, new_str, new_len);
@@ -845,7 +845,7 @@ static char* regex_replace(const char *content, const char *pattern, const char 
         (*replace_count)++;
 
         // Copy text before match
-        size_t prefix_len = match.rm_so;
+        size_t prefix_len = (size_t)match.rm_so;
         if (dest_len + prefix_len + repl_len >= result_capacity) {
             result_capacity *= 2;
             char *new_result = realloc(result, result_capacity);
@@ -951,7 +951,7 @@ STATIC cJSON* tool_edit(cJSON *params, ConversationState *state) {
             size_t old_len = strlen(old_str);
             size_t new_len = strlen(new_str);
             size_t content_len = strlen(content);
-            size_t offset = pos - content;
+            size_t offset = (size_t)(pos - content);
 
             new_content = malloc(content_len - old_len + new_len + 1);
             if (new_content) {
@@ -1860,7 +1860,7 @@ static cJSON* call_api(ConversationState *state) {
                 }
 
                 // Sleep and retry
-                usleep(backoff_ms * 1000); // usleep takes microseconds
+                usleep((useconds_t)(backoff_ms * 1000)); // usleep takes microseconds
                 backoff_ms = (int)(backoff_ms * BACKOFF_MULTIPLIER);
                 if (backoff_ms > MAX_BACKOFF_MS) {
                     backoff_ms = MAX_BACKOFF_MS;
@@ -2185,14 +2185,14 @@ char* build_system_prompt(ConversationState *state) {
     if (state->additional_dirs_count > 0) {
         for (int i = 0; i < state->additional_dirs_count; i++) {
             if (i > 0) {
-                offset += snprintf(prompt + offset, prompt_size - offset, ", ");
+                offset += snprintf(prompt + offset, prompt_size - (size_t)offset, ", ");
             }
-            offset += snprintf(prompt + offset, prompt_size - offset, "%s", state->additional_dirs[i]);
+            offset += snprintf(prompt + offset, prompt_size - (size_t)offset, "%s", state->additional_dirs[i]);
         }
     }
-    offset += snprintf(prompt + offset, prompt_size - offset, "\n");
+    offset += snprintf(prompt + offset, prompt_size - (size_t)offset, "\n");
 
-    offset += snprintf(prompt + offset, prompt_size - offset,
+    offset += snprintf(prompt + offset, prompt_size - (size_t)offset,
         "Is directory a git repo: %s\n"
         "Platform: %s\n"
         "OS Version: %s\n"
@@ -2205,12 +2205,12 @@ char* build_system_prompt(ConversationState *state) {
 
     // Add git status if available
     if (git_status && offset < (int)prompt_size) {
-        offset += snprintf(prompt + offset, prompt_size - offset, "\n%s\n", git_status);
+        offset += snprintf(prompt + offset, prompt_size - (size_t)offset, "\n%s\n", git_status);
     }
 
     // Add CLAUDE.md content if available
     if (claude_md && offset < (int)prompt_size) {
-        offset += snprintf(prompt + offset, prompt_size - offset,
+        offset += snprintf(prompt + offset, prompt_size - (size_t)offset,
             "\n<system-reminder>\n"
             "As you answer the user's questions, you can use the following context:\n"
             "# claudeMd\n"
@@ -2334,7 +2334,7 @@ static void add_assistant_message_openai(ConversationState *state, cJSON *messag
         return;
     }
 
-    msg->content = calloc(content_count, sizeof(ContentBlock));
+    msg->content = calloc((size_t)content_count, sizeof(ContentBlock));
     if (!msg->content) {
         LOG_ERROR("Failed to allocate memory for message content");
         state->count--; // Rollback count increment
@@ -2523,9 +2523,9 @@ static void process_response(ConversationState *state, cJSON *response, TUIState
         clock_gettime(CLOCK_MONOTONIC, &tool_start);
 
         // Parallel tool execution
-        ContentBlock *results = calloc(tool_count, sizeof(ContentBlock));
-        pthread_t *threads = malloc(tool_count * sizeof(pthread_t));
-        ToolThreadArg *args = malloc(tool_count * sizeof(ToolThreadArg));
+        ContentBlock *results = calloc((size_t)tool_count, sizeof(ContentBlock));
+        pthread_t *threads = malloc((size_t)tool_count * sizeof(pthread_t));
+        ToolThreadArg *args = malloc((size_t)tool_count * sizeof(ToolThreadArg));
         int thread_count = 0;
 
         // Launch tool execution threads

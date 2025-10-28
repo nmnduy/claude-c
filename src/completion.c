@@ -101,7 +101,7 @@ static CompletionResult* complete_path_internal(const char *partial, int dirs_on
 
     // Initial capacity for options array
     int capacity = 16;
-    result->options = malloc(capacity * sizeof(char*));
+    result->options = malloc((size_t)capacity * sizeof(char*));
     if (!result->options) {
         free(result);
         closedir(dir);
@@ -158,7 +158,7 @@ static CompletionResult* complete_path_internal(const char *partial, int dirs_on
         // Expand array if needed
         if (result->count >= capacity) {
             capacity *= 2;
-            char **new_options = realloc(result->options, capacity * sizeof(char*));
+            char **new_options = realloc(result->options, (size_t)capacity * sizeof(char*));
             if (!new_options) {
                 // Cleanup and return what we have
                 closedir(dir);

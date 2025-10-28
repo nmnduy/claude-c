@@ -510,7 +510,7 @@ static int buffer_insert_char(LineEditor *ed, const unsigned char *utf8_char, in
 
     // Copy the character bytes
     for (int i = 0; i < char_bytes; i++) {
-        ed->buffer[ed->cursor + i] = utf8_char[i];
+        ed->buffer[ed->cursor + i] = (char)utf8_char[i];
     }
 
     ed->length += char_bytes;
@@ -664,7 +664,7 @@ char* lineedit_readline(LineEditor *ed, const char *prompt) {
         // Fall back to fgets if we can't set raw mode
         printf("%s", prompt);
         fflush(stdout);
-        if (fgets(ed->buffer, ed->buffer_capacity, stdin) == NULL) {
+        if (fgets(ed->buffer, (int)ed->buffer_capacity, stdin) == NULL) {
             return NULL;  // EOF
         }
         ed->buffer[strcspn(ed->buffer, "\n")] = 0;
@@ -673,8 +673,8 @@ char* lineedit_readline(LineEditor *ed, const char *prompt) {
 
     // Set up raw mode
     new_term = g_original_termios;
-    new_term.c_lflag &= ~(ICANON | ECHO);  // Disable canonical mode and echo
-    new_term.c_iflag &= ~(ICRNL | INLCR);  // Don't translate CR<->NL so we can distinguish Enter from Ctrl+J
+    new_term.c_lflag &= (tcflag_t)~(ICANON | ECHO);  // Disable canonical mode and echo
+    new_term.c_iflag &= (tcflag_t)~(ICRNL | INLCR);  // Don't translate CR<->NL so we can distinguish Enter from Ctrl+J
     new_term.c_cc[VMIN] = 1;
     new_term.c_cc[VTIME] = 0;
     tcsetattr(STDIN_FILENO, TCSANOW, &new_term);
@@ -919,7 +919,7 @@ char* lineedit_readline(LineEditor *ed, const char *prompt) {
                 } else if (res->count == 1) {
                     // Single completion: replace current word
                     const char *opt = res->options[0];
-                    int optlen = strlen(opt);
+                    int optlen = (int)strlen(opt);
                     // Find start of current word
                     int start = ed->cursor - 1;
                     while (start >= 0 && ed->buffer[start] != ' ' && ed->buffer[start] != '\t') {
@@ -927,7 +927,7 @@ char* lineedit_readline(LineEditor *ed, const char *prompt) {
                     }
                     start++;
                     int tail_len = ed->length - ed->cursor;
-                    size_t needed = start + optlen + tail_len + 1;
+                    size_t needed = (size_t)(start + optlen + tail_len + 1);
                     if (needed > ed->buffer_capacity) {
                         ed->buffer = realloc(ed->buffer, needed);
                         ed->buffer_capacity = needed;
