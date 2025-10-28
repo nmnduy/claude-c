@@ -11,6 +11,8 @@
  *   CLAUDE_C_LOG_PATH - Full path to log file (e.g., /tmp/myapp.log)
  *   CLAUDE_C_LOG_DIR  - Directory for logs (uses claude.log as filename)
  *   CLAUDE_LOG_LEVEL  - Minimum log level: DEBUG, INFO, WARN, ERROR
+ *   CLAUDE_LOG_FLUSH  - Flush mode: "buffered" (default) or "always"
+ *                       "buffered" = better performance, "always" = immediate visibility
  *
  * Default Log Location Priority:
  *   1. $CLAUDE_C_LOG_PATH (if set)
@@ -63,6 +65,13 @@ void log_set_rotation(int max_size_mb, int max_backups);
  * All subsequent log messages will include this session ID
  */
 void log_set_session_id(const char *session_id);
+
+/**
+ * Configure log flushing behavior
+ * always_flush: If 1, flush after every log message (fallback for debugging)
+ *                If 0, rely on stdio buffering (default: better performance)
+ */
+void log_set_flush_mode(int always_flush);
 
 /**
  * Core logging function (use macros instead of calling directly)

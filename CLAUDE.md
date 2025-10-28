@@ -227,6 +227,9 @@ The application is configured via environment variables, providing flexibility f
 - `CLAUDE_C_LOG_PATH` - Full path to log file (e.g., `/var/log/claude.log`)
 - `CLAUDE_C_LOG_DIR` - Directory for logs (will use `claude.log` filename)
 - `CLAUDE_LOG_LEVEL` - Minimum log level: `DEBUG`, `INFO`, `WARN`, `ERROR` (default: INFO)
+- `CLAUDE_LOG_FLUSH` - Flush mode: `buffered` (default) or `always`
+  - `buffered`: Better performance, logs flushed on shutdown or when buffer fills (default)
+  - `always`: Immediate log visibility (slower performance, better for debugging)
 - `CLAUDE_C_DB_PATH` - Path to SQLite database for API call history (default: `./.claude-c/api_calls.db`)
 
 **UI Customization:**
@@ -555,6 +558,41 @@ The test suite (`tests/test_todo.c`) verifies:
 - Status updates (by index and by content)
 - Counting by status
 - Visual rendering
+
+### Logging System Improvements
+
+The logger has been enhanced to provide configurable flush behavior for better control over performance vs. immediacy.
+
+**Default behavior (buffered):**
+- Messages are held in memory and written when buffer fills or on shutdown
+- Better performance for production use
+- Still ensures all logs are written via `log_shutdown()`
+
+**Always-flush mode:**
+- All log messages (DEBUG, INFO, WARN, ERROR) are flushed immediately to disk
+- Provides real-time visibility for debugging and monitoring
+- Slightly slower performance due to frequent disk I/O
+
+**Configuration:**
+```bash
+# Default: buffered logging (better performance)
+./build/claude-c "your prompt"
+
+# Explicitly set to buffered
+export CLAUDE_LOG_FLUSH=buffered
+./build/claude-c "your prompt"
+
+# Immediate visibility for debugging
+export CLAUDE_LOG_FLUSH=always
+./build/claude-c "your prompt"
+```
+
+**Technical details:**
+- Uses `fflush(g_log_file)` after each log message in always-flush mode
+- Relies on stdio buffering in buffered mode (typically 4KB-8KB buffer)
+- WARN and ERROR messages are always flushed immediately regardless of mode
+- `log_flush()` function available for manual flush control
+- Thread-safe implementation with mutex protection
 
 ## Context Building
 
