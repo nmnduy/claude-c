@@ -1851,10 +1851,27 @@ static cJSON* call_api(ConversationState *state) {
         curl_slist_free_all(headers);
         curl_easy_cleanup(curl);
 
-        // Handle CURL errors
+        // Handle CURL errors (network failures, timeouts, connection errors)
         if (res != CURLE_OK) {
             const char *error_msg = curl_easy_strerror(res);
             LOG_ERROR("CURL request failed: %s", error_msg);
+
+            // Determine if error is retryable
+            int is_retryable = 0;
+            switch (res) {
+                case CURLE_COULDNT_RESOLVE_HOST:
+                case CURLE_COULDNT_CONNECT:
+                case CURLE_OPERATION_TIMEDOUT:
+                case CURLE_RECV_ERROR:
+                case CURLE_SEND_ERROR:
+                case CURLE_GOT_NOTHING:
+                case CURLE_PARTIAL_FILE:
+                    is_retryable = 1;
+                    break;
+                default:
+                    is_retryable = 0;
+                    break;
+            }
 
             // Log failed request to persistence
             if (state->persistence_db) {
@@ -1873,6 +1890,26 @@ static cJSON* call_api(ConversationState *state) {
                 );
             }
 
+            // Retry on transient network errors
+            if (is_retryable && retry_count < MAX_RETRIES) {
+                char retry_msg[256];
+                snprintf(retry_msg, sizeof(retry_msg), "Network error: %s. Retrying in %d ms...", error_msg, backoff_ms);
+                print_error(retry_msg);
+                LOG_WARN("Retrying after network error (attempt %d/%d)", retry_count + 1, MAX_RETRIES);
+
+                // Sleep and retry
+                usleep((useconds_t)(backoff_ms * 1000));
+                backoff_ms = (int)(backoff_ms * BACKOFF_MULTIPLIER);
+                if (backoff_ms > MAX_BACKOFF_MS) {
+                    backoff_ms = MAX_BACKOFF_MS;
+                }
+                retry_count++;
+
+                free(response.output);
+                continue; // Retry the request
+            }
+
+            // Non-retryable error or max retries exceeded
             free(request_copy);
             free(json_str);
             if (using_bedrock && api_payload != json_str) {
@@ -1889,6 +1926,9 @@ static cJSON* call_api(ConversationState *state) {
 
             char error_msg[256];
             snprintf(error_msg, sizeof(error_msg), "HTTP error %ld", http_status);
+
+            // Check if this is a retryable 5xx server error (but not 501 Not Implemented)
+            int is_server_error_retryable = (http_status >= 500 && http_status < 600 && http_status != 501);
 
             // Log HTTP error
             if (state->persistence_db) {
@@ -1919,6 +1959,25 @@ static cJSON* call_api(ConversationState *state) {
                     }
                 }
                 cJSON_Delete(error_json);
+            }
+
+            // Retry on 5xx server errors
+            if (is_server_error_retryable && retry_count < MAX_RETRIES) {
+                char retry_msg[256];
+                snprintf(retry_msg, sizeof(retry_msg), "%s. Server error - retrying in %d ms...", error_msg, backoff_ms);
+                print_error(retry_msg);
+                LOG_WARN("Retrying after server error %ld (attempt %d/%d)", http_status, retry_count + 1, MAX_RETRIES);
+
+                // Sleep and retry
+                usleep((useconds_t)(backoff_ms * 1000));
+                backoff_ms = (int)(backoff_ms * BACKOFF_MULTIPLIER);
+                if (backoff_ms > MAX_BACKOFF_MS) {
+                    backoff_ms = MAX_BACKOFF_MS;
+                }
+                retry_count++;
+
+                free(response.output);
+                continue; // Retry the request
             }
 
             print_error(error_msg);
