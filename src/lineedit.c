@@ -122,7 +122,7 @@ static void sigint_handler(int signum) {
     g_last_sigint_time = now;
 
     // Display message (safe for signal handler - using write())
-    const char *msg = "\n^C (Press Ctrl+C again within 2 seconds to exit)\n";
+    const char *msg = "\n^C (Press Ctrl+C again to exit)\n";
     ssize_t ret = write(STDERR_FILENO, msg, strlen(msg));
     (void)ret;  // Ignore write result in signal handler
 }
