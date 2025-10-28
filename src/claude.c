@@ -80,6 +80,9 @@ static void persistence_log_api_call(
 #include "aws_bedrock.h"
 #endif
 
+// Retry context for API calls
+#include "retry_context.h"
+
 #ifdef TEST_BUILD
 #define main claude_main
 #endif
@@ -1524,10 +1527,155 @@ static void add_cache_control(cJSON *obj) {
     cJSON_AddItemToObject(obj, "cache_control", cache_ctrl);
 }
 
-static cJSON* call_api(ConversationState *state) {
-    int retry_count = 0;
-    int backoff_ms = INITIAL_BACKOFF_MS;
+// ============================================================================
+// API Retry Context Integration
+// ============================================================================
 
+// Structure to hold data for API call retry operations
+typedef struct {
+    ConversationState *state;
+    char *json_str;
+    char *request_copy;
+    char *full_url;
+    int using_bedrock;
+    char *api_payload;
+    cJSON **result_ptr;
+    int *http_status_ptr;
+    char **error_message_ptr;
+} ApiOperationData;
+
+// Retry operation function for API calls
+static int api_retry_operation(void *user_data, int *http_status, char **error_message) {
+    ApiOperationData *data = (ApiOperationData *)user_data;
+    ConversationState *state = data->state;
+    
+    CURL *curl;
+    CURLcode res;
+    MemoryBuffer response = {NULL, 0};
+    
+    curl = curl_easy_init();
+    if (!curl) {
+        if (error_message) *error_message = strdup("Failed to initialize CURL");
+        if (http_status) *http_status = 0;
+        return -1;
+    }
+    
+    // Set up headers
+    struct curl_slist *headers = NULL;
+    
+#ifndef TEST_BUILD
+    if (data->using_bedrock && state->bedrock_config) {
+        // Bedrock mode: use SigV4 signing
+        LOG_DEBUG("Signing Bedrock request with AWS SigV4...");
+        headers = bedrock_sign_request(
+            headers,
+            "POST",
+            data->full_url,
+            data->api_payload,
+            state->bedrock_config->creds,
+            state->bedrock_config->region,
+            AWS_BEDROCK_SERVICE
+        );
+        
+        if (!headers) {
+            if (error_message) *error_message = strdup("Failed to sign Bedrock request");
+            if (http_status) *http_status = 0;
+            curl_easy_cleanup(curl);
+            return -1;
+        }
+    } else {
+#endif
+        // Standard OpenAI mode
+        char auth_header[256];
+        snprintf(auth_header, sizeof(auth_header), "Authorization: Bearer %s",
+                 getenv("OPENAI_API_KEY") ? getenv("OPENAI_API_KEY") : "");
+        headers = curl_slist_append(headers, auth_header);
+        headers = curl_slist_append(headers, "Content-Type: application/json");
+#ifndef TEST_BUILD
+    }
+#endif
+    
+    // Set up CURL options
+    curl_easy_setopt(curl, CURLOPT_URL, data->full_url);
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, data->api_payload);
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 120L); // 2 minute timeout
+    
+    // Time the request
+    struct timespec start, end;
+    clock_gettime(CLOCK_MONOTONIC, &start);
+    
+    // Perform request
+    res = curl_easy_perform(curl);
+    
+    clock_gettime(CLOCK_MONOTONIC, &end);
+    long duration_ms = (end.tv_sec - start.tv_sec) * 1000 +
+                       (end.tv_nsec - start.tv_nsec) / 1000000;
+    
+    // Get HTTP status code
+    long status = 0;
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
+    if (http_status) *http_status = (int)status;
+    
+    curl_slist_free_all(headers);
+    curl_easy_cleanup(curl);
+    
+    // Handle CURL errors
+    if (res != CURLE_OK) {
+        const char *error_msg = curl_easy_strerror(res);
+        if (error_message) *error_message = strdup(error_msg);
+        free(response.output);
+        return res;
+    }
+    
+    // Check HTTP status code
+    if (status < 200 || status >= 300) {
+        char error_msg[256];
+        snprintf(error_msg, sizeof(error_msg), "HTTP error %ld", status);
+        
+        // Try to extract error message from response if it's JSON
+        cJSON *error_json = cJSON_Parse(response.output);
+        if (error_json) {
+            cJSON *error_obj = cJSON_GetObjectItem(error_json, "error");
+            if (error_obj) {
+                cJSON *message = cJSON_GetObjectItem(error_obj, "message");
+                if (message && cJSON_IsString(message)) {
+                    snprintf(error_msg, sizeof(error_msg), "API error (%ld): %s",
+                            status, message->valuestring);
+                }
+            }
+            cJSON_Delete(error_json);
+        }
+        
+        if (error_message) *error_message = strdup(error_msg);
+        free(response.output);
+        return -1;
+    }
+    
+    // Parse response
+    cJSON *json_response = cJSON_Parse(response.output);
+    free(response.output);
+    
+    if (!json_response) {
+        if (error_message) *error_message = strdup("Failed to parse JSON response");
+        return -1;
+    }
+    
+    // Store successful result
+    if (data->result_ptr) {
+        *(data->result_ptr) = json_response;
+    }
+    
+    return 0; // Success
+}
+
+// ============================================================================
+// API Call Function
+// ============================================================================
+
+static cJSON* call_api(ConversationState *state) {
     // Overall API call timing
     struct timespec call_start, call_end;
     clock_gettime(CLOCK_MONOTONIC, &call_start);
@@ -1549,6 +1697,296 @@ static cJSON* call_api(ConversationState *state) {
     cJSON_AddNumberToObject(request, "max_completion_tokens", MAX_TOKENS);
 
     // Add messages in OpenAI format
+    cJSON *messages_array = cJSON_CreateArray();
+    for (int i = 0; i < state->count; i++) {
+        cJSON *msg = cJSON_CreateObject();
+
+        // Determine role
+        const char *role;
+        if (state->messages[i].role == MSG_SYSTEM) {
+            role = "system";
+        } else if (state->messages[i].role == MSG_USER) {
+            role = "user";
+        } else {
+            role = "assistant";
+        }
+        cJSON_AddStringToObject(msg, "role", role);
+
+        // Determine if this is one of the last 3 messages (for cache breakpoint)
+        // We want to cache the last few messages to speed up subsequent turns
+        int is_recent_message = (i >= state->count - 3) && enable_caching;
+
+        // Build content based on message type
+        if (state->messages[i].role == MSG_SYSTEM) {
+            // System messages: use content array with cache_control if enabled
+            if (state->messages[i].content_count > 0 &&
+                state->messages[i].content[0].type == CONTENT_TEXT) {
+
+                // For system messages, use content array to support cache_control
+                cJSON *content_array = cJSON_CreateArray();
+                cJSON *text_block = cJSON_CreateObject();
+                cJSON_AddStringToObject(text_block, "type", "text");
+                cJSON_AddStringToObject(text_block, "text", state->messages[i].content[0].text);
+
+                // Add cache_control to system message if caching is enabled
+                // This is the first cache breakpoint (system prompt)
+                if (enable_caching) {
+                    add_cache_control(text_block);
+                }
+
+                cJSON_AddItemToArray(content_array, text_block);
+                cJSON_AddItemToObject(msg, "content", content_array);
+            }
+        } else {
+            // User/Assistant messages: use content array format
+            cJSON *content_array = cJSON_CreateArray();
+
+            // Add all content blocks
+            for (int j = 0; j < state->messages[i].content_count; j++) {
+                ContentBlock *block = &state->messages[i].content[j];
+                cJSON *content_block = cJSON_CreateObject();
+
+                switch (block->type) {
+                    case CONTENT_TEXT:
+                        cJSON_AddStringToObject(content_block, "type", "text");
+                        cJSON_AddStringToObject(content_block, "text", block->text);
+                        break;
+
+                    case CONTENT_TOOL_USE:
+                        cJSON_AddStringToObject(content_block, "type", "tool_use");
+                        cJSON_AddStringToObject(content_block, "id", block->tool_use_id);
+                        cJSON_AddStringToObject(content_block, "name", block->tool_name);
+
+                        // Add input as JSON
+                        if (block->tool_input) {
+                            cJSON *input_json = cJSON_Parse(block->tool_input);
+                            if (input_json) {
+                                cJSON_AddItemToObject(content_block, "input", input_json);
+                            } else {
+                                // Fallback: treat as string
+                                cJSON_AddStringToObject(content_block, "input", block->tool_input);
+                            }
+                        }
+                        break;
+
+                    case CONTENT_TOOL_RESULT:
+                        cJSON_AddStringToObject(content_block, "type", "tool_result");
+                        cJSON_AddStringToObject(content_block, "tool_use_id", block->tool_use_id);
+
+                        // Add content (can be null for empty results)
+                        if (block->text) {
+                            cJSON_AddStringToObject(content_block, "content", block->text);
+                        } else {
+                            cJSON_AddNullToObject(content_block, "content");
+                        }
+                        break;
+                }
+
+                // Add cache_control to recent messages if caching is enabled
+                if (is_recent_message && enable_caching) {
+                    add_cache_control(content_block);
+                }
+
+                cJSON_AddItemToArray(content_array, content_block);
+            }
+
+            cJSON_AddItemToObject(msg, "content", content_array);
+        }
+
+        cJSON_AddItemToArray(messages_array, msg);
+    }
+
+    cJSON_AddItemToObject(request, "messages", messages_array);
+
+    // Add tool definitions (second cache breakpoint)
+    cJSON *tools_array = get_tool_definitions();
+    if (tools_array) {
+        cJSON_AddItemToObject(request, "tools", tools_array);
+        
+        // Add cache_control to tools if caching is enabled
+        if (enable_caching) {
+            add_cache_control(request);
+        }
+    }
+
+    // Set temperature
+    cJSON_AddNumberToObject(request, "temperature", 0.0);
+
+    // Convert to string
+    char *json_str = cJSON_PrintUnformatted(request);
+    cJSON_Delete(request);
+
+    if (!json_str) {
+        LOG_ERROR("Failed to serialize request JSON");
+        return NULL;
+    }
+
+    clock_gettime(CLOCK_MONOTONIC, &build_end);
+    long build_ms = (build_end.tv_sec - build_start.tv_sec) * 1000 +
+                    (build_end.tv_nsec - build_start.tv_nsec) / 1000000;
+    LOG_INFO("Request building took %ld ms", build_ms);
+
+    // Create a copy for persistence logging
+    char *request_copy = strdup(json_str);
+    if (!request_copy) {
+        LOG_ERROR("Failed to allocate memory for request copy");
+        free(json_str);
+        return NULL;
+    }
+
+    // Determine if we're using Bedrock
+    int using_bedrock = 0;
+    const char *use_bedrock = getenv("CLAUDE_CODE_USE_BEDROCK");
+    if (use_bedrock && strcmp(use_bedrock, "true") == 0) {
+        using_bedrock = 1;
+    }
+
+    // Prepare full URL
+    char full_url[1024];
+#ifndef TEST_BUILD
+    if (using_bedrock) {
+        // Bedrock mode: construct full endpoint URL
+        snprintf(full_url, sizeof(full_url),
+                "https://bedrock-runtime.%s.amazonaws.com/model/%s/invoke",
+                getenv("AWS_REGION") ? getenv("AWS_REGION") : "us-west-2",
+                state->model);
+    } else {
+#endif
+        // Standard OpenAI mode: append /v1/chat/completions to base URL
+        snprintf(full_url, sizeof(full_url), "%s/v1/chat/completions", state->api_url);
+#ifndef TEST_BUILD
+    }
+#endif
+
+    // Prepare API payload (for Bedrock, this might differ from json_str)
+    char *api_payload = json_str;
+#ifndef TEST_BUILD
+    if (using_bedrock && state->bedrock_config) {
+        // For Bedrock, we need to transform the OpenAI format to Bedrock format
+        api_payload = transform_openai_to_bedrock(json_str);
+        if (!api_payload) {
+            LOG_ERROR("Failed to transform OpenAI request to Bedrock format");
+            free(request_copy);
+            free(json_str);
+            return NULL;
+        }
+    }
+#endif
+
+    // Set up retry context with conservative configuration for API calls
+    RetryConfig retry_config = retry_config_conservative();
+    retry_config.retry_on_429 = true;
+    retry_config.retry_on_5xx = true;
+    retry_config.retry_on_timeout = true;
+    retry_config.retry_on_connection_error = true;
+    
+    RetryContext *retry_ctx = retry_context_create(&retry_config);
+    if (!retry_ctx) {
+        LOG_ERROR("Failed to create retry context");
+        free(request_copy);
+        free(json_str);
+        if (using_bedrock && api_payload != json_str) {
+            free(api_payload);
+        }
+        return NULL;
+    }
+
+    // Prepare operation data
+    cJSON *result = NULL;
+    int http_status = 0;
+    char *error_message = NULL;
+    
+    ApiOperationData operation_data = {
+        .state = state,
+        .json_str = json_str,
+        .request_copy = request_copy,
+        .full_url = full_url,
+        .using_bedrock = using_bedrock,
+        .api_payload = api_payload,
+        .result_ptr = &result,
+        .http_status_ptr = &http_status,
+        .error_message_ptr = &error_message
+    };
+
+    // Execute API call with retry logic
+    RetryResult retry_result = retry_execute(retry_ctx, api_retry_operation, &operation_data);
+
+    // Calculate total duration
+    clock_gettime(CLOCK_MONOTONIC, &call_end);
+    long total_duration_ms = (call_end.tv_sec - call_start.tv_sec) * 1000 +
+                             (call_end.tv_nsec - call_start.tv_nsec) / 1000000;
+
+    // Log the result
+    if (retry_result == RETRY_SUCCESS) {
+        // Log successful API call
+        if (state->persistence_db) {
+            // Convert result back to string for logging
+            char *response_str = cJSON_PrintUnformatted(result);
+            persistence_log_api_call(
+                state->persistence_db,
+                state->session_id,
+                state->api_url,
+                request_copy,
+                response_str,
+                state->model,
+                "success",
+                http_status,
+                NULL,
+                total_duration_ms,
+                0  // Tool count will be updated by caller
+            );
+            if (response_str) free(response_str);
+        }
+        
+        LOG_INFO("API call successful after %d retries in %ld ms", 
+                 retry_ctx->state.attempt_count, total_duration_ms);
+    } else {
+        // Log failed API call
+        const char *status_desc = (retry_result == RETRY_FAILED_PERMANENT) ? "permanent_failure" : "retryable_failure";
+        
+        if (state->persistence_db) {
+            persistence_log_api_call(
+                state->persistence_db,
+                state->session_id,
+                state->api_url,
+                request_copy,
+                NULL,  // No response on error
+                state->model,
+                status_desc,
+                http_status,
+                error_message,
+                total_duration_ms,
+                0  // No tools on error
+            );
+        }
+        
+        LOG_ERROR("API call failed after %d retries: %s", 
+                  retry_ctx->state.attempt_count, 
+                  error_message ? error_message : "Unknown error");
+        
+        // Display error to user
+        if (error_message) {
+            print_error(error_message);
+        } else {
+            print_error("API call failed");
+        }
+    }
+
+    // Cleanup
+    if (error_message) free(error_message);
+    free(request_copy);
+    free(json_str);
+    if (using_bedrock && api_payload != json_str) {
+        free(api_payload);
+    }
+    retry_context_destroy(retry_ctx);
+
+    return result;
+}
+
+// ============================================================================
+// Context Building - Environment and Git Information
+// ============================================================================
     cJSON *messages_array = cJSON_CreateArray();
     for (int i = 0; i < state->count; i++) {
         cJSON *msg = cJSON_CreateObject();

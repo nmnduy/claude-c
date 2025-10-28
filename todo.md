@@ -8,7 +8,7 @@
 - [x] env var for custom log dir and api call db file
 - [ ] rotation for api call db files
 - [x] pasting still fucks up the terminal
-- [ ] add retries to falied API calls
+- [x] add retries to falied API calls
 - [ ] implement instruction queue. so user can keep typing
 
 - [ ]
