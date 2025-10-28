@@ -43,9 +43,10 @@ typedef struct PersistenceDB {
 //   db_path: Path to SQLite database file (NULL = use default location)
 //            Default location priority:
 //              1. $CLAUDE_C_DB_PATH (environment variable)
-//              2. $XDG_DATA_HOME/claude-c/api_calls.db
-//              3. ~/.local/share/claude-c/api_calls.db
-//              4. ./api_calls.db (fallback)
+//              2. ./.claude-c/api_calls.db (project-local)
+//              3. $XDG_DATA_HOME/claude-c/api_calls.db
+//              4. ~/.local/share/claude-c/api_calls.db
+//              5. ./api_calls.db (fallback)
 //
 // Returns:
 //   PersistenceDB* on success, NULL on failure

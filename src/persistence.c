@@ -38,7 +38,7 @@ static const char *INDEX_SQL =
     "CREATE INDEX IF NOT EXISTS idx_api_calls_session_id ON api_calls(session_id);";
 
 // Get default database path
-// Priority: $CLAUDE_C_DB_PATH > $XDG_DATA_HOME/claude-c/api_calls.db > ~/.local/share/claude-c/api_calls.db
+// Priority: $CLAUDE_C_DB_PATH > ./.claude-c/api_calls.db > $XDG_DATA_HOME/claude-c/api_calls.db > ~/.local/share/claude-c/api_calls.db
 char* persistence_get_default_path(void) {
     char *path = NULL;
 
@@ -47,6 +47,18 @@ char* persistence_get_default_path(void) {
     if (env_path && env_path[0] != '\0') {
         path = strdup(env_path);
         return path;
+    }
+
+    // Try project-local .claude-c directory first
+    struct stat st;
+    if (stat("./.claude-c", &st) == 0 && S_ISDIR(st.st_mode)) {
+        // .claude-c exists, use it
+        return strdup("./.claude-c/api_calls.db");
+    }
+
+    // Try to create .claude-c directory
+    if (mkdir("./.claude-c", 0755) == 0 || errno == EEXIST) {
+        return strdup("./.claude-c/api_calls.db");
     }
 
     // Try XDG_DATA_HOME
