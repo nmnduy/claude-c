@@ -16,6 +16,9 @@ on:
         default: 'false'
         type: boolean
 
+permissions:
+  contents: write
+
 jobs:
   build:
     name: Build on ${{ matrix.os }}
@@ -28,59 +31,55 @@ jobs:
             asset_name: claude-c-linux-x86_64
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Install dependencies (Ubuntu)
-      if: matrix.os == 'ubuntu-latest'
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y libcurl4-openssl-dev libcjson-dev sqlite3 libsqlite3-dev libssl-dev build-essential
+      - name: Install dependencies (Ubuntu)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libcurl4-openssl-dev libcjson-dev sqlite3 libsqlite3-dev libssl-dev build-essential
 
-    - name: Build
-      run: |
-        make clean
-        make CFLAGS="-O3 -DNDEBUG"
+      - name: Build
+        run: |
+          make clean
+          make CFLAGS="-O3 -DNDEBUG"
 
-    - name: Prepare binary
-      run: |
-        # Copy binary
-        cp build/claude-c claude-c
+      - name: Prepare binary and archive
+        run: |
+          cp build/claude-c claude-c
+          mkdir claude-c-${{ matrix.name }}-x86_64
+          cp claude-c claude-c-${{ matrix.name }}-x86_64/
+          cp README.md claude-c-${{ matrix.name }}-x86_64/
+          cp LICENSE claude-c-${{ matrix.name }}-x86_64/ 2>/dev/null || echo "No LICENSE file found"
 
-        # Create archive directory
-        mkdir claude-c-${{ matrix.name }}-x86_64
-        cp claude-c claude-c-${{ matrix.name }}-x86_64/
-        cp README.md claude-c-${{ matrix.name }}-x86_64/
-        cp LICENSE claude-c-${{ matrix.name }}-x86_64/ 2>/dev/null || echo "No LICENSE file found"
+          # Create installation instructions
+          cat > claude-c-${{ matrix.name }}-x86_64/INSTALL.txt <<'EOF'
+          Claude C - Pure C Edition
 
-        # Add installation instructions
-        {
-          echo "Claude C - Pure C Edition"
-          echo ""
-          echo "Installation:"
-          echo "1. Extract the archive"
-          echo "2. Copy claude-c to your desired location (e.g., /usr/local/bin)"
-          echo "3. Make the binary executable: chmod +x claude-c"
-          echo "4. Set your API key: export OPENAI_API_KEY=\"your-api-key\""
-          echo "5. Run: ./claude-c \"your prompt\""
-          echo ""
-          echo "Dependencies:"
-          echo "- Linux: libcurl, cjson, sqlite3 (usually pre-installed)"
-          echo ""
-          echo "For more information, see README.md"
-        } > claude-c-${{ matrix.name }}-x86_64/INSTALL.txt
+          Installation:
+            1. Extract the archive
+            2. Copy claude-c to /usr/local/bin or another directory in PATH
+            3. Make the binary executable: chmod +x claude-c
+            4. Set your API key: export OPENAI_API_KEY="your-api-key"
+            5. Run: ./claude-c "your prompt"
 
-    - name: Create archive
-      run: |
-        tar -czf claude-c-${{ matrix.name }}-x86_64.tar.gz claude-c-${{ matrix.name }}-x86_64/
-        echo "ASSET=claude-c-${{ matrix.name }}-x86_64.tar.gz" >> $GITHUB_ENV
+          Dependencies:
+            - Linux: libcurl, cjson, sqlite3 (usually pre-installed)
 
-    - name: Upload artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: claude-c-${{ matrix.name }}-x86_64
-        path: ${{ env.ASSET }}
-        retention-days: 30
+          For more information, see README.md
+          EOF
+
+          # Create archive
+          tar -czf claude-c-${{ matrix.name }}-x86_64.tar.gz claude-c-${{ matrix.name }}-x86_64/
+          echo "ASSET=claude-c-${{ matrix.name }}-x86_64.tar.gz" >> $GITHUB_ENV
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: claude-c-${{ matrix.name }}-x86_64
+          path: ${{ env.ASSET }}
+          retention-days: 30
 
   release:
     name: Create Release
@@ -89,113 +88,68 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Download artifacts
-      uses: actions/download-artifact@v4
-      with:
-        path: artifacts
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
 
-    - name: Determine version and prerelease
-      id: release_info
-      run: |
-        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-          VERSION="${{ github.event.inputs.version }}"
-          PRERELEASE="${{ github.event.inputs.prerelease }}"
-        else
-          VERSION=${GITHUB_REF#refs/tags/}
-          # Check if version contains pre-release identifiers
-          if [[ "$VERSION" =~ (alpha|beta|rc|dev) ]]; then
-            PRERELEASE="true"
+      - name: Determine version and prerelease
+        id: release_info
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+            PRERELEASE="${{ github.event.inputs.prerelease }}"
           else
-            PRERELEASE="false"
+            VERSION=${GITHUB_REF#refs/tags/}
+            if [[ "$VERSION" =~ (alpha|beta|rc|dev) ]]; then
+              PRERELEASE="true"
+            else
+              PRERELEASE="false"
+            fi
           fi
-        fi
-        
-        echo "version=$VERSION" >> $GITHUB_OUTPUT
-        echo "prerelease=$PRERELEASE" >> $GITHUB_OUTPUT
-        
-        # Create release notes from recent commits
-        if [ -f "CHANGELOG.md" ]; then
-          echo "release_notes<<EOF" >> $GITHUB_OUTPUT
-          head -50 CHANGELOG.md >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-        else
-          echo "release_notes<<EOF" >> $GITHUB_OUTPUT
-          echo "## Changes in $VERSION" >> $GITHUB_OUTPUT
-          echo "" >> $GITHUB_OUTPUT
-          git log --pretty=format:"- %s" $(git describe --tags --abbrev=0 HEAD^)..HEAD >> $GITHUB_OUTPUT
-          echo "" >> $GITHUB_OUTPUT
-          echo "## Downloads" >> $GITHUB_OUTPUT
-          echo "- Linux: claude-c-linux-x86_64.tar.gz" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-        fi
 
-    - name: Create Release
-      uses: softprops/action-gh-release@v1
-      with:
-        tag_name: ${{ steps.release_info.outputs.version }}
-        name: Claude C ${{ steps.release_info.outputs.version }}
-        body: ${{ steps.release_info.outputs.release_notes }}
-        draft: false
-        prerelease: ${{ steps.release_info.outputs.prerelease }}
-        files: |
-          artifacts/claude-c-linux-x86_64/claude-c-linux-x86_64.tar.gz
-        generate_release_notes: true
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "prerelease=$PRERELEASE" >> $GITHUB_OUTPUT
 
-    - name: Update latest tag (for stable releases only)
-      if: steps.release_info.outputs.prerelease == 'false'
-      run: |
-        git config --local user.email "action@github.com"
-        git config --local user.name "GitHub Action"
-        git tag -f latest
-        git push -f origin latest
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Generate release notes
+          {
+            echo "release_notes<<EOF"
+            if [ -f "CHANGELOG.md" ]; then
+              head -50 CHANGELOG.md
+            else
+              echo "## Changes in $VERSION"
+              echo ""
+              git log --pretty=format:"- %s" $(git describe --tags --abbrev=0 HEAD^)..HEAD || echo "- Initial release"
+              echo ""
+              echo "## Downloads"
+              echo "- Linux: claude-c-linux-x86_64.tar.gz"
+            fi
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
-  # Optional: Build and publish Docker image
-  docker:
-    name: Build Docker Image
-    runs-on: ubuntu-latest
-    needs: build
-    if: startsWith(github.ref, 'refs/tags/')
-    
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.release_info.outputs.version }}
+          name: Claude C ${{ steps.release_info.outputs.version }}
+          body: ${{ steps.release_info.outputs.release_notes }}
+          draft: false
+          prerelease: ${{ steps.release_info.outputs.prerelease }}
+          files: |
+            artifacts/**/claude-c-*-x86_64.tar.gz
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
-
-    - name: Login to GitHub Container Registry
-      uses: docker/login-action@v3
-      with:
-        registry: ghcr.io
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
-
-    - name: Extract metadata
-      id: meta
-      uses: docker/metadata-action@v5
-      with:
-        images: ghcr.io/${{ github.repository }}
-        tags: |
-          type=ref,event=tag
-          type=semver,pattern={{version}}
-          type=semver,pattern={{major}}.{{minor}}
-          type=semver,pattern={{major}}
-          type=raw,value=latest,enable={{is_default_branch}}
-
-    - name: Build and push Docker image
-      uses: docker/build-push-action@v5
-      with:
-        context: .
-        platforms: linux/amd64,linux/arm64
-        push: true
-        tags: ${{ steps.meta.outputs.tags }}
-        labels: ${{ steps.meta.outputs.labels }}
-        cache-from: type=gha
-        cache-to: type=gha,mode=max
+      - name: Update 'latest' tag (for stable releases)
+        if: steps.release_info.outputs.prerelease == 'false'
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git tag -f latest
+          git push -f origin latest
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
