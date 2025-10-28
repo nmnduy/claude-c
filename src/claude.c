@@ -1711,11 +1711,16 @@ static cJSON* call_api(ConversationState *state) {
 
 #ifndef TEST_BUILD
     if (state->bedrock_config && state->bedrock_config->enabled) {
+        LOG_DEBUG("=== BEDROCK API CALL START ===");
+        LOG_DEBUG("Using AWS Bedrock endpoint: %s", state->api_url);
+        LOG_DEBUG("Model: %s, Region: %s", state->bedrock_config->model_id, state->bedrock_config->region);
+
         // Bedrock mode: use Bedrock endpoint directly (already includes /invoke path)
         snprintf(full_url, sizeof(full_url), "%s", state->api_url);
         using_bedrock = 1;
 
         // Convert OpenAI format to Bedrock/Anthropic format
+        LOG_DEBUG("Converting OpenAI request format to Bedrock/Anthropic format...");
         char *bedrock_payload = bedrock_convert_request(json_str);
         if (!bedrock_payload) {
             LOG_ERROR("Failed to convert request to Bedrock format");
@@ -1765,6 +1770,7 @@ static cJSON* call_api(ConversationState *state) {
 #ifndef TEST_BUILD
         if (using_bedrock && state->bedrock_config) {
             // Bedrock mode: use SigV4 signing
+            LOG_DEBUG("Signing Bedrock request with AWS SigV4...");
             headers = bedrock_sign_request(
                 headers,
                 "POST",
@@ -1785,7 +1791,7 @@ static cJSON* call_api(ConversationState *state) {
                 }
                 return NULL;
             }
-            LOG_DEBUG("Request signed with AWS SigV4");
+            LOG_DEBUG("Bedrock request signed successfully");
         } else
 #endif
         {
@@ -1984,7 +1990,6 @@ static cJSON* call_api(ConversationState *state) {
                 free(response.output);
                 return NULL;
             }
-            LOG_DEBUG("Converted Bedrock response to OpenAI format");
 
             // Debug: log key fields of converted response
             cJSON *choices = cJSON_GetObjectItem(converted_response, "choices");
@@ -1993,14 +1998,16 @@ static cJSON* call_api(ConversationState *state) {
                 cJSON *finish_reason = cJSON_GetObjectItem(choice, "finish_reason");
                 cJSON *message = cJSON_GetObjectItem(choice, "message");
                 if (finish_reason && cJSON_IsString(finish_reason)) {
-                    LOG_DEBUG("  finish_reason: %s", finish_reason->valuestring);
+                    LOG_DEBUG("Converted response - finish_reason: %s", finish_reason->valuestring);
                 }
                 if (message) {
                     cJSON *tool_calls = cJSON_GetObjectItem(message, "tool_calls");
                     int tc_count = tool_calls && cJSON_IsArray(tool_calls) ? cJSON_GetArraySize(tool_calls) : 0;
-                    LOG_DEBUG("  tool_calls count: %d", tc_count);
+                    LOG_DEBUG("Converted response - tool_calls count: %d", tc_count);
                 }
             }
+            LOG_DEBUG("Bedrock response conversion complete");
+            LOG_DEBUG("=== BEDROCK API CALL END ===");
 
             cJSON_Delete(json_response);
             json_response = converted_response;
