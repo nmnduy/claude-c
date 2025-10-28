@@ -2036,6 +2036,33 @@ static cJSON* call_api(ConversationState *state) {
             // Check if this is a rate limit error (429)
             int is_rate_limit = (http_status == 429 || strcmp(err_code, "429") == 0);
 
+            // Check if this is an AWS authentication error and attempt recovery
+            if (using_bedrock && retry_count < MAX_RETRIES) {
+                if (bedrock_handle_auth_error(state->bedrock_config, http_status, err_msg)) {
+                    // Credentials were refreshed, log and retry
+                    if (state->persistence_db) {
+                        persistence_log_api_call(
+                            state->persistence_db,
+                            state->session_id,
+                            state->api_url,
+                            request_copy,
+                            response.output,
+                            state->model,
+                            "error",
+                            (int)http_status,
+                            "AWS credentials expired - refreshed and retrying",
+                            duration_ms,
+                            0
+                        );
+                    }
+
+                    retry_count++;
+                    cJSON_Delete(json_response);
+                    free(response.output);
+                    continue; // Retry the request with fresh credentials
+                }
+            }
+
             if (is_rate_limit && retry_count < MAX_RETRIES) {
                 // Retry with exponential backoff
                 char retry_msg[256];

@@ -104,6 +104,19 @@ int bedrock_validate_credentials(AWSCredentials *creds, const char *profile);
 int bedrock_authenticate(const char *profile);
 
 /**
+ * Handle AWS authentication errors and attempt recovery
+ * Detects auth-related errors, attempts re-authentication, and reloads credentials
+ *
+ * Parameters:
+ *   config - BedrockConfig with current credentials (will be updated if successful)
+ *   http_status - HTTP status code from failed API request
+ *   error_message - Error message from API response
+ *
+ * Returns: 1 if credentials were refreshed (caller should retry request), 0 otherwise
+ */
+int bedrock_handle_auth_error(BedrockConfig *config, long http_status, const char *error_message);
+
+/**
  * Build AWS Bedrock API endpoint URL
  * Returns: Newly allocated string (caller must free), or NULL on error
  */
