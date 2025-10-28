@@ -2955,12 +2955,20 @@ static char* generate_session_id(void) {
 // ============================================================================
 
 int main(int argc, char *argv[]) {
+    // Handle version flag first (no API key needed)
+    if (argc == 2 && strcmp(argv[1], "--version") == 0) {
+        printf("Claude C version %s\n", CLAUDE_C_VERSION_FULL);
+        return 0;
+    }
+
     // Handle help flag first (no API key needed)
     if (argc == 2 && (strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "--help") == 0)) {
-        printf("Claude Code - Pure C Implementation (OpenAI Compatible)\n\n");
+        printf("Claude Code - Pure C Implementation (OpenAI Compatible)\n");
+        printf("Version: %s\n\n", CLAUDE_C_VERSION_FULL);
         printf("Usage:\n");
         printf("  %s               Start interactive mode\n", argv[0]);
-        printf("  %s -h, --help    Show this help message\n\n", argv[0]);
+        printf("  %s -h, --help    Show this help message\n", argv[0]);
+        printf("  %s --version     Show version information\n\n", argv[0]);
         printf("Environment Variables:\n");
         printf("  OPENAI_API_KEY       Required: Your OpenAI API key\n");
         printf("  OPENAI_API_BASE      Optional: API base URL (default: %s)\n", API_BASE_URL);
@@ -2971,6 +2979,7 @@ int main(int argc, char *argv[]) {
     // Check that no extra arguments were provided
     if (argc > 1) {
         LOG_ERROR("Unexpected arguments provided");
+        printf("Try '%s --help' for usage information.\n", argv[0]);
         return 1;
     }
 

@@ -8,12 +8,14 @@
 #define CLAUDE_INTERNAL_H
 
 #include <cjson/cJSON.h>
+#include "version.h"
 
 // ============================================================================
 // Configuration Constants
 // ============================================================================
 
-#define VERSION "0.0.1"
+// Use centralized version from version.h
+#define VERSION CLAUDE_C_VERSION
 
 // API Configuration - defaults can be overridden by environment variables
 #define API_BASE_URL "https://api.openai.com"
