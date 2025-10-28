@@ -8,9 +8,11 @@
  * Dependencies: libcurl, cJSON, pthread
  */
 
-#define _POSIX_C_SOURCE 200809L
-#define _DARWIN_C_SOURCE
-#define _GNU_SOURCE
+#ifdef __APPLE__
+    #define _DARWIN_C_SOURCE
+#else
+    #define _GNU_SOURCE
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
