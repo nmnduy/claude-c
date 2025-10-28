@@ -43,4 +43,7 @@ test_output/
 *.bak
 *.tmp
 
+# Project-local state and logs
+.claude-c/
+
 .envrc

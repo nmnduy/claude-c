@@ -80,7 +80,10 @@ export OPENAI_API_KEY="your-api-key-here"
 - `CLAUDE_C_LOG_PATH` - Full path to log file (e.g., `/var/log/claude.log`)
 - `CLAUDE_C_LOG_DIR` - Directory for logs (will use `claude.log` filename)
 - `CLAUDE_LOG_LEVEL` - Minimum log level: `DEBUG`, `INFO`, `WARN`, `ERROR` (default: INFO)
-- `CLAUDE_C_DB_PATH` - Path to SQLite database for API call history (default: `~/.local/share/claude-c/api_calls.db`)
+- `CLAUDE_C_DB_PATH` - Path to SQLite database for API call history (default: `./.claude-c/api_calls.db`)
+
+**Default Locations:**
+By default, logs and API call history are stored in `./.claude-c/` in the current working directory. This makes each project self-contained. Override with the environment variables above if needed.
 
 **UI Customization:**
 - `CLAUDE_C_THEME` - Path to Kitty theme file (e.g., `./colorschemes/dracula.conf`)
