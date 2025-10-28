@@ -233,6 +233,12 @@ static char* get_tool_details(const char *tool_name, cJSON *arguments) {
                 snprintf(details, sizeof(details), "\"%s\"", pattern->valuestring);
             }
         }
+    } else if (strcmp(tool_name, "TodoWrite") == 0) {
+        cJSON *todos = cJSON_GetObjectItem(arguments, "todos");
+        if (cJSON_IsArray(todos)) {
+            int count = cJSON_GetArraySize(todos);
+            snprintf(details, sizeof(details), "%d task%s", count, count == 1 ? "" : "s");
+        }
     }
     
     return strlen(details) > 0 ? details : NULL;

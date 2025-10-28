@@ -250,5 +250,3 @@ Typical performance on modern hardware:
 - No sandboxing: Bash tool has full shell access
 - File tools can access any readable/writable file
 - Intended for trusted environments only
-
-
