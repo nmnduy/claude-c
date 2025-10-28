@@ -1719,6 +1719,16 @@ static cJSON* call_api(ConversationState *state) {
         }
         api_payload = bedrock_payload;
         LOG_DEBUG("Converted request to Bedrock format (payload size: %zu bytes)", strlen(api_payload));
+
+        // Update request_copy to log the actual Bedrock payload sent to API
+        free(request_copy);
+        request_copy = strdup(bedrock_payload);
+        if (!request_copy) {
+            LOG_ERROR("Failed to copy Bedrock payload for logging");
+            free(bedrock_payload);
+            free(json_str);
+            return NULL;
+        }
     } else
 #endif
     {
@@ -1798,6 +1808,9 @@ static cJSON* call_api(ConversationState *state) {
             curl_easy_cleanup(curl);
             free(request_copy);
             free(json_str);
+            if (using_bedrock && api_payload != json_str) {
+                free(api_payload);
+            }
             LOG_INFO("API call interrupted by user (ESC pressed)");
             return NULL;
         }
@@ -1845,6 +1858,9 @@ static cJSON* call_api(ConversationState *state) {
 
             free(request_copy);
             free(json_str);
+            if (using_bedrock && api_payload != json_str) {
+                free(api_payload);
+            }
             free(response.output);
             return NULL;
         }
@@ -2013,6 +2029,9 @@ static cJSON* call_api(ConversationState *state) {
             cJSON_Delete(json_response);
             free(request_copy);
             free(json_str);
+            if (using_bedrock && api_payload != json_str) {
+                free(api_payload);
+            }
             free(response.output);
             return NULL;
         }
@@ -2042,6 +2061,9 @@ static cJSON* call_api(ConversationState *state) {
             cJSON_Delete(json_response);
             free(request_copy);
             free(json_str);
+            if (using_bedrock && api_payload != json_str) {
+                free(api_payload);
+            }
             free(response.output);
             return NULL;
         }
