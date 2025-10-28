@@ -1,4 +1,5 @@
 - [x] why so many linse between [Assistant] and everything else?
+
 ```sh
 [Tool: Grep] "User.*printf" in /Users/dunguyen/fgit/claude-c/src
 [Assistant]
@@ -61,6 +62,7 @@ Abort trap: 6
 
 - [ ] large paste fails. how does node js claude prevents that and show X lines pasted.
 - [x] pressing Esc will wait for tool to finish but there is no indicator
+    - [ ] 'esc' doesn't show interrupted right away.
 - [ ] logs are not flushed often?
 - [ ] are we logging enough? are all log records go to the same log file?
 - [x] all log records should have session id tag. sessions are essential and each run has a new session id
