@@ -26,9 +26,6 @@ jobs:
           - os: ubuntu-latest
             name: linux
             asset_name: claude-c-linux-x86_64
-          - os: macos-latest
-            name: macos
-            asset_name: claude-c-macos-x86_64
 
     steps:
     - name: Checkout code
@@ -39,11 +36,6 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y libcurl4-openssl-dev libcjson-dev sqlite3 libsqlite3-dev libssl-dev build-essential
-
-    - name: Install dependencies (macOS)
-      if: matrix.os == 'macos-latest'
-      run: |
-        brew install curl cjson sqlite3 openssl
 
     - name: Build
       run: |
@@ -74,7 +66,6 @@ jobs:
           echo ""
           echo "Dependencies:"
           echo "- Linux: libcurl, cjson, sqlite3 (usually pre-installed)"
-          echo "- macOS: brew install curl cjson sqlite3 (if needed)"
           echo ""
           echo "For more information, see README.md"
         } > claude-c-${{ matrix.name }}-x86_64/INSTALL.txt
@@ -138,7 +129,6 @@ jobs:
           echo "" >> $GITHUB_OUTPUT
           echo "## Downloads" >> $GITHUB_OUTPUT
           echo "- Linux: claude-c-linux-x86_64.tar.gz" >> $GITHUB_OUTPUT
-          echo "- macOS: claude-c-macos-x86_64.tar.gz" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
         fi
 
@@ -152,7 +142,6 @@ jobs:
         prerelease: ${{ steps.release_info.outputs.prerelease }}
         files: |
           artifacts/claude-c-linux-x86_64/claude-c-linux-x86_64.tar.gz
-          artifacts/claude-c-macos-x86_64/claude-c-macos-x86_64.tar.gz
         generate_release_notes: true
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
