@@ -1,6 +1,7 @@
+- [ ] rewrite release.yaml
 - [x] why so many linse between [Assistant] and everything else?
 
-- [ ] ctrl + l to clear input box
+- [x] ctrl + l to clear input box
 - [ ] pasting still fucks up the terminal
 - [ ] add retries to falied API calls
 - [ ] implement instruction queue. so user can keep typing
