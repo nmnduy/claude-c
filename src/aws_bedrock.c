@@ -422,6 +422,9 @@ int bedrock_validate_credentials(AWSCredentials *creds, const char *profile) {
 }
 
 int bedrock_authenticate(const char *profile) {
+    // Log authentication attempt at the start
+    LOG_INFO("Authenticating with AWS Bedrock (profile: %s)", profile ? profile : "default");
+    
     // Check for custom authentication command first
     const char *custom_auth_cmd = getenv(ENV_AWS_AUTH_COMMAND);
     char command[1024];
