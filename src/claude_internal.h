@@ -8,12 +8,14 @@
 #define CLAUDE_INTERNAL_H
 
 #include <cjson/cJSON.h>
+#include "version.h"
 
 // ============================================================================
 // Configuration Constants
 // ============================================================================
 
-#define VERSION "0.0.1"
+// Use centralized version from version.h
+#define VERSION CLAUDE_C_VERSION
 
 // API Configuration - defaults can be overridden by environment variables
 #define API_BASE_URL "https://api.openai.com"
@@ -38,6 +40,9 @@ struct PersistenceDB;
 
 // TodoList is defined in todo.h
 struct TodoList;
+
+// BedrockConfig is defined in aws_bedrock.h (opaque pointer)
+struct BedrockConfigStruct;
 
 // ============================================================================
 // Enums
@@ -88,6 +93,7 @@ typedef struct ConversationState {
     char *session_id;               // Unique session identifier for this conversation
     struct PersistenceDB *persistence_db;  // For logging API calls to SQLite
     struct TodoList *todo_list;     // Task tracking list
+    struct BedrockConfigStruct *bedrock_config;  // AWS Bedrock configuration (NULL if not using Bedrock)
 } ConversationState;
 
 // ============================================================================
