@@ -43,7 +43,6 @@ TEST_LINEEDIT_TARGET = $(BUILD_DIR)/test_lineedit
 TEST_TODO_TARGET = $(BUILD_DIR)/test_todo
 TEST_TODO_WRITE_TARGET = $(BUILD_DIR)/test_todo_write
 TEST_TIMING_TARGET = $(BUILD_DIR)/test_tool_timing
-TEST_RETRY_CONTEXT_TARGET = $(BUILD_DIR)/test_retry_context
 TEST_PASTE_TARGET = $(BUILD_DIR)/test_paste
 QUERY_TOOL = $(BUILD_DIR)/query_logs
 SRC = src/claude.c
@@ -72,7 +71,6 @@ TEST_LINEEDIT_SRC = tests/test_lineedit.c
 TEST_TODO_SRC = tests/test_todo.c
 TEST_TODO_WRITE_SRC = tests/test_todo_write.c
 TEST_PASTE_SRC = tests/test_paste.c
-TEST_RETRY_CONTEXT_SRC = tests/test_retry_context.c
 QUERY_TOOL_SRC = tools/query_logs.c
 
 .PHONY: all clean check-deps install test test-edit test-input test-read test-lineedit test-todo test-todo-write test-paste query-tool debug analyze sanitize-ub sanitize-all sanitize-leak valgrind memscan version show-version update-version bump-patch build
@@ -85,7 +83,7 @@ debug: check-deps $(BUILD_DIR)/claude-c-debug
 
 query-tool: check-deps $(QUERY_TOOL)
 
-test: test-edit test-input test-read test-lineedit test-todo test-paste test-timing test-retry-context
+test: test-edit test-input test-read test-lineedit test-todo test-paste test-timing
 
 test-edit: check-deps $(TEST_EDIT_TARGET)
 	@echo ""
@@ -134,12 +132,6 @@ test-timing: check-deps $(TEST_TIMING_TARGET)
 	@echo "Running tool timing tests..."
 	@echo ""
 	@./$(TEST_TIMING_TARGET)
-
-test-retry-context: check-deps $(TEST_RETRY_CONTEXT_TARGET)
-	@echo ""
-	@echo "Running retry context tests..."
-	@echo ""
-	@./$(TEST_RETRY_CONTEXT_TARGET)
 
 $(TARGET): $(SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(LINEEDIT_OBJ) $(COMMANDS_OBJ) $(COMPLETION_OBJ) $(TUI_OBJ) $(TODO_OBJ) $(VERSION_H) $(AWS_BEDROCK_OBJ)
 	@mkdir -p $(BUILD_DIR)
@@ -457,17 +449,6 @@ $(TEST_TIMING_TARGET): tests/test_tool_timing.c
 	@$(CC) $(CFLAGS) -o $(TEST_TIMING_TARGET) tests/test_tool_timing.c -lpthread
 	@echo ""
 	@echo "✓ Tool timing test build successful!"
-	@echo ""
-
-# Test target for retry context - tests retry logic with exponential backoff
-$(TEST_RETRY_CONTEXT_TARGET): $(TEST_RETRY_CONTEXT_SRC) src/retry_context.c
-	@mkdir -p $(BUILD_DIR)
-	@echo "Compiling retry context test suite..."
-	@$(CC) $(CFLAGS) -DTESTING -c -o $(BUILD_DIR)/retry_context_test.o src/retry_context.c
-	@$(CC) $(CFLAGS) -c -o $(BUILD_DIR)/test_retry_context.o $(TEST_RETRY_CONTEXT_SRC)
-	@$(CC) -o $(TEST_RETRY_CONTEXT_TARGET) $(BUILD_DIR)/retry_context_test.o $(BUILD_DIR)/test_retry_context.o -lm
-	@echo ""
-	@echo "✓ Retry context test build successful!"
 	@echo ""
 
 install: $(TARGET)
