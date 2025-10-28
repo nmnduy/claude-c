@@ -6,6 +6,11 @@
  *   LOG_INFO("Starting application");
  *   LOG_ERROR("Connection failed: %s", error_msg);
  *   log_shutdown();  // Cleanup at exit
+ *
+ * Environment Variables:
+ *   CLAUDE_C_LOG_PATH - Full path to log file (e.g., /tmp/myapp.log)
+ *   CLAUDE_C_LOG_DIR  - Directory for logs (uses claude.log as filename)
+ *   CLAUDE_LOG_LEVEL  - Minimum log level: DEBUG, INFO, WARN, ERROR
  */
 
 #ifndef LOGGER_H

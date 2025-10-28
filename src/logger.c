@@ -67,12 +67,44 @@ static int mkdir_p(const char *path) {
 
 /**
  * Get default log file path
- * Priority: ~/.local/share/claude-c/logs/claude.log
- * Fallback: /tmp/claude-c.log
+ * Priority: 
+ *   1. $CLAUDE_C_LOG_PATH (environment variable)
+ *   2. $CLAUDE_C_LOG_DIR/claude.log (if CLAUDE_C_LOG_DIR is set)
+ *   3. ~/.local/share/claude-c/logs/claude.log
+ *   4. /tmp/claude-c.log (fallback)
  */
 static int get_default_log_path(char *buffer, size_t buffer_size) {
-    const char *home = getenv("HOME");
+    // Check for explicit log file path first
+    const char *log_path_env = getenv("CLAUDE_C_LOG_PATH");
+    if (log_path_env && log_path_env[0] != '\0') {
+        snprintf(buffer, buffer_size, "%s", log_path_env);
+        
+        // Extract directory and ensure it exists
+        char dir_path[512];
+        snprintf(dir_path, sizeof(dir_path), "%s", log_path_env);
+        char *last_slash = strrchr(dir_path, '/');
+        if (last_slash) {
+            *last_slash = '\0';
+            if (mkdir_p(dir_path) != 0) {
+                fprintf(stderr, "Warning: Failed to create log directory: %s\n", dir_path);
+            }
+        }
+        
+        return 0;
+    }
+    
+    // Check for log directory override
+    const char *log_dir_env = getenv("CLAUDE_C_LOG_DIR");
+    if (log_dir_env && log_dir_env[0] != '\0') {
+        if (mkdir_p(log_dir_env) == 0) {
+            snprintf(buffer, buffer_size, "%s/claude.log", log_dir_env);
+            return 0;
+        } else {
+            fprintf(stderr, "Warning: Failed to create log directory: %s\n", log_dir_env);
+        }
+    }
 
+    const char *home = getenv("HOME");
     if (home) {
         // Try ~/.local/share/claude-c/logs/
         snprintf(buffer, buffer_size, "%s/.local/share/claude-c/logs", home);
