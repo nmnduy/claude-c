@@ -347,7 +347,7 @@ $(TEST_TODO_TARGET): $(TODO_SRC) $(TEST_TODO_SRC)
 	@$(CC) $(CFLAGS) -c -o $(BUILD_DIR)/todo_test.o $(TODO_SRC)
 	@$(CC) $(CFLAGS) -c -o $(BUILD_DIR)/test_todo.o $(TEST_TODO_SRC)
 	@echo "Linking test executable..."
-	@$(CC) -o $(TEST_TODO_TARGET) $(BUILD_DIR)/todo_test.o $(BUILD_DIR)/test_todo.o
+	@$(CC) -o $(TEST_TODO_TARGET) $(BUILD_DIR)/todo_test.o $(BUILD_DIR)/test_todo.o $(LDFLAGS)
 	@echo ""
 	@echo "✓ TODO list test build successful!"
 	@echo ""
