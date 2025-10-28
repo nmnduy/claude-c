@@ -77,3 +77,44 @@ Abort trap: 6
    Compiling solana-client v2.3.13
 ⠼ Running 1 tool...   Compiling uniffi v0.28.3
 ```
+
+- [ ] we need this output
+```sh
+⏺ Update(src/aws_bedrock.c)
+  ⎿  Updated src/aws_bedrock.c with 18 additions and 4 removals
+       338            creds->region = strdup(region ? region : "us-west-2");
+       339            creds->profile = strdup(profile_arg);
+       340            LOG_INFO("Loaded AWS credentials from AWS CLI config
+             (profile: %s)", profile_arg);
+       341 -          return creds;
+       341 +
+       342 +          // Validate credentials before returning
+       343 +          if (bedrock_validate_credentials(creds, profile_arg) == 1) {
+       344 +              LOG_INFO("AWS credentials validated successfully");
+       345 +              return creds;
+       346 +          } else {
+       347 +              LOG_WARN("AWS credentials from config are invalid or
+           + expired");
+       348 +              bedrock_creds_free(creds);
+       349 +              creds = calloc(1, sizeof(AWSCredentials));
+       350 +              if (!creds) {
+       351 +                  LOG_ERROR("Failed to allocate AWSCredentials");
+       352 +                  return NULL;
+       353 +              }
+       354 +              // Fall through to try SSO
+       355 +          }
+       356 +      } else {
+       357 +          free(key_id);
+       358 +          free(secret);
+       359        }
+       360
+       361 -      free(key_id);
+       362 -      free(secret);
+       363 -
+       361        // Try AWS SSO
+       362        LOG_INFO("Attempting to load credentials via AWS SSO for
+             profile: %s", profile_arg);
+       363
+
+∴ Thought for 1s (ctrl+o to show thinking)
+```
