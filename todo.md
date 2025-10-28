@@ -73,3 +73,29 @@ Abort trap: 6
 - [ ] logs are not flushed often?
 - [ ] are we logging enough? are all log records go to the same log file?
 - [x] all log records should have session id tag. sessions are essential and each run has a new session id
+
+- [ ] rust build messes up the terminal
+```sh
+⠏ Running 1 tool...   Compiling spl-associated-token-account-client v2.0.0
+⠸ Running 1 tool...   Compiling solana-compute-budget-interface v2.2.2
+⠼ Running 1 tool...   Compiling solana-rent-debits v2.2.1
+⠧ Running 1 tool...   Compiling solana-epoch-rewards-hasher v2.2.1
+⠏ Running 1 tool...    Building [=======================> ] 732/762: solana-streamer, solan
+⠙ Running 1 tool...   Compiling solana-sdk v2.3.1
+⠹ Running 1 tool...   Compiling solana-quic-client v2.3.13
+⠸ Running 1 tool...   Compiling solana-udp-client v2.3.13
+⠦ Running 1 tool...   Compiling solana-account-decoder v2.3.13
+⠇ Running 1 tool...   Compiling spl-associated-token-account v6.0.0
+⠦ Running 1 tool...    Building [=======================> ] 738/762: solana-streamer, solan
+⠋ Running 1 tool...   Compiling pyth-sdk-solana v0.10.6
+⠸ Running 1 tool...   Compiling spl-token v6.0.0
+⠇ Running 1 tool...   Compiling solana-rpc-client-nonce-utils v2.3.13
+⠋ Running 1 tool...   Compiling solana-thin-client v2.3.13
+⠙ Running 1 tool...   Compiling solana-tpu-client v2.3.13
+⠦ Running 1 tool...   Compiling uniffi_core v0.28.3
+⠇ Running 1 tool...   Compiling bip39 v2.2.0
+⠋ Running 1 tool...   Compiling rusqlite v0.32.1
+⠙ Running 1 tool...    Building [=======================> ] 748/762: bip39, solana-rpc-clie
+   Compiling solana-client v2.3.13
+⠼ Running 1 tool...   Compiling uniffi v0.28.3
+```

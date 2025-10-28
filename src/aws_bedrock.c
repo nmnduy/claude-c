@@ -24,15 +24,6 @@
 // ============================================================================
 
 /**
- * Convert string to lowercase (in-place)
- */
-static void str_tolower(char *str) {
-    for (char *p = str; *p; p++) {
-        *p = (char)tolower((unsigned char)*p);
-    }
-}
-
-/**
  * Hex encode a buffer
  */
 static char* hex_encode(const unsigned char *data, size_t len) {
@@ -112,7 +103,7 @@ static unsigned char* hmac_sha256(const unsigned char *key, size_t key_len,
  */
 static char* sha256_hash(const char *data) {
     unsigned char hash[SHA256_DIGEST_LENGTH];
-    SHA256((unsigned char*)data, strlen(data), hash);
+    SHA256((const unsigned char*)data, strlen(data), hash);
     return hex_encode(hash, SHA256_DIGEST_LENGTH);
 }
 
@@ -160,17 +151,6 @@ static char* exec_command(const char *command) {
     }
 
     return output;
-}
-
-/**
- * Get home directory path
- */
-static const char* get_home_dir(void) {
-    const char *home = getenv("HOME");
-    if (home) return home;
-
-    struct passwd *pw = getpwuid(getuid());
-    return pw ? pw->pw_dir : NULL;
 }
 
 // ============================================================================
@@ -348,11 +328,11 @@ AWSCredentials* bedrock_load_credentials(const char *profile, const char *region
         snprintf(command, sizeof(command),
                  "aws configure export-credentials --profile %s --format env 2>/dev/null",
                  profile_arg);
-        char *export_output = exec_command(command);
+        char *sso_export_output = exec_command(command);
 
-        if (export_output && strlen(export_output) > 0) {
+        if (sso_export_output && strlen(sso_export_output) > 0) {
             // Parse the export output (format: AWS_ACCESS_KEY_ID=xxx\nAWS_SECRET_ACCESS_KEY=yyy\n...)
-            char *line = strtok(export_output, "\n");
+            char *line = strtok(sso_export_output, "\n");
             while (line) {
                 if (strncmp(line, "AWS_ACCESS_KEY_ID=", 18) == 0) {
                     creds->access_key_id = strdup(line + 18);
@@ -363,7 +343,7 @@ AWSCredentials* bedrock_load_credentials(const char *profile, const char *region
                 }
                 line = strtok(NULL, "\n");
             }
-            free(export_output);
+            free(sso_export_output);
 
             if (creds->access_key_id && creds->secret_access_key) {
                 creds->region = strdup(region ? region : "us-west-2");
@@ -372,7 +352,7 @@ AWSCredentials* bedrock_load_credentials(const char *profile, const char *region
                 return creds;
             }
         } else {
-            free(export_output);
+            free(sso_export_output);
         }
 
         // SSO credentials not found, need to authenticate
@@ -406,9 +386,7 @@ int bedrock_validate_credentials(AWSCredentials *creds, const char *profile) {
         return 0;
     }
 
-    // Try a simple STS call to validate credentials
-    char command[512];
-    const char *profile_arg = profile ? profile : (creds->profile ? creds->profile : "default");
+    (void)profile;  // Unused parameter
 
     // Set environment variables for the validation call
     char env_cmd[1024];
@@ -740,7 +718,8 @@ cJSON* bedrock_convert_response(const char *bedrock_response) {
     cJSON_AddStringToObject(openai_json, "object", "chat.completion");
 
     // Add created timestamp
-    cJSON_AddNumberToObject(openai_json, "created", (double)time(NULL));
+    time_t now = time(NULL);
+    cJSON_AddNumberToObject(openai_json, "created", (double)now);
 
     // Add model
     cJSON *model = cJSON_GetObjectItem(anthropic_json, "model");
@@ -970,17 +949,17 @@ struct curl_slist* bedrock_sign_request(
     snprintf(key_buffer, sizeof(key_buffer), "AWS4%s", creds->secret_access_key);
 
     unsigned char k_date[32];
-    hmac_sha256((unsigned char*)key_buffer, strlen(key_buffer),
-                (unsigned char*)datestamp, strlen(datestamp), k_date);
+    hmac_sha256((const unsigned char*)key_buffer, strlen(key_buffer),
+                (const unsigned char*)datestamp, strlen(datestamp), k_date);
 
     unsigned char k_region[32];
-    hmac_sha256(k_date, 32, (unsigned char*)region, strlen(region), k_region);
+    hmac_sha256(k_date, 32, (const unsigned char*)region, strlen(region), k_region);
 
     unsigned char k_service[32];
-    hmac_sha256(k_region, 32, (unsigned char*)service, strlen(service), k_service);
+    hmac_sha256(k_region, 32, (const unsigned char*)service, strlen(service), k_service);
 
     unsigned char signing_key[32];
-    hmac_sha256(k_service, 32, (unsigned char*)"aws4_request", 12, signing_key);
+    hmac_sha256(k_service, 32, (const unsigned char*)"aws4_request", 12, signing_key);
 
     // Calculate signature
     unsigned char signature_bytes[32];
