@@ -50,11 +50,15 @@ static inline const char* get_spinner_color_status(void) {
 
 static const char* get_spinner_color_tool(void) {
     static char color_buf[32];
+    static int warned = 0;
     if (get_colorscheme_color(COLORSCHEME_TOOL, color_buf, sizeof(color_buf)) == 0) {
         return color_buf;
     }
-    // Log warning when falling back to default color
-    LOG_WARN("Using fallback color for spinner (tool)");
+    // Log warning when falling back to default color (only once)
+    if (!warned) {
+        LOG_WARN("Using fallback color for spinner (tool)");
+        warned = 1;
+    }
     return ANSI_FALLBACK_CYAN;
 }
 
