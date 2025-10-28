@@ -1,6 +1,7 @@
 - [ ] fix release.yaml
 - [x] why so many linse between [Assistant] and everything else?
 
+- [ ] print todo list
 - [ ] {"message":"Too many tokens, please wait before trying again."}. if api responded with this then handle appropriately
 - [ ] write state and logs to ./.claude-c by default
 - [x] ctrl + l to clear input box
