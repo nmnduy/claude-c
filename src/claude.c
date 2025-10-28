@@ -1893,22 +1893,16 @@ static cJSON* call_api(ConversationState *state) {
             const char *error_msg = curl_easy_strerror(res);
             LOG_ERROR("CURL request failed: %s", error_msg);
 
-            // Determine if error is retryable
-            int is_retryable = 0;
-            switch (res) {
-                case CURLE_COULDNT_RESOLVE_HOST:
-                case CURLE_COULDNT_CONNECT:
-                case CURLE_OPERATION_TIMEDOUT:
-                case CURLE_RECV_ERROR:
-                case CURLE_SEND_ERROR:
-                case CURLE_GOT_NOTHING:
-                case CURLE_PARTIAL_FILE:
-                    is_retryable = 1;
-                    break;
-                default:
-                    is_retryable = 0;
-                    break;
-            }
+            // Determine if error is retryable (transient network errors)
+            int is_retryable = (
+                res == CURLE_COULDNT_RESOLVE_HOST ||
+                res == CURLE_COULDNT_CONNECT ||
+                res == CURLE_OPERATION_TIMEDOUT ||
+                res == CURLE_RECV_ERROR ||
+                res == CURLE_SEND_ERROR ||
+                res == CURLE_GOT_NOTHING ||
+                res == CURLE_PARTIAL_FILE
+            );
 
             // Log failed request to persistence
             if (state->persistence_db) {
@@ -2028,7 +2022,9 @@ static cJSON* call_api(ConversationState *state) {
             // Retry on retryable HTTP errors (408, 429, 5xx)
             if (is_http_retryable && retry_count < MAX_RETRIES) {
                 // Add jitter: reduce delay by 0-25% randomly to prevent thundering herd
-                double jitter = 1.0 - ((double)rand() / RAND_MAX) * 0.25;
+                int rand_val = rand();
+                double rand_ratio = (double)rand_val / RAND_MAX;
+                double jitter = 1.0 - rand_ratio * 0.25;
                 int actual_delay_ms = (int)(backoff_ms * jitter);
 
                 // Check if this retry would exceed total wait time limit
@@ -2217,7 +2213,8 @@ static cJSON* call_api(ConversationState *state) {
 
             if (is_rate_limit && retry_count < MAX_RETRIES) {
                 // Add jitter: reduce delay by 0-25% randomly to prevent thundering herd
-                double jitter = 1.0 - ((double)rand() / RAND_MAX) * 0.25;
+                int rand_val = rand();
+                double jitter = 1.0 - ((double)rand_val / RAND_MAX) * 0.25;
                 int actual_delay_ms = (int)(backoff_ms * jitter);
 
                 // Check if this retry would exceed total wait time limit
