@@ -11,6 +11,7 @@
 
 #include <curl/curl.h>
 #include <cjson/cJSON.h>
+#include "claude_internal.h"  // For ApiResponse typedef
 
 // Forward declarations
 struct Provider;
@@ -21,7 +22,7 @@ struct ConversationState;
  * Used by provider->call_api() to communicate success/error state to retry logic
  */
 typedef struct {
-    cJSON *response;         // Parsed response in OpenAI format (NULL on error, caller must delete)
+    ApiResponse *response;   // Parsed vendor-agnostic response (NULL on error, caller must free)
     char *raw_response;      // Raw response body (for logging, caller must free)
     char *request_json;      // Raw request JSON (for logging, caller must free)
     long http_status;        // HTTP status code (0 if network error before response)

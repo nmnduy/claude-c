@@ -102,6 +102,7 @@ static int bedrock_handle_auth_error(BedrockConfig *config, long http_status, co
 
 // Internal API for module access
 #include "claude_internal.h"
+#include "provider.h"  // For ApiCallResult and Provider definitions
 #include "todo.h"
 
 // New input system modules
@@ -904,7 +905,7 @@ typedef struct {
     const char *tool_name;        // name of the tool
     cJSON *input;                 // arguments for tool
     ConversationState *state;     // conversation state
-    ContentBlock *result_block;   // pointer to results array slot
+    InternalContent *result_block;   // pointer to results array slot
 } ToolThreadArg;
 
 static void *tool_thread_func(void *arg) {
@@ -914,10 +915,10 @@ static void *tool_thread_func(void *arg) {
     // Free input JSON
     cJSON_Delete(t->input);
     // Populate result block
-    t->result_block->type = CONTENT_TOOL_RESULT;
-    t->result_block->tool_use_id = t->tool_use_id;
+    t->result_block->type = INTERNAL_TOOL_RESPONSE;
+    t->result_block->tool_id = t->tool_use_id;
     t->result_block->tool_name = strdup(t->tool_name);  // Store tool name for error reporting
-    t->result_block->tool_result = res;
+    t->result_block->tool_output = res;
     t->result_block->is_error = cJSON_HasObjectItem(res, "error");
     return NULL;
 }
@@ -1410,9 +1411,9 @@ static cJSON* execute_tool(const char *tool_name, cJSON *input, ConversationStat
 // ============================================================================
 
 // Forward declaration for cache_control helper
-static void add_cache_control(cJSON *obj);
+void add_cache_control(cJSON *obj);
 
-static cJSON* get_tool_definitions(int enable_caching) {
+cJSON* get_tool_definitions(int enable_caching) {
     cJSON *tool_array = cJSON_CreateArray();
 
     // Bash tool
@@ -1667,7 +1668,7 @@ static int is_prompt_caching_enabled(void) {
 }
 
 // Helper: Add cache_control to a JSON object (for content blocks)
-static void add_cache_control(cJSON *obj) {
+void add_cache_control(cJSON *obj) {
     cJSON *cache_ctrl = cJSON_CreateObject();
     cJSON_AddStringToObject(cache_ctrl, "type", "ephemeral");
     cJSON_AddItemToObject(obj, "cache_control", cache_ctrl);
@@ -1718,13 +1719,13 @@ char* build_request_json_from_state(ConversationState *state) {
         if (state->messages[i].role == MSG_SYSTEM) {
             // System messages: use content array with cache_control if enabled
             if (state->messages[i].content_count > 0 &&
-                state->messages[i].content[0].type == CONTENT_TEXT) {
+                state->messages[i].contents[0].type == INTERNAL_TEXT) {
 
                 // For system messages, use content array to support cache_control
                 cJSON *content_array = cJSON_CreateArray();
                 cJSON *text_block = cJSON_CreateObject();
                 cJSON_AddStringToObject(text_block, "type", "text");
-                cJSON_AddStringToObject(text_block, "text", state->messages[i].content[0].text);
+                cJSON_AddStringToObject(text_block, "text", state->messages[i].contents[0].text);
 
                 // Add cache_control to system message if caching is enabled
                 // This is the first cache breakpoint (system prompt)
@@ -1739,7 +1740,7 @@ char* build_request_json_from_state(ConversationState *state) {
             // User messages: check if it's tool results or plain text
             int has_tool_results = 0;
             for (int j = 0; j < state->messages[i].content_count; j++) {
-                if (state->messages[i].content[j].type == CONTENT_TOOL_RESULT) {
+                if (state->messages[i].contents[j].type == INTERNAL_TOOL_RESPONSE) {
                     has_tool_results = 1;
                     break;
                 }
@@ -1748,13 +1749,13 @@ char* build_request_json_from_state(ConversationState *state) {
             if (has_tool_results) {
                 // For tool results, we need to add them as "tool" role messages
                 for (int j = 0; j < state->messages[i].content_count; j++) {
-                    ContentBlock *cb = &state->messages[i].content[j];
-                    if (cb->type == CONTENT_TOOL_RESULT) {
+                    InternalContent *cb = &state->messages[i].contents[j];
+                    if (cb->type == INTERNAL_TOOL_RESPONSE) {
                         cJSON *tool_msg = cJSON_CreateObject();
                         cJSON_AddStringToObject(tool_msg, "role", "tool");
-                        cJSON_AddStringToObject(tool_msg, "tool_call_id", cb->tool_use_id);
+                        cJSON_AddStringToObject(tool_msg, "tool_call_id", cb->tool_id);
                         // Convert result to string
-                        char *result_str = cJSON_PrintUnformatted(cb->tool_result);
+                        char *result_str = cJSON_PrintUnformatted(cb->tool_output);
                         cJSON_AddStringToObject(tool_msg, "content", result_str);
                         free(result_str);
                         cJSON_AddItemToArray(messages_array, tool_msg);
@@ -1766,14 +1767,14 @@ char* build_request_json_from_state(ConversationState *state) {
             } else {
                 // Regular user text message
                 if (state->messages[i].content_count > 0 &&
-                    state->messages[i].content[0].type == CONTENT_TEXT) {
+                    state->messages[i].contents[0].type == INTERNAL_TEXT) {
 
                     // Use content array for recent messages to support cache_control
                     if (is_recent_message) {
                         cJSON *content_array = cJSON_CreateArray();
                         cJSON *text_block = cJSON_CreateObject();
                         cJSON_AddStringToObject(text_block, "type", "text");
-                        cJSON_AddStringToObject(text_block, "text", state->messages[i].content[0].text);
+                        cJSON_AddStringToObject(text_block, "text", state->messages[i].contents[0].text);
 
                         // Add cache_control to the last user message
                         if (i == state->count - 1) {
@@ -1784,7 +1785,7 @@ char* build_request_json_from_state(ConversationState *state) {
                         cJSON_AddItemToObject(msg, "content", content_array);
                     } else {
                         // For older messages, use simple string content
-                        cJSON_AddStringToObject(msg, "content", state->messages[i].content[0].text);
+                        cJSON_AddStringToObject(msg, "content", state->messages[i].contents[0].text);
                     }
                 }
             }
@@ -1794,20 +1795,20 @@ char* build_request_json_from_state(ConversationState *state) {
             char *text_content = NULL;
 
             for (int j = 0; j < state->messages[i].content_count; j++) {
-                ContentBlock *cb = &state->messages[i].content[j];
+                InternalContent *cb = &state->messages[i].contents[j];
 
-                if (cb->type == CONTENT_TEXT) {
+                if (cb->type == INTERNAL_TEXT) {
                     text_content = cb->text;
-                } else if (cb->type == CONTENT_TOOL_USE) {
+                } else if (cb->type == INTERNAL_TOOL_CALL) {
                     if (!tool_calls) {
                         tool_calls = cJSON_CreateArray();
                     }
                     cJSON *tool_call = cJSON_CreateObject();
-                    cJSON_AddStringToObject(tool_call, "id", cb->tool_use_id);
+                    cJSON_AddStringToObject(tool_call, "id", cb->tool_id);
                     cJSON_AddStringToObject(tool_call, "type", "function");
                     cJSON *function = cJSON_CreateObject();
                     cJSON_AddStringToObject(function, "name", cb->tool_name);
-                    char *args_str = cJSON_PrintUnformatted(cb->tool_input);
+                    char *args_str = cJSON_PrintUnformatted(cb->tool_params);
                     cJSON_AddStringToObject(function, "arguments", args_str);
                     free(args_str);
                     cJSON_AddItemToObject(tool_call, "function", function);
@@ -1843,12 +1844,49 @@ char* build_request_json_from_state(ConversationState *state) {
     return json_str;
 }
 
+// ============================================================================
+// API Response Management
+// ============================================================================
+
+/**
+ * Free an ApiResponse structure and all its owned resources
+ */
+void api_response_free(ApiResponse *response) {
+    if (!response) return;
+
+    // Free assistant message text
+    free(response->message.text);
+
+    // Free tool calls
+    if (response->tools) {
+        for (int i = 0; i < response->tool_count; i++) {
+            free(response->tools[i].id);
+            free(response->tools[i].name);
+            if (response->tools[i].parameters) {
+                cJSON_Delete(response->tools[i].parameters);
+            }
+        }
+        free(response->tools);
+    }
+
+    // Free raw response
+    if (response->raw_response) {
+        cJSON_Delete(response->raw_response);
+    }
+
+    free(response);
+}
+
+// ============================================================================
+// API Call Logic
+// ============================================================================
+
 /**
  * Call API with retry logic (generic wrapper around provider->call_api)
  * Handles exponential backoff for retryable errors
- * Returns: cJSON response or NULL on error
+ * Returns: ApiResponse or NULL on error
  */
-static cJSON* call_api_with_retries(ConversationState *state) {
+static ApiResponse* call_api_with_retries(ConversationState *state) {
     if (!state || !state->provider) {
         LOG_ERROR("Invalid state or provider");
         return NULL;
@@ -1894,21 +1932,8 @@ static cJSON* call_api_with_retries(ConversationState *state) {
 
             // Log success to persistence
             if (state->persistence_db && result.raw_response) {
-                // Count tool uses in response
-                int tool_count = 0;
-                cJSON *choices = cJSON_GetObjectItem(result.response, "choices");
-                if (choices && cJSON_IsArray(choices)) {
-                    cJSON *first_choice = cJSON_GetArrayItem(choices, 0);
-                    if (first_choice) {
-                        cJSON *message = cJSON_GetObjectItem(first_choice, "message");
-                        if (message) {
-                            cJSON *tool_calls = cJSON_GetObjectItem(message, "tool_calls");
-                            if (tool_calls && cJSON_IsArray(tool_calls)) {
-                                tool_count = cJSON_GetArraySize(tool_calls);
-                            }
-                        }
-                    }
-                }
+                // Tool count is already available in the ApiResponse
+                int tool_count = result.response->tool_count;
 
                 persistence_log_api_call(
                     state->persistence_db,
@@ -2024,7 +2049,7 @@ static cJSON* call_api_with_retries(ConversationState *state) {
 /**
  * Main API call entry point
  */
-static cJSON* call_api(ConversationState *state) {
+static ApiResponse* call_api(ConversationState *state) {
     return call_api_with_retries(state);
 }
 
@@ -2290,28 +2315,28 @@ static void add_system_message(ConversationState *state, const char *text) {
         return;
     }
 
-    Message *msg = &state->messages[state->count++];
+    InternalMessage *msg = &state->messages[state->count++];
     msg->role = MSG_SYSTEM;
-    msg->content = calloc(1, sizeof(ContentBlock));
-    if (!msg->content) {
+    msg->contents = calloc(1, sizeof(InternalContent));
+    if (!msg->contents) {
         LOG_ERROR("Failed to allocate memory for message content");
         state->count--;
         return;
     }
     msg->content_count = 1;
     // calloc already zeros memory, but explicitly set for analyzer
-    msg->content[0].type = CONTENT_TEXT;
-    msg->content[0].text = NULL;
-    msg->content[0].tool_use_id = NULL;
-    msg->content[0].tool_name = NULL;
-    msg->content[0].tool_input = NULL;
-    msg->content[0].tool_result = NULL;
+    msg->contents[0].type = INTERNAL_TEXT;
+    msg->contents[0].text = NULL;
+    msg->contents[0].tool_id = NULL;
+    msg->contents[0].tool_name = NULL;
+    msg->contents[0].tool_params = NULL;
+    msg->contents[0].tool_output = NULL;
 
-    msg->content[0].text = strdup(text);
-    if (!msg->content[0].text) {
+    msg->contents[0].text = strdup(text);
+    if (!msg->contents[0].text) {
         LOG_ERROR("Failed to duplicate message text");
-        free(msg->content);
-        msg->content = NULL;
+        free(msg->contents);
+        msg->contents = NULL;
         state->count--;
         return;
     }
@@ -2323,28 +2348,28 @@ static void add_user_message(ConversationState *state, const char *text) {
         return;
     }
 
-    Message *msg = &state->messages[state->count++];
+    InternalMessage *msg = &state->messages[state->count++];
     msg->role = MSG_USER;
-    msg->content = calloc(1, sizeof(ContentBlock));
-    if (!msg->content) {
+    msg->contents = calloc(1, sizeof(InternalContent));
+    if (!msg->contents) {
         LOG_ERROR("Failed to allocate memory for message content");
         state->count--; // Rollback count increment
         return;
     }
     msg->content_count = 1;
     // calloc already zeros memory, but explicitly set for analyzer
-    msg->content[0].type = CONTENT_TEXT;
-    msg->content[0].text = NULL;
-    msg->content[0].tool_use_id = NULL;
-    msg->content[0].tool_name = NULL;
-    msg->content[0].tool_input = NULL;
-    msg->content[0].tool_result = NULL;
+    msg->contents[0].type = INTERNAL_TEXT;
+    msg->contents[0].text = NULL;
+    msg->contents[0].tool_id = NULL;
+    msg->contents[0].tool_name = NULL;
+    msg->contents[0].tool_params = NULL;
+    msg->contents[0].tool_output = NULL;
 
-    msg->content[0].text = strdup(text);
-    if (!msg->content[0].text) {
+    msg->contents[0].text = strdup(text);
+    if (!msg->contents[0].text) {
         LOG_ERROR("Failed to duplicate message text");
-        free(msg->content);
-        msg->content = NULL;
+        free(msg->contents);
+        msg->contents = NULL;
         state->count--; // Rollback count increment
         return;
     }
@@ -2357,7 +2382,7 @@ static void add_assistant_message_openai(ConversationState *state, cJSON *messag
         return;
     }
 
-    Message *msg = &state->messages[state->count++];
+    InternalMessage *msg = &state->messages[state->count++];
     msg->role = MSG_ASSISTANT;
 
     // Count content blocks (text + tool calls)
@@ -2393,8 +2418,8 @@ static void add_assistant_message_openai(ConversationState *state, cJSON *messag
         return;
     }
 
-    msg->content = calloc((size_t)content_count, sizeof(ContentBlock));
-    if (!msg->content) {
+    msg->contents = calloc((size_t)content_count, sizeof(InternalContent));
+    if (!msg->contents) {
         LOG_ERROR("Failed to allocate memory for message content");
         state->count--; // Rollback count increment
         return;
@@ -2405,12 +2430,12 @@ static void add_assistant_message_openai(ConversationState *state, cJSON *messag
 
     // Add text content if present
     if (content && cJSON_IsString(content) && content->valuestring) {
-        msg->content[idx].type = CONTENT_TEXT;
-        msg->content[idx].text = strdup(content->valuestring);
-        if (!msg->content[idx].text) {
+        msg->contents[idx].type = INTERNAL_TEXT;
+        msg->contents[idx].text = strdup(content->valuestring);
+        if (!msg->contents[idx].text) {
             LOG_ERROR("Failed to duplicate message text");
-            free(msg->content);
-            msg->content = NULL;
+            free(msg->contents);
+            msg->contents = NULL;
             state->count--;
             return;
         }
@@ -2433,57 +2458,57 @@ static void add_assistant_message_openai(ConversationState *state, cJSON *messag
             cJSON *name = cJSON_GetObjectItem(function, "name");
             cJSON *arguments = cJSON_GetObjectItem(function, "arguments");
 
-            msg->content[idx].type = CONTENT_TOOL_USE;
-            msg->content[idx].tool_use_id = strdup(id->valuestring);
-            if (!msg->content[idx].tool_use_id) {
+            msg->contents[idx].type = INTERNAL_TOOL_CALL;
+            msg->contents[idx].tool_id = strdup(id->valuestring);
+            if (!msg->contents[idx].tool_id) {
                 LOG_ERROR("Failed to duplicate tool use ID");
                 // Cleanup previously allocated content
                 for (int j = 0; j < idx; j++) {
-                    free(msg->content[j].text);
-                    free(msg->content[j].tool_use_id);
-                    free(msg->content[j].tool_name);
+                    free(msg->contents[j].text);
+                    free(msg->contents[j].tool_id);
+                    free(msg->contents[j].tool_name);
                 }
-                free(msg->content);
-                msg->content = NULL;
+                free(msg->contents);
+                msg->contents = NULL;
                 state->count--;
                 return;
             }
-            msg->content[idx].tool_name = strdup(name->valuestring);
-            if (!msg->content[idx].tool_name) {
+            msg->contents[idx].tool_name = strdup(name->valuestring);
+            if (!msg->contents[idx].tool_name) {
                 LOG_ERROR("Failed to duplicate tool name");
-                free(msg->content[idx].tool_use_id);
+                free(msg->contents[idx].tool_id);
                 // Cleanup previously allocated content
                 for (int j = 0; j < idx; j++) {
-                    free(msg->content[j].text);
-                    free(msg->content[j].tool_use_id);
-                    free(msg->content[j].tool_name);
+                    free(msg->contents[j].text);
+                    free(msg->contents[j].tool_id);
+                    free(msg->contents[j].tool_name);
                 }
-                free(msg->content);
-                msg->content = NULL;
+                free(msg->contents);
+                msg->contents = NULL;
                 state->count--;
                 return;
             }
 
             // Parse arguments string as JSON
             if (arguments && cJSON_IsString(arguments)) {
-                msg->content[idx].tool_input = cJSON_Parse(arguments->valuestring);
+                msg->contents[idx].tool_params = cJSON_Parse(arguments->valuestring);
             } else {
-                msg->content[idx].tool_input = cJSON_CreateObject();
+                msg->contents[idx].tool_params = cJSON_CreateObject();
             }
             idx++;
         }
     }
 }
 
-static void add_tool_results(ConversationState *state, ContentBlock *results, int count) {
+static void add_tool_results(ConversationState *state, InternalContent *results, int count) {
     if (state->count >= MAX_MESSAGES) {
         LOG_ERROR("Maximum message count reached");
         return;
     }
 
-    Message *msg = &state->messages[state->count++];
+    InternalMessage *msg = &state->messages[state->count++];
     msg->role = MSG_USER;
-    msg->content = results;
+    msg->contents = results;
     msg->content_count = count;
 }
 
@@ -2503,14 +2528,14 @@ void clear_conversation(ConversationState *state) {
     // Free all other message content
     for (int i = system_msg_count; i < state->count; i++) {
         for (int j = 0; j < state->messages[i].content_count; j++) {
-            ContentBlock *cb = &state->messages[i].content[j];
+            InternalContent *cb = &state->messages[i].contents[j];
             free(cb->text);
-            free(cb->tool_use_id);
+            free(cb->tool_id);
             free(cb->tool_name);
-            if (cb->tool_input) cJSON_Delete(cb->tool_input);
-            if (cb->tool_result) cJSON_Delete(cb->tool_result);
+            if (cb->tool_params) cJSON_Delete(cb->tool_params);
+            if (cb->tool_output) cJSON_Delete(cb->tool_output);
         }
-        free(state->messages[i].content);
+        free(state->messages[i].contents);
     }
 
     // Reset message count (keeping system message)
@@ -2524,38 +2549,15 @@ void clear_conversation(ConversationState *state) {
     }
 }
 
-static void process_response(ConversationState *state, cJSON *response, TUIState *tui) {
+static void process_response(ConversationState *state, ApiResponse *response, TUIState *tui) {
     // Time the entire response processing
     struct timespec proc_start, proc_end;
     clock_gettime(CLOCK_MONOTONIC, &proc_start);
 
-    // OpenAI response format
-    cJSON *choices = cJSON_GetObjectItem(response, "choices");
-    if (!choices || !cJSON_IsArray(choices) || cJSON_GetArraySize(choices) == 0) {
-        if (tui) {
-            tui_add_conversation_line(tui, "[Error]", "Invalid response format: no choices", COLOR_PAIR_ERROR);
-        } else {
-            print_error("Invalid response format: no choices");
-        }
-        return;
-    }
-
-    cJSON *choice = cJSON_GetArrayItem(choices, 0);
-    cJSON *message = cJSON_GetObjectItem(choice, "message");
-    if (!message) {
-        if (tui) {
-            tui_add_conversation_line(tui, "[Error]", "Invalid response format: no message", COLOR_PAIR_ERROR);
-        } else {
-            print_error("Invalid response format: no message");
-        }
-        return;
-    }
-
     // Display assistant's text content if present
-    cJSON *content = cJSON_GetObjectItem(message, "content");
-    if (content && cJSON_IsString(content) && content->valuestring) {
+    if (response->message.text && response->message.text[0] != '\0') {
         // Skip whitespace-only content
-        const char *p = content->valuestring;
+        const char *p = response->message.text;
         while (*p && isspace((unsigned char)*p)) p++;
 
         if (*p != '\0') {  // Has non-whitespace content
@@ -2567,15 +2569,20 @@ static void process_response(ConversationState *state, cJSON *response, TUIState
         }
     }
 
-    // Add to conversation history
-    add_assistant_message_openai(state, message);
-
-    // Check for tool calls
-    cJSON *tool_calls = cJSON_GetObjectItem(message, "tool_calls");
-    int tool_count = 0;
-    if (tool_calls && cJSON_IsArray(tool_calls)) {
-        tool_count = cJSON_GetArraySize(tool_calls);
+    // Add to conversation history (using raw response for now)
+    // Extract message from raw_response for backward compatibility
+    cJSON *choices = cJSON_GetObjectItem(response->raw_response, "choices");
+    if (choices && cJSON_IsArray(choices) && cJSON_GetArraySize(choices) > 0) {
+        cJSON *choice = cJSON_GetArrayItem(choices, 0);
+        cJSON *message = cJSON_GetObjectItem(choice, "message");
+        if (message) {
+            add_assistant_message_openai(state, message);
+        }
     }
+
+    // Process tool calls from vendor-agnostic structure
+    int tool_count = response->tool_count;
+    ToolCall *tool_calls_array = response->tools;
 
     if (tool_count > 0) {
 
@@ -2586,47 +2593,39 @@ static void process_response(ConversationState *state, cJSON *response, TUIState
         clock_gettime(CLOCK_MONOTONIC, &tool_start);
 
         // Parallel tool execution
-        ContentBlock *results = calloc((size_t)tool_count, sizeof(ContentBlock));
+        InternalContent *results = calloc((size_t)tool_count, sizeof(InternalContent));
         pthread_t *threads = malloc((size_t)tool_count * sizeof(pthread_t));
         ToolThreadArg *args = malloc((size_t)tool_count * sizeof(ToolThreadArg));
         int thread_count = 0;
 
         // Launch tool execution threads
         for (int i = 0; i < tool_count; i++) {
-            cJSON *tool_call = cJSON_GetArrayItem(tool_calls, i);
-            cJSON *id = cJSON_GetObjectItem(tool_call, "id");
-            cJSON *function = cJSON_GetObjectItem(tool_call, "function");
-            if (!function) {
+            ToolCall *tool = &tool_calls_array[i];
+
+            if (!tool->name || !tool->id) {
                 // This should never happen - provider should sanitize responses
-                LOG_ERROR("Tool call missing 'function' object (provider validation failed)");
+                LOG_ERROR("Tool call missing name or id (provider validation failed)");
                 continue;
             }
-            cJSON *name = cJSON_GetObjectItem(function, "name");
-            cJSON *arguments = cJSON_GetObjectItem(function, "arguments");
 
-            // Parse arguments to get details
-            cJSON *input = NULL;
-            if (arguments && cJSON_IsString(arguments)) {
-                input = cJSON_Parse(arguments->valuestring);
-            } else {
-                input = cJSON_CreateObject();
-            }
+            // Use parameters directly (already parsed by provider)
+            cJSON *input = tool->parameters ? tool->parameters : cJSON_CreateObject();
 
-            char *tool_details = get_tool_details(name->valuestring, input);
+            char *tool_details = get_tool_details(tool->name, input);
 
             if (tui) {
                 char prefix_with_tool[128];
-                snprintf(prefix_with_tool, sizeof(prefix_with_tool), "[Tool: %s]", name->valuestring);
+                snprintf(prefix_with_tool, sizeof(prefix_with_tool), "[Tool: %s]", tool->name);
 
                 // Pass NULL for text when there are no details to avoid extra space
                 tui_add_conversation_line(tui, prefix_with_tool, tool_details, COLOR_PAIR_TOOL);
             } else {
-                print_tool(name->valuestring, tool_details);
+                print_tool(tool->name, tool_details);
             }
 
-            // Prepare thread arguments (input already parsed above)
-            args[thread_count].tool_use_id = strdup(id->valuestring);
-            args[thread_count].tool_name = name->valuestring;
+            // Prepare thread arguments
+            args[thread_count].tool_use_id = strdup(tool->id);
+            args[thread_count].tool_name = tool->name;
             args[thread_count].input = input;
             args[thread_count].state = state;
             args[thread_count].result_block = &results[i];
@@ -2711,7 +2710,7 @@ static void process_response(ConversationState *state, cJSON *response, TUIState
                 has_error = 1;
 
                 // Extract and display the error message
-                cJSON *error_obj = cJSON_GetObjectItem(results[i].tool_result, "error");
+                cJSON *error_obj = cJSON_GetObjectItem(results[i].tool_output, "error");
                 const char *error_msg = error_obj && cJSON_IsString(error_obj)
                     ? error_obj->valuestring
                     : "Unknown error";
@@ -2784,7 +2783,7 @@ static void process_response(ConversationState *state, cJSON *response, TUIState
         } else {
             tui_update_status(tui, "Processing tool results...");
         }
-        cJSON *next_response = call_api(state);
+        ApiResponse *next_response = call_api(state);
         // Clear status after API call completes
         if (!tui) {
             spinner_stop(followup_spinner, NULL, 1);  // Clear without message
@@ -2793,7 +2792,7 @@ static void process_response(ConversationState *state, cJSON *response, TUIState
         }
         if (next_response) {
             process_response(state, next_response, tui);
-            cJSON_Delete(next_response);
+            api_response_free(next_response);
         } else {
             // API call failed - show error to user
             const char *error_msg = "API call failed after executing tools. Check logs for details.";
@@ -2911,8 +2910,8 @@ static void interactive_mode(ConversationState *state) {
                     char *new_system_prompt = build_system_prompt(state);
                     if (new_system_prompt) {
                         if (state->count > 0 && state->messages[0].role == MSG_SYSTEM) {
-                            free(state->messages[0].content[0].text);
-                            state->messages[0].content[0].text = new_system_prompt;
+                            free(state->messages[0].contents[0].text);
+                            state->messages[0].contents[0].text = new_system_prompt;
                         }
                     }
                 } else {
@@ -2944,7 +2943,7 @@ static void interactive_mode(ConversationState *state) {
 
         // Call API with status update
         tui_update_status(&tui, "Waiting for API response...");
-        cJSON *response = call_api(state);
+        ApiResponse *response = call_api(state);
         tui_update_status(&tui, "");  // Clear status after API response
 
         if (!response) {
@@ -2952,18 +2951,18 @@ static void interactive_mode(ConversationState *state) {
             continue;
         }
 
-        // Check for errors
-        cJSON *error = cJSON_GetObjectItem(response, "error");
+        // Check for errors in raw response
+        cJSON *error = cJSON_GetObjectItem(response->raw_response, "error");
         if (error) {
             cJSON *error_message = cJSON_GetObjectItem(error, "message");
             const char *error_msg = error_message ? error_message->valuestring : "Unknown error";
             tui_add_conversation_line(&tui, "[Error]", error_msg, COLOR_PAIR_ERROR);
-            cJSON_Delete(response);
+            api_response_free(response);
             continue;
         }
 
         process_response(state, response, &tui);
-        cJSON_Delete(response);
+        api_response_free(response);
     }
 
     // Cleanup TUI
@@ -3274,16 +3273,16 @@ int main(int argc, char *argv[]) {
 
     // Cleanup
     for (int i = 0; i < state.count; i++) {
-        if (state.messages[i].content) {
+        if (state.messages[i].contents) {
             for (int j = 0; j < state.messages[i].content_count; j++) {
-                ContentBlock *cb = &state.messages[i].content[j];
+                InternalContent *cb = &state.messages[i].contents[j];
                 free(cb->text);
-                free(cb->tool_use_id);
+                free(cb->tool_id);
                 free(cb->tool_name);
-                if (cb->tool_input) cJSON_Delete(cb->tool_input);
-                if (cb->tool_result) cJSON_Delete(cb->tool_result);
+                if (cb->tool_params) cJSON_Delete(cb->tool_params);
+                if (cb->tool_output) cJSON_Delete(cb->tool_output);
             }
-            free(state.messages[i].content);
+            free(state.messages[i].contents);
         }
     }
 
