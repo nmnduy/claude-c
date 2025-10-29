@@ -16,7 +16,11 @@ typedef enum {
     COLORSCHEME_ASSISTANT,
     COLORSCHEME_TOOL,
     COLORSCHEME_ERROR,
-    COLORSCHEME_STATUS
+    COLORSCHEME_STATUS,
+    COLORSCHEME_DIFF_ADD,      // Added lines in diffs (green)
+    COLORSCHEME_DIFF_REMOVE,   // Removed lines in diffs (red)
+    COLORSCHEME_DIFF_HEADER,   // Diff metadata/headers (cyan)
+    COLORSCHEME_DIFF_CONTEXT   // Line numbers and context (dim)
 } ColorschemeElement;
 
 // RGB color structure (0-255 values)
@@ -34,6 +38,10 @@ typedef struct {
     RGB status_rgb;
     RGB error_rgb;
     RGB header_rgb;
+    RGB diff_add_rgb;    // Added lines (green)
+    RGB diff_remove_rgb; // Removed lines (red)
+    RGB diff_header_rgb; // Diff metadata (cyan)
+    RGB diff_context_rgb; // Line numbers/context (dim gray)
 } Theme;
 
 // Global theme state (non-static so it's shared across compilation units)
@@ -129,6 +137,18 @@ static int get_colorscheme_color(ColorschemeElement element, char *buf, size_t b
             break;
         case COLORSCHEME_STATUS:
             rgb = g_theme.status_rgb;
+            break;
+        case COLORSCHEME_DIFF_ADD:
+            rgb = g_theme.diff_add_rgb;
+            break;
+        case COLORSCHEME_DIFF_REMOVE:
+            rgb = g_theme.diff_remove_rgb;
+            break;
+        case COLORSCHEME_DIFF_HEADER:
+            rgb = g_theme.diff_header_rgb;
+            break;
+        case COLORSCHEME_DIFF_CONTEXT:
+            rgb = g_theme.diff_context_rgb;
             break;
         default:
             return -1;
@@ -229,6 +249,22 @@ static int load_kitty_theme(const char *filepath, Theme *theme) {
                 LOG_DEBUG("[THEME]   -> Set header_rgb (fallback to color4) = RGB(%d,%d,%d)", rgb.r, rgb.g, rgb.b);
             }
         }
+    }
+
+    // Map standard Kitty colors to diff elements (after main parsing loop)
+    // These use the same color mappings as the primary elements
+    theme->diff_add_rgb = theme->user_rgb;        // Green for additions (same as user)
+    theme->diff_remove_rgb = theme->error_rgb;    // Red for removals (same as error)
+    theme->diff_header_rgb = theme->header_rgb;   // Cyan for diff headers (same as header)
+    theme->diff_context_rgb = theme->foreground_rgb;  // Default color for context
+    
+    // Make context slightly dimmer by reducing brightness
+    int avg = (theme->diff_context_rgb.r + theme->diff_context_rgb.g + theme->diff_context_rgb.b) / 3;
+    if (avg > 100) {
+        // Dim by ~40%
+        theme->diff_context_rgb.r = (theme->diff_context_rgb.r * 6) / 10;
+        theme->diff_context_rgb.g = (theme->diff_context_rgb.g * 6) / 10;
+        theme->diff_context_rgb.b = (theme->diff_context_rgb.b * 6) / 10;
     }
 
     fclose(f);

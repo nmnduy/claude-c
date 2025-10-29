@@ -76,6 +76,20 @@ static const char* get_spinner_color_success(void) {
     return ANSI_FALLBACK_GREEN;
 }
 
+static const char* get_spinner_color_error(void) {
+    static char color_buf[32];
+    static int warned = 0;
+    if (get_colorscheme_color(COLORSCHEME_ERROR, color_buf, sizeof(color_buf)) == 0) {
+        return color_buf;
+    }
+    // Log warning when falling back to default color (only once)
+    if (!warned) {
+        LOG_WARN("Using fallback color for spinner (error)");
+        warned = 1;
+    }
+    return ANSI_FALLBACK_ERROR;
+}
+
 #define SPINNER_CYAN get_spinner_color_tool()
 #define SPINNER_YELLOW get_spinner_color_status()
 #define SPINNER_GREEN get_spinner_color_success()
@@ -169,7 +183,7 @@ static void spinner_stop(Spinner *spinner, const char *final_message, int succes
         if (success) {
             printf("%s✓%s %s\n", SPINNER_GREEN, SPINNER_RESET, final_message);
         } else {
-            printf("%s✗%s %s\n", ANSI_FALLBACK_ERROR, SPINNER_RESET, final_message);
+            printf("%s✗%s %s\n", get_spinner_color_error(), SPINNER_RESET, final_message);
         }
     }
 
