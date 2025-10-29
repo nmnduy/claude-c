@@ -158,6 +158,67 @@ static int get_colorscheme_color(ColorschemeElement element, char *buf, size_t b
     return 0;
 }
 
+#include "builtin_themes.h"
+
+// Load Kitty theme from built-in string (for embedded themes)
+static int load_kitty_theme_buf(const char *buf_data, Theme *theme) {
+    LOG_INFO("[THEME] Loading built-in Kitty theme");
+    // Use fmemopen to treat string as FILE*
+    FILE *f = fmemopen((void *)buf_data, strlen(buf_data), "r");
+    if (!f) {
+        LOG_ERROR("[THEME] ERROR: Failed to open built-in theme buffer");
+        return 0;
+    }
+    // Delegate to existing load logic by temporarily writing to a temp file
+    // For simplicity, reimplement parsing here:
+    char line[1024];
+    int line_num = 0;
+    int parsed_count = 0;
+    int found_foreground = 0, found_color1 = 0, found_color2 = 0, found_color3 = 0, found_color6 = 0;
+    while (fgets(line, sizeof(line), f)) {
+        line_num++;
+        size_t len = strlen(line);
+        if (len > 0 && line[len-1] == '\n') line[len-1] = '\0';
+        char *p = line;
+        while (*p && isspace(*p)) p++;
+        if (*p == '\0' || *p == '#') continue;
+        char key[64], value[32];
+        if (sscanf(p, "%63s %31s", key, value) == 2) {
+            RGB rgb = parse_hex_color(value);
+            if (strcmp(key, "foreground") == 0) {
+                theme->foreground_rgb = rgb;
+                theme->assistant_rgb = rgb;
+                parsed_count++; found_foreground = 1;
+            } else if (strcmp(key, "color2") == 0) {
+                theme->user_rgb = rgb; parsed_count++; found_color2 = 1;
+            } else if (strcmp(key, "color3") == 0) {
+                theme->status_rgb = rgb; parsed_count++; found_color3 = 1;
+            } else if (strcmp(key, "color1") == 0) {
+                theme->error_rgb = rgb; parsed_count++; found_color1 = 1;
+            } else if (strcmp(key, "color6") == 0) {
+                theme->header_rgb = rgb;
+                if (found_foreground) theme->assistant_rgb = rgb;
+                parsed_count++; found_color6 = 1;
+            } else if (strcmp(key, "color4") == 0 && !found_color6) {
+                theme->header_rgb = rgb; parsed_count++;
+            }
+        }
+    }
+    // Map diff colors
+    theme->diff_add_rgb = theme->user_rgb;
+    theme->diff_remove_rgb = theme->error_rgb;
+    theme->diff_header_rgb = theme->header_rgb;
+    theme->diff_context_rgb = theme->foreground_rgb;
+    int avg = (theme->diff_context_rgb.r + theme->diff_context_rgb.g + theme->diff_context_rgb.b) / 3;
+    if (avg > 100) {
+        theme->diff_context_rgb.r = (theme->diff_context_rgb.r * 6) / 10;
+        theme->diff_context_rgb.g = (theme->diff_context_rgb.g * 6) / 10;
+        theme->diff_context_rgb.b = (theme->diff_context_rgb.b * 6) / 10;
+    }
+    fclose(f);
+    return parsed_count > 0;
+}
+
 // Load Kitty theme from file
 // Uses ONLY standard Kitty color names: foreground, background, color0-15
 static int load_kitty_theme(const char *filepath, Theme *theme) {
@@ -295,6 +356,45 @@ static int load_kitty_theme(const char *filepath, Theme *theme) {
 // Returns 0 on success, -1 on failure
 // Note: This doesn't require ncurses - works with raw ANSI codes
 static inline int init_colorscheme(const char *filepath) {
+    LOG_DEBUG("[THEME] Initializing colorscheme system");
+
+    if (filepath) {
+        LOG_DEBUG("[THEME] Theme path provided: %s", filepath);
+        // Check for built-in theme
+        const char *builtin = get_builtin_theme_content(filepath);
+        if (builtin) {
+            LOG_DEBUG("[THEME] Using built-in theme for '%s'", filepath);
+            if (load_kitty_theme_buf(builtin, &g_theme)) {
+                LOG_DEBUG("[THEME] Successfully loaded built-in theme");
+                g_theme_loaded = 1;
+                return 0;
+            }
+            LOG_WARN("[THEME] Failed to load built-in theme for '%s'", filepath);
+        } else {
+            // Try loading external theme file
+            LOG_DEBUG("[THEME] Attempting to load external theme from: %s", filepath);
+            if (load_kitty_theme(filepath, &g_theme)) {
+                LOG_DEBUG("[THEME] Successfully loaded external theme");
+                g_theme_loaded = 1;
+                return 0;
+            }
+            LOG_WARN("[THEME] Failed to load external theme from %s", filepath);
+        }
+    } else {
+        LOG_DEBUG("[THEME] No custom theme path provided");
+    }
+
+    // No theme loaded - warn user and rely on fallback ANSI colors
+    fprintf(stderr, "\033[33mWarning: No Kitty theme loaded, using standard ANSI fallback colors\033[0m\n");
+    fprintf(stderr, "  Set CLAUDE_C_THEME environment variable to a .conf file or built-in theme name (e.g., 'dracula') to use custom colors\n");
+    fprintf(stderr, "  Example: export CLAUDE_C_THEME=\"dracula\" or /path/to/dracula.conf\n");
+
+    // Don't set g_theme_loaded = 1, so get_colorscheme_color() will return -1
+    // and code will fall back to ANSI_FALLBACK_* constants from fallback_colors.h
+    g_theme_loaded = 0;
+
+    return -1;  // Indicate no theme loaded
+}
     LOG_DEBUG("[THEME] Initializing colorscheme system");
 
     // Try to load custom Kitty theme
