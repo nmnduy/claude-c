@@ -580,8 +580,8 @@ int bedrock_authenticate(const char *profile) {
     }
 }
 
-int bedrock_handle_auth_error(BedrockConfig *config, long http_status, const char *error_message) {
-    if (!config || !error_message) {
+int bedrock_handle_auth_error(BedrockConfig *config, long http_status, const char *error_message, const char *response_body) {
+    if (!config) {
         return 0;
     }
 
@@ -590,28 +590,39 @@ int bedrock_handle_auth_error(BedrockConfig *config, long http_status, const cha
         return 0;
     }
 
-    // Check for AWS authentication error patterns
+    // Store current access key ID for comparison (to detect external rotation)
+    char *old_access_key = NULL;
+    if (config->creds && config->creds->access_key_id) {
+        old_access_key = strdup(config->creds->access_key_id);
+    }
+
+    // Check for AWS authentication error patterns in both error_message and response_body
     int is_auth_error = 0;
-    if (strstr(error_message, "ExpiredToken") ||
-        strstr(error_message, "InvalidToken") ||
-        strstr(error_message, "InvalidClientTokenId") ||
-        strstr(error_message, "AccessDenied") ||
-        strstr(error_message, "TokenExpired") ||
-        strstr(error_message, "SignatureDoesNotMatch") ||
-        strstr(error_message, "No auth credentials found") ||
-        strstr(error_message, "credentials") ||
-        strstr(error_message, "unauthorized") ||
-        strstr(error_message, "authentication")) {
-        is_auth_error = 1;
+    const char *sources[] = {error_message, response_body, NULL};
+    for (int i = 0; sources[i] != NULL; i++) {
+        if (!sources[i]) continue;
+
+        if (strstr(sources[i], "ExpiredToken") ||
+            strstr(sources[i], "InvalidToken") ||
+            strstr(sources[i], "InvalidClientTokenId") ||
+            strstr(sources[i], "AccessDenied") ||
+            strstr(sources[i], "TokenExpired") ||
+            strstr(sources[i], "SignatureDoesNotMatch") ||
+            strstr(sources[i], "UnrecognizedClientException") ||
+            strstr(sources[i], "No auth credentials found") ||
+            strstr(sources[i], "credentials") ||
+            strstr(sources[i], "unauthorized") ||
+            strstr(sources[i], "authentication")) {
+            is_auth_error = 1;
+            LOG_DEBUG("Detected auth error pattern in source %d", i);
+            break;
+        }
     }
 
     if (!is_auth_error) {
+        free(old_access_key);
         return 0;
     }
-
-    // Try to refresh AWS credentials
-    LOG_WARN("Detected AWS authentication error (HTTP %ld), attempting credential refresh", http_status);
-    printf("\nAWS credentials may be expired. Attempting to refresh...\n");
 
     // Determine which profile to use for authentication
     const char *profile = NULL;
@@ -619,18 +630,58 @@ int bedrock_handle_auth_error(BedrockConfig *config, long http_status, const cha
         profile = config->creds->profile;
     }
 
+    // Store region before any operations
+    const char *region = config->region;
+
+    // Check if credentials were rotated externally (e.g., by another process)
+    LOG_DEBUG("Checking if credentials were rotated externally...");
+    AWSCredentials *fresh_creds = bedrock_load_credentials(profile, region);
+    if (fresh_creds) {
+        // Compare access keys to detect external rotation
+        if (old_access_key && fresh_creds->access_key_id &&
+            strcmp(old_access_key, fresh_creds->access_key_id) != 0) {
+            // Credentials were rotated externally, use the new ones
+            LOG_INFO("Detected externally rotated credentials, using new credentials");
+            printf("\nDetected new AWS credentials from external source. Using updated credentials...\n\n");
+
+            // Free old credentials and use new ones
+            if (config->creds) {
+                bedrock_creds_free(config->creds);
+            }
+            config->creds = fresh_creds;
+            free(old_access_key);
+            return 1;  // Signal retry with new credentials
+        }
+
+        // Credentials are the same, need to validate them
+        LOG_DEBUG("Credentials unchanged, validating current credentials...");
+        if (bedrock_validate_credentials(fresh_creds, profile) == 1) {
+            // Credentials are valid but request failed - might be a transient error
+            LOG_INFO("Current credentials are valid, this may be a transient error");
+            bedrock_creds_free(fresh_creds);
+            free(old_access_key);
+            return 0;  // Don't retry, not a credential issue
+        }
+
+        // Credentials are invalid/expired, need to re-authenticate
+        LOG_DEBUG("Credentials are invalid/expired, need to re-authenticate");
+        bedrock_creds_free(fresh_creds);
+    }
+
+    // Try to refresh AWS credentials
+    LOG_WARN("AWS credentials expired or invalid (HTTP %ld), attempting to re-authenticate", http_status);
+    printf("\nAWS credentials are expired or invalid. Starting re-authentication...\n");
+
     // Attempt to re-authenticate
     int auth_result = bedrock_authenticate(profile);
     if (auth_result != 0) {
         LOG_ERROR("AWS credential refresh failed");
+        free(old_access_key);
         return 0;
     }
 
     // Authentication successful, reload credentials
-    LOG_INFO("Credential refresh successful, reloading AWS credentials");
-
-    // Store region before freeing old credentials
-    const char *region = config->region;
+    LOG_INFO("Re-authentication successful, reloading AWS credentials");
 
     // Free old credentials
     if (config->creds) {
@@ -642,14 +693,16 @@ int bedrock_handle_auth_error(BedrockConfig *config, long http_status, const cha
     AWSCredentials *new_creds = bedrock_load_credentials(profile, region);
     if (!new_creds) {
         LOG_ERROR("Failed to reload AWS credentials after authentication");
+        free(old_access_key);
         return 0;
     }
 
     // Update config with fresh credentials
     config->creds = new_creds;
 
-    printf("Credentials refreshed. Retrying request...\n\n");
+    printf("Credentials refreshed successfully. Retrying request...\n\n");
     LOG_INFO("AWS credentials successfully refreshed and reloaded");
+    free(old_access_key);
     return 1;  // Signal that retry is appropriate
 }
 
