@@ -235,11 +235,25 @@ Provider* openai_provider_create(const char *api_key, const char *base_url) {
         return NULL;
     }
 
-    // Copy or set default base URL
+    // Copy or set default base URL - ensure it has the proper endpoint path
     if (base_url && base_url[0] != '\0') {
-        config->base_url = strdup(base_url);
+        // Check if base_url already has an endpoint path (contains "/v1/")
+        // If it does, use it as-is; otherwise append the OpenAI endpoint
+        if (strstr(base_url, "/v1/") != NULL) {
+            // Already has an endpoint path (likely Anthropic or custom)
+            config->base_url = strdup(base_url);
+        } else {
+            // Base domain only - append OpenAI chat completions endpoint
+            size_t url_len = strlen(base_url) + strlen("/v1/chat/completions") + 1;
+            config->base_url = malloc(url_len);
+            if (config->base_url) {
+                snprintf(config->base_url, url_len, "%s/v1/chat/completions", base_url);
+                LOG_INFO("OpenAI provider: appended endpoint path to base URL: %s", config->base_url);
+            }
+        }
+
         if (!config->base_url) {
-            LOG_ERROR("OpenAI provider: failed to duplicate base URL");
+            LOG_ERROR("OpenAI provider: failed to set base URL");
             free(config->api_key);
             free(config);
             free(provider);
