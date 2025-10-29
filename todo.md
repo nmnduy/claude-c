@@ -16,7 +16,7 @@
 - [x] pasting still fucks up the terminal
 - [x] add retries to falied API calls
 - [ ] implement instruction queue. so user can keep typing
-- [ ] run memory tools
+- [ ] run memory analyzers
 
 - [x]
 ```sh
