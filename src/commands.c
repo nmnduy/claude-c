@@ -248,7 +248,7 @@ CompletionResult* commands_tab_completer(const char *line, int cursor_pos, void 
         char cmd_name[64];
         int clen = cmd_name_len;
         if (clen >= (int)sizeof(cmd_name)) clen = sizeof(cmd_name) - 1;
-        memcpy(cmd_name, line + 1, clen);
+        memcpy(cmd_name, line + 1, (size_t)clen);
         cmd_name[clen] = '\0';
         for (int i = 0; i < command_count; i++) {
             const Command *cmd = command_registry[i];
@@ -270,7 +270,7 @@ static CompletionResult* dir_path_completer(const char *line, int cursor_pos, vo
     if (arg_len < 0) arg_len = 0;
     char prefix[PATH_MAX];
     int plen = arg_len < PATH_MAX ? arg_len : PATH_MAX - 1;
-    memcpy(prefix, arg, plen);
+    memcpy(prefix, arg, (size_t)plen);
     prefix[plen] = '\0';
     char pattern[PATH_MAX];
     if (plen == 0) strcpy(pattern, "*"); else snprintf(pattern, sizeof(pattern), "%s*", prefix);
