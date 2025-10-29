@@ -2,6 +2,8 @@
 - [x] why so many linse between [Assistant] and everything else?
 
 - [ ] plan mode
+- [ ] remove ANTHROPIC_MODEL env var usage. its confusing
+- [ ] tmux paste doesn't get handled correctly in the input
 - [ ] receive user input
 - [x] print todo list after creating it or when updating the TODO list
 - [ ] {"message":"Too many tokens, please wait before trying again."}. if api responded with this then handle appropriately
@@ -131,3 +133,16 @@ Abort trap: 6
     - [ ] use bash commands to find line range
     - [ ] use bash commands to insert text at lines
 - [ ] add Sleep tool. agent can wait for certain thing to happen before continuing with work
+
+
+- [ ] ~/fgit/claude-c/msg-q (msg-q ✓)
+$ sqlite3 .claude-c/api_calls.db 'select api_base_url, http_status, response_json from api_calls order by timestamp desc limit 1;'
+https://api.openai.com|400|{
+  "error": {
+    "message": "An assistant message with 'tool_calls' must be followed by tool messages responding to each 'tool_call_id'. The following tool_call_ids did not have response messages: call_VJ3BU6CmJMXEQvBs5yLFGiFi",
+    "type": "invalid_request_error",
+    "param": "messages.[3].role",
+    "code": null
+  }
+}
+- [ ] remove paste confirmation
