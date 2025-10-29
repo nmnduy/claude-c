@@ -1,6 +1,7 @@
 # Makefile for Claude Code - Pure C Edition
 
 CC ?= gcc
+CLANG = clang
 CFLAGS = -Werror -Wall -Wextra -Wpedantic -Wformat=2 -Wconversion -Wshadow -Wcast-qual -Wcast-align -Wstrict-prototypes -Wmissing-prototypes -Wmissing-declarations -Wuninitialized -Warray-bounds -Wvla -Wwrite-strings -Wnull-dereference -Wimplicit-fallthrough -Wsign-conversion -Wsign-compare -Wfloat-equal -Wpointer-arith -Wbad-function-cast -Wstrict-overflow -Waggregate-return -Wredundant-decls -Wnested-externs -Winline -Wswitch-enum -Wswitch-default -Wenum-conversion -Wdisabled-optimization -O2 -std=c11 -D_POSIX_C_SOURCE=200809L -D_BSD_SOURCE=1 $(SANITIZERS)
 DEBUG_CFLAGS = -Werror -Wall -Wextra -Wpedantic -Wformat=2 -Wconversion -Wshadow -Wcast-qual -Wcast-align -Wstrict-prototypes -Wmissing-prototypes -Wmissing-declarations -Wuninitialized -Warray-bounds -Wvla -Wwrite-strings -Wnull-dereference -Wimplicit-fallthrough -Wsign-conversion -Wsign-compare -Wfloat-equal -Wpointer-arith -Wbad-function-cast -Wstrict-overflow -Waggregate-return -Wredundant-decls -Wnested-externs -Winline -Wswitch-enum -Wswitch-default -Wenum-conversion -Wdisabled-optimization -g -O0 -std=c11 -D_POSIX_C_SOURCE=200809L -D_BSD_SOURCE=1 -fsanitize=address -fno-omit-frame-pointer
 LDFLAGS = -lcurl -lpthread -lsqlite3 -lssl -lcrypto $(SANITIZERS)
@@ -95,11 +96,13 @@ TEST_OPENAI_FORMAT_SRC = tests/test_openai_format.c
 TEST_WRITE_DIFF_INTEGRATION_SRC = tests/test_write_diff_integration.c
 QUERY_TOOL_SRC = tools/query_logs.c
 
-.PHONY: all clean check-deps install test test-edit test-input test-read test-lineedit test-todo test-todo-write test-paste test-retry-jitter test-openai-format test-write-diff-integration query-tool debug analyze sanitize-ub sanitize-all sanitize-leak valgrind memscan version show-version update-version bump-patch build
+.PHONY: all clean check-deps install test test-edit test-input test-read test-lineedit test-todo test-todo-write test-paste test-retry-jitter test-openai-format test-write-diff-integration query-tool debug analyze sanitize-ub sanitize-all sanitize-leak valgrind memscan version show-version update-version bump-patch build clang
 
 all: check-deps $(TARGET)
 
 build: check-deps $(TARGET)
+
+clang: check-deps $(BUILD_DIR)/claude-c-clang
 
 debug: check-deps $(BUILD_DIR)/claude-c-debug
 
@@ -254,6 +257,17 @@ $(BUILD_DIR)/claude-c-debug: $(SRC) $(LOGGER_SRC) $(PERSISTENCE_SRC) $(MIGRATION
 	@echo "  - Double-free"
 	@echo "  - Heap/stack buffer overflows"
 	@echo "  - Memory leaks"
+	@echo ""
+
+# Build with clang compiler
+$(BUILD_DIR)/claude-c-clang: $(SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(LINEEDIT_OBJ) $(COMMANDS_OBJ) $(COMPLETION_OBJ) $(TUI_OBJ) $(TODO_OBJ) $(AWS_BEDROCK_OBJ) $(PROVIDER_OBJ) $(OPENAI_PROVIDER_OBJ) $(OPENAI_MESSAGES_OBJ) $(BEDROCK_PROVIDER_OBJ) $(BUILTIN_THEMES_OBJ) $(VERSION_H)
+	@mkdir -p $(BUILD_DIR)
+	@echo "Building with clang compiler..."
+	$(CLANG) $(CFLAGS) -o $(BUILD_DIR)/claude-c-clang $(SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(LINEEDIT_OBJ) $(COMMANDS_OBJ) $(COMPLETION_OBJ) $(TUI_OBJ) $(TODO_OBJ) $(AWS_BEDROCK_OBJ) $(PROVIDER_OBJ) $(OPENAI_PROVIDER_OBJ) $(OPENAI_MESSAGES_OBJ) $(BEDROCK_PROVIDER_OBJ) $(BUILTIN_THEMES_OBJ) $(LDFLAGS)
+	@echo ""
+	@echo "✓ Clang build successful!"
+	@echo "Version: $(VERSION)"
+	@echo "Run: ./$(BUILD_DIR)/claude-c-clang \"your prompt here\""
 	@echo ""
 
 # Static analysis with compiler's built-in analyzer
@@ -574,6 +588,7 @@ help:
 	@echo ""
 	@echo "Usage:"
 	@echo "  make           - Build the claude-c executable"
+	@echo "  make clang     - Build with clang compiler"
 	@echo "  make debug     - Build with AddressSanitizer (memory bug detection)"
 	@echo "  make test      - Build and run all unit tests"
 	@echo "  make test-edit - Build and run Edit tool tests only"
@@ -605,7 +620,7 @@ help:
 	@echo "  make valgrind     - Run test suite under Valgrind"
 	@echo ""
 	@echo "Dependencies:"
-	@echo "  - gcc (or compatible C compiler)"
+	@echo "  - gcc or clang (or compatible C compiler)"
 	@echo "  - libcurl"
 	@echo "  - cJSON"
 	@echo "  - sqlite3"
