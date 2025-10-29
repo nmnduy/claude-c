@@ -119,4 +119,11 @@ void clear_conversation(ConversationState *state);
  */
 char* build_system_prompt(ConversationState *state);
 
+/**
+ * Build request JSON from conversation state (in OpenAI format)
+ * Used by providers to get the request body with messages, tools, and cache markers
+ * Returns: Newly allocated JSON string (caller must free), or NULL on error
+ */
+char* build_request_json_from_state(ConversationState *state);
+
 #endif // CLAUDE_INTERNAL_H

@@ -294,10 +294,6 @@ static void print_error(const char *text) {
 // Note: MessageRole, ContentType, ContentBlock, Message, and ConversationState
 // are now defined in claude_internal.h for sharing across modules
 
-typedef struct {
-    char *output;
-    size_t size;
-} MemoryBuffer;
 
 // ============================================================================
 // ESC Key Interrupt Handling
@@ -368,23 +364,6 @@ static int check_for_esc(void) {
 #define STATIC static
 #endif
 
-static size_t write_callback(void *contents, size_t size, size_t nmemb, void *userp) {
-    size_t realsize = size * nmemb;
-    MemoryBuffer *mem = (MemoryBuffer *)userp;
-
-    char *ptr = realloc(mem->output, mem->size + realsize + 1);
-    if (!ptr) {
-        LOG_ERROR("Not enough memory (realloc returned NULL)");
-        return 0;
-    }
-
-    mem->output = ptr;
-    memcpy(&(mem->output[mem->size]), contents, realsize);
-    mem->size += realsize;
-    mem->output[mem->size] = 0;
-
-    return realsize;
-}
 
 STATIC char* read_file(const char *path) {
     FILE *f = fopen(path, "rb");
@@ -558,11 +537,11 @@ static int show_diff(const char *file_path, const char *original_content) {
     }
 
     // Write original content to temp file
-    ssize_t content_len = strlen(original_content);
-    ssize_t written = write(fd, original_content, (size_t)content_len);
+    size_t content_len = strlen(original_content);
+    ssize_t written = write(fd, original_content, content_len);
     close(fd);
 
-    if (written != content_len) {
+    if (written < 0 || (size_t)written != content_len) {
         LOG_ERROR("Failed to write original content to temp file");
         unlink(temp_path);
         return -1;
@@ -1640,27 +1619,23 @@ static void add_cache_control(cJSON *obj) {
     cJSON_AddItemToObject(obj, "cache_control", cache_ctrl);
 }
 
-static cJSON* call_api(ConversationState *state) {
-    int retry_count = 0;
-    int backoff_ms = INITIAL_BACKOFF_MS;
-    int total_wait_ms = 0;  // Track total wait time across all retries
-
-    // Overall API call timing
-    struct timespec call_start, call_end;
-    clock_gettime(CLOCK_MONOTONIC, &call_start);
-
-    // Debug: Log API URL to detect corruption
-    LOG_DEBUG("call_api: api_url=%s", state->api_url ? state->api_url : "(NULL)");
+/**
+ * Build request JSON from conversation state (in OpenAI format)
+ * This is called by providers to get the request body
+ * Returns: Newly allocated JSON string (caller must free), or NULL on error
+ */
+char* build_request_json_from_state(ConversationState *state) {
+    if (!state) {
+        LOG_ERROR("ConversationState is NULL");
+        return NULL;
+    }
 
     // Check if prompt caching is enabled
     int enable_caching = is_prompt_caching_enabled();
-    LOG_DEBUG("Prompt caching: %s", enable_caching ? "enabled" : "disabled");
+    LOG_DEBUG("Building request (caching: %s, messages: %d)",
+              enable_caching ? "enabled" : "disabled", state->count);
 
-    // Time request building
-    struct timespec build_start, build_end;
-    clock_gettime(CLOCK_MONOTONIC, &build_start);
-
-    // Build request body once (used for all retries)
+    // Build request body
     cJSON *request = cJSON_CreateObject();
     cJSON_AddStringToObject(request, "model", state->model);
     cJSON_AddNumberToObject(request, "max_completion_tokens", MAX_TOKENS);
@@ -1808,585 +1783,177 @@ static cJSON* call_api(ConversationState *state) {
     char *json_str = cJSON_PrintUnformatted(request);
     cJSON_Delete(request);
 
-    clock_gettime(CLOCK_MONOTONIC, &build_end);
-    long build_ms = (build_end.tv_sec - build_start.tv_sec) * 1000 +
-                    (build_end.tv_nsec - build_start.tv_nsec) / 1000000;
-    LOG_INFO("Request building took %ld ms (message count: %d, request size: %zu bytes)",
-             build_ms, state->count, strlen(json_str));
+    LOG_DEBUG("Request built successfully (size: %zu bytes)", json_str ? strlen(json_str) : 0);
+    return json_str;
+}
 
-    // Keep copy of request for persistence logging
-    char *request_copy = strdup(json_str);
-
-    // Validate API URL before proceeding
-    if (!state->api_url || state->api_url[0] == '\0') {
-        LOG_ERROR("API URL is not set or has been corrupted");
-        print_error("Internal error: API URL is missing or corrupted");
-        free(request_copy);
-        free(json_str);
+/**
+ * Call API with retry logic (generic wrapper around provider->call_api)
+ * Handles exponential backoff for retryable errors
+ * Returns: cJSON response or NULL on error
+ */
+static cJSON* call_api_with_retries(ConversationState *state) {
+    if (!state || !state->provider) {
+        LOG_ERROR("Invalid state or provider");
         return NULL;
     }
 
-    // Build full API URL using provider
-    char *full_url = NULL;
-    if (state->provider) {
-        full_url = state->provider->build_request_url(state->provider, state->api_url);
-    }
-    if (!full_url) {
-        LOG_ERROR("Failed to build API URL from provider");
-        free(request_copy);
-        free(json_str);
-        return NULL;
-    }
+    int retry_count = 0;
+    int backoff_ms = INITIAL_BACKOFF_MS;
+    int total_wait_ms = 0;
 
-    // Format request using provider (may convert format)
-    char *api_payload = NULL;
-    if (state->provider) {
-        api_payload = state->provider->format_request(state->provider, json_str);
-    }
-    if (!api_payload) {
-        LOG_ERROR("Failed to format request using provider");
-        free(full_url);
-        free(request_copy);
-        free(json_str);
-        return NULL;
-    }
+    struct timespec call_start, call_end;
+    clock_gettime(CLOCK_MONOTONIC, &call_start);
 
-    // Update request_copy to log the actual payload sent to API
-    free(request_copy);
-    request_copy = strdup(api_payload);
-    if (!request_copy) {
-        LOG_ERROR("Failed to copy formatted payload for logging");
-        free(api_payload);
-        free(full_url);
-        free(json_str);
-        return NULL;
-    }
+    LOG_DEBUG("Starting API call (provider: %s, model: %s)",
+              state->provider->name, state->model);
 
-    // Retry loop for handling rate limits
     while (retry_count <= MAX_RETRIES) {
-        CURL *curl;
-        CURLcode res;
-        MemoryBuffer response = {NULL, 0};
+        // Call provider's single-attempt API call
+        LOG_DEBUG("API call attempt %d/%d", retry_count + 1, MAX_RETRIES + 1);
+        ApiCallResult result = state->provider->call_api(state->provider, state);
 
-        curl = curl_easy_init();
-        if (!curl) {
-            LOG_ERROR("Failed to initialize CURL");
-            free(full_url);
-            free(api_payload);
-            free(json_str);
-            free(request_copy);
-            return NULL;
-        }
+        // Success case
+        if (result.response) {
+            clock_gettime(CLOCK_MONOTONIC, &call_end);
+            long total_ms = (call_end.tv_sec - call_start.tv_sec) * 1000 +
+                           (call_end.tv_nsec - call_start.tv_nsec) / 1000000;
 
-        // Set up headers using provider
-        struct curl_slist *headers = NULL;
-        if (state->provider) {
-            headers = state->provider->setup_headers(
-                state->provider,
-                headers,
-                "POST",
-                full_url,
-                api_payload
-            );
-        }
+            LOG_INFO("API call succeeded (duration: %ld ms, provider duration: %ld ms, retries: %d, auth_refreshed: %s)",
+                     total_ms, result.duration_ms, retry_count,
+                     result.auth_refreshed ? "yes" : "no");
 
-        if (!headers) {
-            LOG_ERROR("Failed to setup headers using provider");
-            curl_easy_cleanup(curl);
-            free(full_url);
-            free(api_payload);
-            free(json_str);
-            free(request_copy);
-            return NULL;
-        }
+            // Log success to persistence
+            if (state->persistence_db && result.raw_response) {
+                // Count tool uses in response
+                int tool_count = 0;
+                cJSON *choices = cJSON_GetObjectItem(result.response, "choices");
+                if (choices && cJSON_IsArray(choices)) {
+                    cJSON *first_choice = cJSON_GetArrayItem(choices, 0);
+                    if (first_choice) {
+                        cJSON *message = cJSON_GetObjectItem(first_choice, "message");
+                        if (message) {
+                            cJSON *tool_calls = cJSON_GetObjectItem(message, "tool_calls");
+                            if (tool_calls && cJSON_IsArray(tool_calls)) {
+                                tool_count = cJSON_GetArraySize(tool_calls);
+                            }
+                        }
+                    }
+                }
 
-        // Configure CURL
-        curl_easy_setopt(curl, CURLOPT_URL, full_url);
-        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-        curl_easy_setopt(curl, CURLOPT_POSTFIELDS, api_payload);
-        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
-        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
-
-        // Time the API call
-        struct timespec start, end;
-        clock_gettime(CLOCK_MONOTONIC, &start);
-
-        // Check for ESC before making request
-        if (check_for_esc()) {
-            curl_slist_free_all(headers);
-            curl_easy_cleanup(curl);
-            free(full_url);
-            free(api_payload);
-            free(json_str);
-            free(request_copy);
-            LOG_INFO("API call interrupted by user (ESC pressed)");
-            return NULL;
-        }
-
-        LOG_DEBUG("Starting HTTP request to %s (retry %d/%d)", full_url, retry_count, MAX_RETRIES);
-
-        // Perform request
-        res = curl_easy_perform(curl);
-
-        clock_gettime(CLOCK_MONOTONIC, &end);
-        long duration_ms = (end.tv_sec - start.tv_sec) * 1000 +
-                           (end.tv_nsec - start.tv_nsec) / 1000000;
-
-        LOG_INFO("HTTP request completed in %ld ms (response size: %zu bytes)",
-                 duration_ms, response.size);
-
-        // Get HTTP status code
-        long http_status = 0;
-        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_status);
-
-        curl_slist_free_all(headers);
-        curl_easy_cleanup(curl);
-
-        // Handle CURL errors (network failures, timeouts, connection errors)
-        if (res != CURLE_OK) {
-            const char *error_msg = curl_easy_strerror(res);
-            LOG_ERROR("CURL request failed: %s", error_msg);
-
-            // Determine if error is retryable (transient network errors)
-            int is_retryable = (
-                res == CURLE_COULDNT_RESOLVE_HOST ||
-                res == CURLE_COULDNT_CONNECT ||
-                res == CURLE_OPERATION_TIMEDOUT ||
-                res == CURLE_RECV_ERROR ||
-                res == CURLE_SEND_ERROR ||
-                res == CURLE_GOT_NOTHING ||
-                res == CURLE_PARTIAL_FILE
-            );
-
-            // Log failed request to persistence
-            if (state->persistence_db) {
                 persistence_log_api_call(
                     state->persistence_db,
                     state->session_id,
                     state->api_url,
-                    request_copy,
-                    NULL,  // No response on error
+                    "(request not logged)", // We don't have the formatted request here
+                    result.raw_response,
                     state->model,
-                    "error",
-                    (int)http_status,
-                    error_msg,
-                    duration_ms,
-                    0  // No tools on error
+                    "success",
+                    (int)result.http_status,
+                    NULL,
+                    result.duration_ms,
+                    tool_count
                 );
             }
 
-            // Retry on transient network errors
-            if (is_retryable && retry_count < MAX_RETRIES) {
-                // Add jitter: reduce delay by 0-25% randomly to prevent thundering herd
-                int rand_val = rand();
-                double jitter = 1.0 - ((double)rand_val / RAND_MAX) * 0.25;
-                int actual_delay_ms = (int)(backoff_ms * jitter);
-
-                // Check if this retry would exceed total wait time limit
-                if (total_wait_ms + actual_delay_ms > MAX_TOTAL_WAIT_MS) {
-                    actual_delay_ms = MAX_TOTAL_WAIT_MS - total_wait_ms;
-                    if (actual_delay_ms <= 0) {
-                        LOG_ERROR("Maximum total wait time (%d ms) exceeded", MAX_TOTAL_WAIT_MS);
-                        print_error("Maximum retry wait time exceeded");
-                        free(full_url);
-                        free(api_payload);
-                        free(json_str);
-                        free(request_copy);
-                        free(response.output);
-                        return NULL;
-                    }
-                }
-
-                char retry_msg[256];
-                snprintf(retry_msg, sizeof(retry_msg), "Network error: %s. Retrying in %d ms...", error_msg, actual_delay_ms);
-                print_error(retry_msg);
-                LOG_WARN("Retrying after network error (attempt %d/%d, total wait: %d ms)", retry_count + 1, MAX_RETRIES, total_wait_ms + actual_delay_ms);
-
-                // Sleep and retry
-                usleep((useconds_t)(actual_delay_ms * 1000));
-                total_wait_ms += actual_delay_ms;
-                backoff_ms = (int)(backoff_ms * BACKOFF_MULTIPLIER);
-                if (backoff_ms > MAX_BACKOFF_MS) {
-                    backoff_ms = MAX_BACKOFF_MS;
-                }
-                retry_count++;
-
-                free(response.output);
-                continue; // Retry the request
-            }
-
-            // Non-retryable error or max retries exceeded
-            free(full_url);
-            free(api_payload);
-            free(json_str);
-            free(request_copy);
-            free(response.output);
-            return NULL;
+            // Cleanup and return
+            free(result.raw_response);
+            free(result.error_message);
+            return result.response;
         }
 
-        // Check HTTP status code - must be 2xx for success
-        if (http_status < 200 || http_status >= 300) {
-            LOG_ERROR("API returned HTTP error status: %ld", http_status);
-            LOG_DEBUG("Response body: %s", response.output);
+        // Error case - check if retryable
+        LOG_WARN("API call failed (attempt %d/%d): %s (HTTP %ld, retryable: %s)",
+                 retry_count + 1, MAX_RETRIES + 1,
+                 result.error_message ? result.error_message : "(unknown)",
+                 result.http_status,
+                 result.is_retryable ? "yes" : "no");
 
-            char error_msg[256];
-            snprintf(error_msg, sizeof(error_msg), "HTTP error %ld", http_status);
-
-            // Check if this is a retryable HTTP error
-            // 408: Request Timeout - server asks to retry
-            // 429: Rate Limit - needs exponential backoff
-            // 5xx: Server errors (except 501 Not Implemented)
-            int is_http_retryable = (http_status == 408 ||
-                                     http_status == 429 ||
-                                     (http_status >= 500 && http_status < 600 && http_status != 501));
-
-            // Log HTTP error
-            if (state->persistence_db) {
-                persistence_log_api_call(
-                    state->persistence_db,
-                    state->session_id,
-                    state->api_url,
-                    request_copy,
-                    response.output,
-                    state->model,
-                    "error",
-                    (int)http_status,
-                    error_msg,
-                    duration_ms,
-                    0
-                );
-            }
-
-            // Try to extract error message from response body if it's JSON
-            cJSON *error_json = cJSON_Parse(response.output);
-            if (error_json) {
-                cJSON *error_obj = cJSON_GetObjectItem(error_json, "error");
-                if (error_obj) {
-                    cJSON *message = cJSON_GetObjectItem(error_obj, "message");
-                    if (message && cJSON_IsString(message)) {
-                        snprintf(error_msg, sizeof(error_msg), "API error (%ld): %s",
-                                http_status, message->valuestring);
-                    }
-                }
-                cJSON_Delete(error_json);
-            }
-
-            // Retry on retryable HTTP errors (408, 429, 5xx)
-            if (is_http_retryable && retry_count < MAX_RETRIES) {
-                // Add jitter: reduce delay by 0-25% randomly to prevent thundering herd
-                int rand_val = rand();
-                double rand_ratio = (double)rand_val / RAND_MAX;
-                double jitter = 1.0 - rand_ratio * 0.25;
-                int actual_delay_ms = (int)(backoff_ms * jitter);
-
-                // Check if this retry would exceed total wait time limit
-                if (total_wait_ms + actual_delay_ms > MAX_TOTAL_WAIT_MS) {
-                    actual_delay_ms = MAX_TOTAL_WAIT_MS - total_wait_ms;
-                    if (actual_delay_ms <= 0) {
-                        LOG_ERROR("Maximum total wait time (%d ms) exceeded", MAX_TOTAL_WAIT_MS);
-                        print_error("Maximum retry wait time exceeded");
-                        free(full_url);
-                        free(api_payload);
-                        free(json_str);
-                        free(request_copy);
-                        free(response.output);
-                        return NULL;
-                    }
-                }
-
-                char retry_msg[256];
-                const char *error_type = (http_status == 429) ? "Rate limit" :
-                                        (http_status == 408) ? "Request timeout" : "Server error";
-                snprintf(retry_msg, sizeof(retry_msg), "%s. %s - retrying in %d ms...", error_msg, error_type, actual_delay_ms);
-                print_error(retry_msg);
-                LOG_WARN("Retrying after HTTP %ld (%s) (attempt %d/%d, total wait: %d ms)", http_status, error_type, retry_count + 1, MAX_RETRIES, total_wait_ms + actual_delay_ms);
-
-                // Sleep and retry
-                usleep((useconds_t)(actual_delay_ms * 1000));
-                total_wait_ms += actual_delay_ms;
-                backoff_ms = (int)(backoff_ms * BACKOFF_MULTIPLIER);
-                if (backoff_ms > MAX_BACKOFF_MS) {
-                    backoff_ms = MAX_BACKOFF_MS;
-                }
-                retry_count++;
-
-                free(response.output);
-                continue; // Retry the request
-            }
-
-            // Check if this is an authentication error (401/403/400)
-            // Let the provider handle it (e.g., credential refresh for AWS)
-            if (retry_count < MAX_RETRIES && state->provider &&
-                (http_status == 401 || http_status == 403 || http_status == 400)) {
-
-                // Try to handle auth error using provider (pass response body for detailed error analysis)
-                if (state->provider->handle_auth_error(state->provider, http_status, error_msg, response.output)) {
-                    LOG_INFO("Provider handled auth error successfully, retrying request (attempt %d/%d)",
-                             retry_count + 1, MAX_RETRIES);
-
-                    // Log the retry attempt
-                    if (state->persistence_db) {
-                        persistence_log_api_call(
-                            state->persistence_db,
-                            state->session_id,
-                            state->api_url,
-                            request_copy,
-                            response.output,
-                            state->model,
-                            "error",
-                            (int)http_status,
-                            "Authentication error - provider refreshed credentials and retrying",
-                            duration_ms,
-                            0
-                        );
-                    }
-
-                    retry_count++;
-                    free(response.output);
-                    continue; // Retry with fresh credentials
-                }
-            }
-
-            print_error(error_msg);
-
-            free(full_url);
-            free(api_payload);
-            free(json_str);
-            free(request_copy);
-            free(response.output);
-            return NULL;
-        }
-
-        // Parse response using provider (may convert format)
-        struct timespec parse_start, parse_end;
-        clock_gettime(CLOCK_MONOTONIC, &parse_start);
-
-        cJSON *json_response = NULL;
-        if (state->provider) {
-            json_response = state->provider->parse_response(state->provider, response.output);
-        }
-
-        clock_gettime(CLOCK_MONOTONIC, &parse_end);
-        long parse_ms = (parse_end.tv_sec - parse_start.tv_sec) * 1000 +
-                        (parse_end.tv_nsec - parse_start.tv_nsec) / 1000000;
-        LOG_INFO("Response parsing took %ld ms", parse_ms);
-
-        if (!json_response) {
-            LOG_ERROR("Failed to parse response using provider");
-
-            // Log parsing error
-            if (state->persistence_db) {
-                persistence_log_api_call(
-                    state->persistence_db,
-                    state->session_id,
-                    state->api_url,
-                    request_copy,
-                    response.output,
-                    state->model,
-                    "error",
-                    (int)http_status,
-                    "Failed to parse response using provider",
-                    duration_ms,
-                    0
-                );
-            }
-
-            free(full_url);
-            free(api_payload);
-            free(json_str);
-            free(request_copy);
-            free(response.output);
-            return NULL;
-        }
-
-        // Check for API error response
-        cJSON *error = cJSON_GetObjectItem(json_response, "error");
-        if (error) {
-            // Extract error details
-            cJSON *error_message = cJSON_GetObjectItem(error, "message");
-            cJSON *error_code = cJSON_GetObjectItem(error, "code");
-
-            const char *err_msg = error_message && cJSON_IsString(error_message)
-                                  ? error_message->valuestring
-                                  : "Unknown error";
-            const char *err_code = error_code && cJSON_IsString(error_code)
-                                   ? error_code->valuestring
-                                   : "";
-
-            // Check if this is a rate limit error (429)
-            int is_rate_limit = (http_status == 429 || strcmp(err_code, "429") == 0);
-
-            if (is_rate_limit && retry_count < MAX_RETRIES) {
-                // Add jitter: reduce delay by 0-25% randomly to prevent thundering herd
-                int rand_val = rand();
-                double jitter = 1.0 - ((double)rand_val / RAND_MAX) * 0.25;
-                int actual_delay_ms = (int)(backoff_ms * jitter);
-
-                // Check if this retry would exceed total wait time limit
-                if (total_wait_ms + actual_delay_ms > MAX_TOTAL_WAIT_MS) {
-                    actual_delay_ms = MAX_TOTAL_WAIT_MS - total_wait_ms;
-                    if (actual_delay_ms <= 0) {
-                        LOG_ERROR("Maximum total wait time (%d ms) exceeded", MAX_TOTAL_WAIT_MS);
-                        print_error("Maximum retry wait time exceeded");
-                        cJSON_Delete(json_response);
-                        free(response.output);
-                        free(request_copy);
-                        free(json_str);
-                        free(full_url);
-                        free(api_payload);
-                        return NULL;
-                    }
-                }
-
-                // Retry with exponential backoff
-                char retry_msg[256];
-                snprintf(retry_msg, sizeof(retry_msg), "Rate limit exceeded. Retrying in %d ms...", actual_delay_ms);
-                print_error(retry_msg);
-
-                // Log this attempt
-                if (state->persistence_db) {
-                    persistence_log_api_call(
-                        state->persistence_db,
-                        state->session_id,
-                        state->api_url,
-                        request_copy,
-                        response.output,
-                        state->model,
-                        "error",
-                        (int)http_status,
-                        err_msg,
-                        duration_ms,
-                        0
-                    );
-                }
-
-                // Sleep and retry
-                usleep((useconds_t)(actual_delay_ms * 1000)); // usleep takes microseconds
-                total_wait_ms += actual_delay_ms;
-                backoff_ms = (int)(backoff_ms * BACKOFF_MULTIPLIER);
-                if (backoff_ms > MAX_BACKOFF_MS) {
-                    backoff_ms = MAX_BACKOFF_MS;
-                }
-                retry_count++;
-
-                cJSON_Delete(json_response);
-                free(response.output);
-                continue; // Retry the request
-            }
-
-            // Non-retryable error or max retries exceeded
-            char error_msg[512];
-            snprintf(error_msg, sizeof(error_msg), "API error: %s", err_msg);
-            print_error(error_msg);
-
-            // Log error
-            if (state->persistence_db) {
-                persistence_log_api_call(
-                    state->persistence_db,
-                    state->session_id,
-                    state->api_url,
-                    request_copy,
-                    response.output,
-                    state->model,
-                    "error",
-                    (int)http_status,
-                    err_msg,
-                    duration_ms,
-                    0
-                );
-            }
-
-            cJSON_Delete(json_response);
-            free(request_copy);
-            free(json_str);
-            free(api_payload);
-            free(response.output);
-            return NULL;
-        }
-
-        // Check for valid response format (must have "choices")
-        cJSON *choices = cJSON_GetObjectItem(json_response, "choices");
-        if (!choices || !cJSON_IsArray(choices) || cJSON_GetArraySize(choices) == 0) {
-            print_error("Invalid response format: no choices");
-
-            // Log error
-            if (state->persistence_db) {
-                persistence_log_api_call(
-                    state->persistence_db,
-                    state->session_id,
-                    state->api_url,
-                    request_copy,
-                    response.output,
-                    state->model,
-                    "error",
-                    (int)http_status,
-                    "Invalid response format: no choices",
-                    duration_ms,
-                    0
-                );
-            }
-
-            cJSON_Delete(json_response);
-            free(request_copy);
-            free(json_str);
-            free(api_payload);
-            free(response.output);
-            return NULL;
-        }
-
-        // Count tool uses in response
-        int tool_count = 0;
-        cJSON *first_choice = cJSON_GetArrayItem(choices, 0);
-        if (first_choice) {
-            cJSON *message = cJSON_GetObjectItem(first_choice, "message");
-            if (message) {
-                cJSON *tool_calls = cJSON_GetObjectItem(message, "tool_calls");
-                if (tool_calls && cJSON_IsArray(tool_calls)) {
-                    tool_count = cJSON_GetArraySize(tool_calls);
-                }
-            }
-        }
-
-        // Log successful request to persistence
+        // Log error to persistence
         if (state->persistence_db) {
             persistence_log_api_call(
                 state->persistence_db,
                 state->session_id,
                 state->api_url,
-                request_copy,
-                response.output,
+                "(request not logged)",
+                result.raw_response,
                 state->model,
-                "success",
-                (int)http_status,
-                NULL,  // No error message
-                duration_ms,
-                tool_count
+                "error",
+                (int)result.http_status,
+                result.error_message,
+                result.duration_ms,
+                0
             );
         }
 
-        free(request_copy);
-        free(json_str);
-        free(api_payload);
-        free(response.output);
+        // Check if we should retry
+        if (!result.is_retryable || retry_count >= MAX_RETRIES) {
+            // Non-retryable error or max retries exhausted
+            char error_msg[512];
+            snprintf(error_msg, sizeof(error_msg),
+                    "API call failed: %s (HTTP %ld)",
+                    result.error_message ? result.error_message : "unknown error",
+                    result.http_status);
+            print_error(error_msg);
 
-        // Log total API call duration
-        clock_gettime(CLOCK_MONOTONIC, &call_end);
-        long total_ms = (call_end.tv_sec - call_start.tv_sec) * 1000 +
-                        (call_end.tv_nsec - call_start.tv_nsec) / 1000000;
-        LOG_INFO("Total API call took %ld ms (build: %ld ms, HTTP: %ld ms, parse: %ld ms, tools: %d)",
-                 total_ms, build_ms, duration_ms, parse_ms, tool_count);
+            free(result.raw_response);
+            free(result.error_message);
+            return NULL;
+        }
 
-        return json_response;
+        // Calculate backoff with jitter (0-25% reduction)
+        int jitter = rand() % (backoff_ms / 4);
+        int delay_ms = backoff_ms - jitter;
+
+        // Check if this retry would exceed total wait time limit
+        if (total_wait_ms + delay_ms > MAX_TOTAL_WAIT_MS) {
+            delay_ms = MAX_TOTAL_WAIT_MS - total_wait_ms;
+            if (delay_ms <= 0) {
+                LOG_ERROR("Maximum total wait time (%d ms) exceeded", MAX_TOTAL_WAIT_MS);
+                print_error("Maximum retry wait time exceeded");
+                free(result.raw_response);
+                free(result.error_message);
+                return NULL;
+            }
+        }
+
+        // Display retry message to user
+        char retry_msg[512];
+        const char *error_type = (result.http_status == 429) ? "Rate limit" :
+                                (result.http_status == 408) ? "Request timeout" :
+                                (result.http_status >= 500) ? "Server error" : "Error";
+        snprintf(retry_msg, sizeof(retry_msg),
+                "%s - retrying in %d ms... (attempt %d/%d)",
+                error_type, delay_ms, retry_count + 2, MAX_RETRIES + 1);
+        print_error(retry_msg);
+
+        LOG_INFO("Retrying after %d ms (total wait: %d ms)", delay_ms, total_wait_ms + delay_ms);
+
+        // Sleep and retry
+        usleep((useconds_t)(delay_ms * 1000));
+        total_wait_ms += delay_ms;
+        backoff_ms = (int)(backoff_ms * BACKOFF_MULTIPLIER);
+        if (backoff_ms > MAX_BACKOFF_MS) {
+            backoff_ms = MAX_BACKOFF_MS;
+        }
+
+        free(result.raw_response);
+        free(result.error_message);
+        retry_count++;
     }
 
-    // Max retries exceeded (shouldn't reach here normally)
-    free(full_url);
-    free(api_payload);
-    free(json_str);
-    free(request_copy);
+    // Should never reach here
     LOG_ERROR("API call failed after %d retries", MAX_RETRIES);
     return NULL;
 }
+
+/**
+ * Main API call entry point
+ */
+static cJSON* call_api(ConversationState *state) {
+    return call_api_with_retries(state);
+}
+
 
 // ============================================================================
 // Context Building - Environment and Git Information
