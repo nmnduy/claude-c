@@ -94,7 +94,7 @@ static ApiCallResult openai_call_api(Provider *self, ConversationState *state) {
     if (!headers) {
         result.error_message = strdup("Failed to setup HTTP headers");
         result.is_retryable = 0;
-        free(openai_json);
+        result.request_json = openai_json;  // Store for logging
         return result;
     }
 
@@ -104,7 +104,7 @@ static ApiCallResult openai_call_api(Provider *self, ConversationState *state) {
         result.error_message = strdup("Failed to initialize CURL");
         result.is_retryable = 0;
         curl_slist_free_all(headers);
-        free(openai_json);
+        result.request_json = openai_json;  // Store for logging
         return result;
     }
 
@@ -127,7 +127,9 @@ static ApiCallResult openai_call_api(Provider *self, ConversationState *state) {
     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &result.http_status);
     curl_slist_free_all(headers);
     curl_easy_cleanup(curl);
-    free(openai_json);
+
+    // Store request JSON for logging (caller must free)
+    result.request_json = openai_json;
 
     // Handle CURL errors
     if (res != CURLE_OK) {

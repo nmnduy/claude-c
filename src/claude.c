@@ -1914,7 +1914,7 @@ static cJSON* call_api_with_retries(ConversationState *state) {
                     state->persistence_db,
                     state->session_id,
                     state->api_url,
-                    "(request not logged)", // We don't have the formatted request here
+                    result.request_json ? result.request_json : "(request not available)",
                     result.raw_response,
                     state->model,
                     "success",
@@ -1927,6 +1927,7 @@ static cJSON* call_api_with_retries(ConversationState *state) {
 
             // Cleanup and return
             free(result.raw_response);
+            free(result.request_json);
             free(result.error_message);
             return result.response;
         }
@@ -1944,7 +1945,7 @@ static cJSON* call_api_with_retries(ConversationState *state) {
                 state->persistence_db,
                 state->session_id,
                 state->api_url,
-                "(request not logged)",
+                result.request_json ? result.request_json : "(request not available)",
                 result.raw_response,
                 state->model,
                 "error",
@@ -1966,6 +1967,7 @@ static cJSON* call_api_with_retries(ConversationState *state) {
             print_error(error_msg);
 
             free(result.raw_response);
+            free(result.request_json);
             free(result.error_message);
             return NULL;
         }
@@ -1986,6 +1988,7 @@ static cJSON* call_api_with_retries(ConversationState *state) {
                 LOG_ERROR("Maximum retry duration (%d ms) exceeded", MAX_RETRY_DURATION_MS);
                 print_error("Maximum retry duration exceeded");
                 free(result.raw_response);
+                free(result.request_json);
                 free(result.error_message);
                 return NULL;
             }
@@ -2012,6 +2015,7 @@ static cJSON* call_api_with_retries(ConversationState *state) {
         }
 
         free(result.raw_response);
+        free(result.request_json);
         free(result.error_message);
         attempt_num++;
     }
@@ -2365,9 +2369,20 @@ static void add_assistant_message_openai(ConversationState *state, cJSON *messag
         content_count++;
     }
 
+    // Count VALID tool calls (those with 'function' field)
     int tool_calls_count = 0;
     if (tool_calls && cJSON_IsArray(tool_calls)) {
-        tool_calls_count = cJSON_GetArraySize(tool_calls);
+        int array_size = cJSON_GetArraySize(tool_calls);
+        for (int i = 0; i < array_size; i++) {
+            cJSON *tool_call = cJSON_GetArrayItem(tool_calls, i);
+            cJSON *function = cJSON_GetObjectItem(tool_call, "function");
+            cJSON *id = cJSON_GetObjectItem(tool_call, "id");
+            if (function && id && cJSON_IsString(id)) {
+                tool_calls_count++;
+            } else {
+                LOG_WARN("Skipping malformed tool_call at index %d (missing 'function' or 'id' field)", i);
+            }
+        }
         content_count += tool_calls_count;
     }
 
@@ -2404,54 +2419,58 @@ static void add_assistant_message_openai(ConversationState *state, cJSON *messag
 
     // Add tool calls if present
     if (tool_calls && cJSON_IsArray(tool_calls)) {
-        for (int i = 0; i < tool_calls_count; i++) {
+        int array_size = cJSON_GetArraySize(tool_calls);
+        for (int i = 0; i < array_size; i++) {
             cJSON *tool_call = cJSON_GetArrayItem(tool_calls, i);
             cJSON *id = cJSON_GetObjectItem(tool_call, "id");
             cJSON *function = cJSON_GetObjectItem(tool_call, "function");
 
-            if (function) {
-                cJSON *name = cJSON_GetObjectItem(function, "name");
-                cJSON *arguments = cJSON_GetObjectItem(function, "arguments");
-
-                msg->content[idx].type = CONTENT_TOOL_USE;
-                msg->content[idx].tool_use_id = strdup(id->valuestring);
-                if (!msg->content[idx].tool_use_id) {
-                    LOG_ERROR("Failed to duplicate tool use ID");
-                    // Cleanup previously allocated content
-                    for (int j = 0; j < idx; j++) {
-                        free(msg->content[j].text);
-                        free(msg->content[j].tool_use_id);
-                        free(msg->content[j].tool_name);
-                    }
-                    free(msg->content);
-                    msg->content = NULL;
-                    state->count--;
-                    return;
-                }
-                msg->content[idx].tool_name = strdup(name->valuestring);
-                if (!msg->content[idx].tool_name) {
-                    LOG_ERROR("Failed to duplicate tool name");
-                    free(msg->content[idx].tool_use_id);
-                    // Cleanup previously allocated content
-                    for (int j = 0; j < idx; j++) {
-                        free(msg->content[j].text);
-                        free(msg->content[j].tool_use_id);
-                        free(msg->content[j].tool_name);
-                    }
-                    free(msg->content);
-                    msg->content = NULL;
-                    state->count--;
-                    return;
-                }
-
-                // Parse arguments string as JSON
-                if (arguments && cJSON_IsString(arguments)) {
-                    msg->content[idx].tool_input = cJSON_Parse(arguments->valuestring);
-                } else {
-                    msg->content[idx].tool_input = cJSON_CreateObject();
-                }
-                idx++;
+            // Skip malformed tool calls (already logged warning during counting)
+            if (!function || !id || !cJSON_IsString(id)) {
+                continue;
             }
+
+            cJSON *name = cJSON_GetObjectItem(function, "name");
+            cJSON *arguments = cJSON_GetObjectItem(function, "arguments");
+
+            msg->content[idx].type = CONTENT_TOOL_USE;
+            msg->content[idx].tool_use_id = strdup(id->valuestring);
+            if (!msg->content[idx].tool_use_id) {
+                LOG_ERROR("Failed to duplicate tool use ID");
+                // Cleanup previously allocated content
+                for (int j = 0; j < idx; j++) {
+                    free(msg->content[j].text);
+                    free(msg->content[j].tool_use_id);
+                    free(msg->content[j].tool_name);
+                }
+                free(msg->content);
+                msg->content = NULL;
+                state->count--;
+                return;
+            }
+            msg->content[idx].tool_name = strdup(name->valuestring);
+            if (!msg->content[idx].tool_name) {
+                LOG_ERROR("Failed to duplicate tool name");
+                free(msg->content[idx].tool_use_id);
+                // Cleanup previously allocated content
+                for (int j = 0; j < idx; j++) {
+                    free(msg->content[j].text);
+                    free(msg->content[j].tool_use_id);
+                    free(msg->content[j].tool_name);
+                }
+                free(msg->content);
+                msg->content = NULL;
+                state->count--;
+                return;
+            }
+
+            // Parse arguments string as JSON
+            if (arguments && cJSON_IsString(arguments)) {
+                msg->content[idx].tool_input = cJSON_Parse(arguments->valuestring);
+            } else {
+                msg->content[idx].tool_input = cJSON_CreateObject();
+            }
+            idx++;
         }
     }
 }

@@ -198,7 +198,7 @@ static ApiCallResult bedrock_call_api(Provider *self, ConversationState *state) 
     if (result.response) {
         LOG_INFO("API call succeeded on first attempt");
         free(saved_access_key);
-        free(bedrock_json);
+        result.request_json = bedrock_json;  // Store for logging (caller frees)
         return result;
     }
 
@@ -245,7 +245,7 @@ static ApiCallResult bedrock_call_api(Provider *self, ConversationState *state) 
                 if (result.response) {
                     LOG_INFO("API call succeeded after using externally rotated credentials");
                     free(saved_access_key);
-                    free(bedrock_json);
+                    result.request_json = bedrock_json;  // Store for logging (caller frees)
                     return result;
                 }
 
@@ -280,7 +280,7 @@ static ApiCallResult bedrock_call_api(Provider *self, ConversationState *state) 
                         if (result.response) {
                             LOG_INFO("API call succeeded after credential rotation");
                             free(saved_access_key);
-                            free(bedrock_json);
+                            result.request_json = bedrock_json;  // Store for logging (caller frees)
                             return result;
                         }
 
@@ -327,7 +327,7 @@ static ApiCallResult bedrock_call_api(Provider *self, ConversationState *state) 
 
     // Cleanup
     free(saved_access_key);
-    free(bedrock_json);
+    result.request_json = bedrock_json;  // Store for logging even on error (caller frees)
 
     return result;
 }
