@@ -664,3 +664,7 @@ The C implementation now includes **prompt caching** support, matching the offic
    This typically results in 5-10KB of cached context that doesn't need to be reprocessed on each API call.
 
 **Why this matters**: Without caching, the C version was re-processing the entire context (system prompt + tools + history) on every turn, causing noticeably slower API response times compared to the official CLI. With caching enabled, performance now matches the TypeScript implementation.
+
+# Formwork
+
+An attempt to replace tool calls and have a consistent API for extracting tool results.
