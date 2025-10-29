@@ -22,6 +22,26 @@
 #define INITIAL_BUFFER_SIZE 4096
 #define DEFAULT_HISTORY_SIZE 100
 
+// Forward declarations for TEST_BUILD
+#ifdef TEST_BUILD
+int utf8_char_length(unsigned char first_byte);
+int is_utf8_continuation(unsigned char byte);
+int is_word_boundary(char c);
+int move_backward_word(const char *buffer, int cursor_pos);
+int move_forward_word(const char *buffer, int cursor_pos, int buffer_len);
+int visible_strlen(const char *str);
+void calculate_cursor_position(
+    const char *buffer,
+    int buffer_len,
+    int cursor_pos,
+    int prompt_len,
+    int term_width,
+    int *out_cursor_line,
+    int *out_cursor_col,
+    int *out_total_lines
+);
+#endif
+
 // ============================================================================
 // History Management
 // ============================================================================

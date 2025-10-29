@@ -29,7 +29,7 @@ static int tests_failed = 0;
     } \
 } while(0)
 
-void test_paste_state_init(void) {
+static void test_paste_state_init(void) {
     printf("\n" YELLOW "Testing paste state initialization..." RESET "\n");
 
     PasteState *state = paste_state_init();
@@ -42,7 +42,7 @@ void test_paste_state_init(void) {
     paste_state_free(state);
 }
 
-void test_paste_buffer_add_char(void) {
+static void test_paste_buffer_add_char(void) {
     printf("\n" YELLOW "Testing character buffering..." RESET "\n");
 
     PasteState *state = paste_state_init();
@@ -64,7 +64,7 @@ void test_paste_buffer_add_char(void) {
     paste_state_free(state);
 }
 
-void test_paste_buffer_overflow(void) {
+static void test_paste_buffer_overflow(void) {
     printf("\n" YELLOW "Testing buffer overflow protection..." RESET "\n");
 
     PasteState *state = paste_state_init();
@@ -83,7 +83,7 @@ void test_paste_buffer_overflow(void) {
     paste_state_free(state);
 }
 
-void test_paste_sanitize_control_chars(void) {
+static void test_paste_sanitize_control_chars(void) {
     printf("\n" YELLOW "Testing control character removal..." RESET "\n");
 
     char buffer[256];
@@ -101,7 +101,7 @@ void test_paste_sanitize_control_chars(void) {
     TEST_ASSERT(strcmp(buffer, "HelloWorld") == 0, "Result is correct");
 }
 
-void test_paste_sanitize_newlines(void) {
+static void test_paste_sanitize_newlines(void) {
     printf("\n" YELLOW "Testing newline normalization..." RESET "\n");
 
     char buffer[256];
@@ -118,7 +118,7 @@ void test_paste_sanitize_newlines(void) {
     TEST_ASSERT(strcmp(buffer, "Line1\nLine2\nLine3\nLine4") == 0, "Newlines normalized");
 }
 
-void test_paste_sanitize_whitespace(void) {
+static void test_paste_sanitize_whitespace(void) {
     printf("\n" YELLOW "Testing whitespace trimming..." RESET "\n");
 
     char buffer[256];
@@ -135,7 +135,7 @@ void test_paste_sanitize_whitespace(void) {
     TEST_ASSERT(strcmp(buffer, "Hello World") == 0, "Whitespace trimmed");
 }
 
-void test_paste_sanitize_multiple_newlines(void) {
+static void test_paste_sanitize_multiple_newlines(void) {
     printf("\n" YELLOW "Testing multiple newline collapse..." RESET "\n");
 
     char buffer[256];
@@ -152,7 +152,7 @@ void test_paste_sanitize_multiple_newlines(void) {
     TEST_ASSERT(strcmp(buffer, "Line1\n\nLine2") == 0, "Multiple newlines collapsed to 2");
 }
 
-void test_paste_get_preview(void) {
+static void test_paste_get_preview(void) {
     printf("\n" YELLOW "Testing preview generation..." RESET "\n");
 
     const char *content = "This is a very long string that should be truncated in the preview";
@@ -172,7 +172,7 @@ void test_paste_get_preview(void) {
     free(preview);
 }
 
-void test_paste_state_reset(void) {
+static void test_paste_state_reset(void) {
     printf("\n" YELLOW "Testing state reset..." RESET "\n");
 
     PasteState *state = paste_state_init();
@@ -195,7 +195,7 @@ void test_paste_state_reset(void) {
     paste_state_free(state);
 }
 
-void test_bracketed_paste_detection(void) {
+static void test_bracketed_paste_detection(void) {
     printf("\n" YELLOW "Testing bracketed paste sequence detection..." RESET "\n");
 
     // Test start sequence
@@ -214,7 +214,7 @@ void test_bracketed_paste_detection(void) {
     TEST_ASSERT(result == 0, "Invalid sequence rejected");
 }
 
-void test_paste_get_content(void) {
+static void test_paste_get_content(void) {
     printf("\n" YELLOW "Testing content retrieval..." RESET "\n");
 
     PasteState *state = paste_state_init();
@@ -235,7 +235,7 @@ void test_paste_get_content(void) {
     paste_state_free(state);
 }
 
-void test_full_sanitization(void) {
+static void test_full_sanitization(void) {
     printf("\n" YELLOW "Testing full sanitization pipeline..." RESET "\n");
 
     char buffer[256];

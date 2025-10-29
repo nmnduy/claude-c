@@ -37,6 +37,9 @@
 #include "fallback_colors.h"
 
 #ifdef TEST_BUILD
+// Disable unused function warnings for test builds since not all functions are used by tests
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-function"
 // Test build: stub out persistence (logger is linked via LOGGER_OBJ)
 // Stub persistence types and functions
 struct PersistenceDB { int dummy; };
@@ -115,10 +118,6 @@ static int bedrock_handle_auth_error(BedrockConfig *config, long http_status, co
 // AWS Bedrock support
 #ifndef TEST_BUILD
 #include "aws_bedrock.h"
-#endif
-
-#ifdef TEST_BUILD
-#define main claude_main
 #endif
 
 #ifdef TEST_BUILD
@@ -365,6 +364,12 @@ static int check_for_esc(void) {
 // For testing, we need to export some functions
 #ifdef TEST_BUILD
 #define STATIC
+// Forward declarations for TEST_BUILD
+char* read_file(const char *path);
+int write_file(const char *path, const char *content);
+cJSON* tool_read(cJSON *params, ConversationState *state);
+cJSON* tool_edit(cJSON *params, ConversationState *state);
+cJSON* tool_todo_write(cJSON *params, ConversationState *state);
 #else
 #define STATIC static
 #endif
@@ -3373,3 +3378,7 @@ int main(int argc, char *argv[]) {
 }
 
 #endif // TEST_BUILD
+
+#ifdef TEST_BUILD
+#pragma GCC diagnostic pop
+#endif

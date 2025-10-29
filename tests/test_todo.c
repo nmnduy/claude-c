@@ -16,7 +16,7 @@
 #define PASS() printf("✓ PASS\n")
 #define FAIL(msg) do { printf("✗ FAIL: %s\n", msg); exit(1); } while(0)
 
-void test_init_and_free(void) {
+static void test_init_and_free(void) {
     TEST("Initialize and free TODO list");
 
     TodoList list;
@@ -34,7 +34,7 @@ void test_init_and_free(void) {
     PASS();
 }
 
-void test_add_todos(void) {
+static void test_add_todos(void) {
     TEST("Add TODO items");
 
     TodoList list;
@@ -64,7 +64,7 @@ void test_add_todos(void) {
     PASS();
 }
 
-void test_update_status(void) {
+static void test_update_status(void) {
     TEST("Update TODO status by index");
 
     TodoList list;
@@ -91,7 +91,7 @@ void test_update_status(void) {
     PASS();
 }
 
-void test_update_by_content(void) {
+static void test_update_by_content(void) {
     TEST("Update TODO status by content");
 
     TodoList list;
@@ -113,7 +113,7 @@ void test_update_by_content(void) {
     PASS();
 }
 
-void test_count_by_status(void) {
+static void test_count_by_status(void) {
     TEST("Count TODOs by status");
 
     TodoList list;
@@ -134,7 +134,7 @@ void test_count_by_status(void) {
     PASS();
 }
 
-void test_remove_todo(void) {
+static void test_remove_todo(void) {
     TEST("Remove TODO item");
 
     TodoList list;
@@ -159,7 +159,7 @@ void test_remove_todo(void) {
     PASS();
 }
 
-void test_clear_todos(void) {
+static void test_clear_todos(void) {
     TEST("Clear all TODOs");
 
     TodoList list;
@@ -176,7 +176,7 @@ void test_clear_todos(void) {
     PASS();
 }
 
-void test_render_visual(void) {
+static void test_render_visual(void) {
     TEST("Visual rendering test (manual inspection)");
 
     TodoList list;

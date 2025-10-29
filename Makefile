@@ -417,7 +417,7 @@ $(QUERY_TOOL): $(QUERY_TOOL_SRC) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ)
 $(TEST_EDIT_TARGET): $(SRC) $(TEST_EDIT_SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(TODO_OBJ)
 	@mkdir -p $(BUILD_DIR)
 	@echo "Compiling claude.c for testing (renaming main)..."
-	@$(CC) $(CFLAGS) -DTEST_BUILD -Dmain=unused_main -c -o $(BUILD_DIR)/claude_test.o $(SRC)
+	@$(CC) $(CFLAGS) -DTEST_BUILD -c -o $(BUILD_DIR)/claude_test.o $(SRC)
 	@echo "Compiling Edit tool test suite..."
 	@$(CC) $(CFLAGS) -c -o $(BUILD_DIR)/test_edit.o $(TEST_EDIT_SRC)
 	@echo "Linking test executable..."
@@ -443,7 +443,7 @@ $(TEST_INPUT_TARGET): $(LINEEDIT_SRC) $(TEST_INPUT_SRC) $(LOGGER_OBJ)
 $(TEST_READ_TARGET): $(SRC) $(TEST_READ_SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(TODO_OBJ)
 	@mkdir -p $(BUILD_DIR)
 	@echo "Compiling claude.c for read testing..."
-	@$(CC) $(CFLAGS) -DTEST_BUILD -Dmain=unused_main -c -o $(BUILD_DIR)/claude_read_test.o $(SRC)
+	@$(CC) $(CFLAGS) -DTEST_BUILD -c -o $(BUILD_DIR)/claude_read_test.o $(SRC)
 	@echo "Compiling Read tool test suite..."
 	@$(CC) $(CFLAGS) -c -o $(BUILD_DIR)/test_read.o $(TEST_READ_SRC)
 	@echo "Linking test executable..."
@@ -466,13 +466,14 @@ $(TEST_LINEEDIT_TARGET): $(LINEEDIT_SRC) $(TEST_LINEEDIT_SRC) $(LOGGER_OBJ)
 	@echo ""
 
 # Test target for TODO list - tests task management functionality
-$(TEST_TODO_TARGET): $(TODO_SRC) $(TEST_TODO_SRC)
+$(TEST_TODO_TARGET): $(TODO_SRC) $(TEST_TODO_SRC) tests/test_todo_stubs.c
 	@mkdir -p $(BUILD_DIR)
 	@echo "Compiling TODO list test suite..."
 	@$(CC) $(CFLAGS) -c -o $(BUILD_DIR)/todo_test.o $(TODO_SRC)
 	@$(CC) $(CFLAGS) -c -o $(BUILD_DIR)/test_todo.o $(TEST_TODO_SRC)
+	@$(CC) $(CFLAGS) -c -o $(BUILD_DIR)/test_todo_stubs.o tests/test_todo_stubs.c
 	@echo "Linking test executable..."
-	@$(CC) -o $(TEST_TODO_TARGET) $(BUILD_DIR)/todo_test.o $(BUILD_DIR)/test_todo.o $(LDFLAGS)
+	@$(CC) -o $(TEST_TODO_TARGET) $(BUILD_DIR)/todo_test.o $(BUILD_DIR)/test_todo.o $(BUILD_DIR)/test_todo_stubs.o $(LDFLAGS)
 	@echo ""
 	@echo "✓ TODO list test build successful!"
 	@echo ""
@@ -481,7 +482,7 @@ $(TEST_TODO_TARGET): $(TODO_SRC) $(TEST_TODO_SRC)
 $(TEST_TODO_WRITE_TARGET): $(SRC) $(TEST_TODO_WRITE_SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(TODO_OBJ)
 	@mkdir -p $(BUILD_DIR)
 	@echo "Compiling claude.c for TodoWrite testing (renaming main)..."
-	@$(CC) $(CFLAGS) -DTEST_BUILD -Dmain=unused_main -c -o $(BUILD_DIR)/claude_todowrite_test.o $(SRC)
+	@$(CC) $(CFLAGS) -DTEST_BUILD -c -o $(BUILD_DIR)/claude_todowrite_test.o $(SRC)
 	@echo "Compiling TodoWrite tool test suite..."
 	@$(CC) $(CFLAGS) -c -o $(BUILD_DIR)/test_todo_write.o $(TEST_TODO_WRITE_SRC)
 	@echo "Linking test executable..."

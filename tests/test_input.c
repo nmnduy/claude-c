@@ -79,7 +79,7 @@ extern int visible_strlen(const char *str);
 // Test: is_word_boundary()
 // ============================================================================
 
-void test_is_word_boundary() {
+static void test_is_word_boundary(void) {
     printf("\n%sTesting is_word_boundary()%s\n", COLOR_CYAN, COLOR_RESET);
 
     // Alphanumeric and underscore should NOT be boundaries
@@ -104,7 +104,7 @@ void test_is_word_boundary() {
 // Test: move_backward_word()
 // ============================================================================
 
-void test_move_backward_word() {
+static void test_move_backward_word(void) {
     printf("\n%sTesting move_backward_word()%s\n", COLOR_CYAN, COLOR_RESET);
 
     // Test 1: Simple case - cursor at end of single word
@@ -150,7 +150,7 @@ void test_move_backward_word() {
 // Test: move_forward_word()
 // ============================================================================
 
-void test_move_forward_word() {
+static void test_move_forward_word(void) {
     printf("\n%sTesting move_forward_word()%s\n", COLOR_CYAN, COLOR_RESET);
 
     // Test 1: Simple case - cursor at start of single word
@@ -196,7 +196,7 @@ void test_move_forward_word() {
 // Test: visible_strlen()
 // ============================================================================
 
-void test_visible_strlen() {
+static void test_visible_strlen(void) {
     printf("\n%sTesting visible_strlen()%s\n", COLOR_CYAN, COLOR_RESET);
 
     // Test 1: Plain string (no ANSI codes)
@@ -235,12 +235,12 @@ void test_visible_strlen() {
 // Test: Word Movement Integration
 // ============================================================================
 
-void test_word_movement_integration() {
+static void test_word_movement_integration(void) {
     printf("\n%sTesting word movement integration%s\n", COLOR_CYAN, COLOR_RESET);
 
     // Test scenario: "git commit -m 'initial commit'"
     const char *cmd = "git commit -m 'initial commit'";
-    int len = strlen(cmd);
+    int len = (int)strlen(cmd);
 
     // Forward from start
     // Note: '-' and '\'' are word boundaries, so they get skipped
@@ -269,12 +269,12 @@ void test_word_movement_integration() {
 // Test: Multiline Word Movement
 // ============================================================================
 
-void test_multiline_word_movement() {
+static void test_multiline_word_movement(void) {
     printf("\n%sTesting multiline word movement%s\n", COLOR_CYAN, COLOR_RESET);
 
     // Test with newlines
     const char *multiline = "hello\nworld\ntest";
-    int len = strlen(multiline);
+    int len = (int)strlen(multiline);
 
     // Forward movement across newlines
     int pos = 0;
@@ -296,7 +296,7 @@ void test_multiline_word_movement() {
 // Test: Edge Cases
 // ============================================================================
 
-void test_edge_cases() {
+static void test_edge_cases(void) {
     printf("\n%sTesting edge cases%s\n", COLOR_CYAN, COLOR_RESET);
 
     // Empty string
@@ -319,7 +319,7 @@ void test_edge_cases() {
 
     // Single word, no spaces
     const char *single = "supercalifragilisticexpialidocious";
-    int single_len = strlen(single);
+    int single_len = (int)strlen(single);
     ASSERT_EQ(move_forward_word(single, 0, single_len), single_len,
               "Forward on very long word");
     ASSERT_EQ(move_backward_word(single, single_len), 0,
@@ -330,12 +330,12 @@ void test_edge_cases() {
 // Test: Complex Real-World Scenarios
 // ============================================================================
 
-void test_complex_scenarios() {
+static void test_complex_scenarios(void) {
     printf("\n%sTesting complex real-world scenarios%s\n", COLOR_CYAN, COLOR_RESET);
 
     // Test 1: File paths with various separators
     const char *path = "/usr/local/bin/my-script.sh";
-    int path_len = strlen(path);
+    int path_len = (int)strlen(path);
 
     int pos = 0;
     pos = move_forward_word(path, pos, path_len);
@@ -346,7 +346,7 @@ void test_complex_scenarios() {
 
     // Test 2: C function declaration
     const char *func = "int my_function(char *ptr);";
-    int func_len = strlen(func);
+    int func_len = (int)strlen(func);
 
     pos = 0;
     pos = move_forward_word(func, pos, func_len);
@@ -357,7 +357,7 @@ void test_complex_scenarios() {
 
     // Test 3: Mixed tabs and spaces
     const char *mixed = "word1\t\tword2   word3";
-    int mixed_len = strlen(mixed);
+    int mixed_len = (int)strlen(mixed);
 
     pos = 0;
     pos = move_forward_word(mixed, pos, mixed_len);
@@ -368,7 +368,7 @@ void test_complex_scenarios() {
 
     // Test 4: Email-like string
     const char *email = "user@example.com";
-    int email_len = strlen(email);
+    int email_len = (int)strlen(email);
 
     pos = 0;
     pos = move_forward_word(email, pos, email_len);
@@ -379,7 +379,7 @@ void test_complex_scenarios() {
 
     // Test 5: Consecutive boundaries
     const char *punct = "word...!!!word";
-    int punct_len = strlen(punct);
+    int punct_len = (int)strlen(punct);
 
     pos = 0;
     pos = move_forward_word(punct, pos, punct_len);
@@ -387,7 +387,7 @@ void test_complex_scenarios() {
 
     // Test 6: Backward through complex string
     const char *complex = "foo_bar.baz-qux";
-    pos = strlen(complex);
+    pos = (int)strlen(complex);
 
     pos = move_backward_word(complex, pos);
     ASSERT_EQ(pos, 12, "Backward to 'qux'");
@@ -403,7 +403,7 @@ void test_complex_scenarios() {
 // Test: ANSI Escape Sequence Edge Cases
 // ============================================================================
 
-void test_ansi_edge_cases() {
+static void test_ansi_edge_cases(void) {
     printf("\n%sTesting ANSI escape sequence edge cases%s\n", COLOR_CYAN, COLOR_RESET);
 
     // Test 1: Nested/malformed ANSI sequences
@@ -436,12 +436,12 @@ void test_ansi_edge_cases() {
 // Test: Boundary Character Combinations
 // ============================================================================
 
-void test_boundary_combinations() {
+static void test_boundary_combinations(void) {
     printf("\n%sTesting boundary character combinations%s\n", COLOR_CYAN, COLOR_RESET);
 
     // Test 1: Underscore vs hyphen (underscore is NOT a boundary)
     const char *mixed = "foo_bar-baz";
-    int len = strlen(mixed);
+    int len = (int)strlen(mixed);
 
     int pos = 0;
     pos = move_forward_word(mixed, pos, len);
@@ -452,7 +452,7 @@ void test_boundary_combinations() {
 
     // Test 2: Numbers in words
     const char *alphanum = "test123 var456";
-    int alphanum_len = strlen(alphanum);
+    int alphanum_len = (int)strlen(alphanum);
 
     pos = 0;
     pos = move_forward_word(alphanum, pos, alphanum_len);
@@ -461,19 +461,19 @@ void test_boundary_combinations() {
     // Test 3: Camel case (treated as single word)
     const char *camel = "myVariableName";
     pos = 0;
-    pos = move_forward_word(camel, pos, strlen(camel));
+    pos = move_forward_word(camel, pos, (int)strlen(camel));
     ASSERT_EQ(pos, 14, "CamelCase treated as single word");
 
     // Test 4: Multiple consecutive underscores
     const char *underscores = "word___word";
     pos = 0;
-    pos = move_forward_word(underscores, pos, strlen(underscores));
+    pos = move_forward_word(underscores, pos, (int)strlen(underscores));
     ASSERT_EQ(pos, 11, "Multiple underscores included in word");
 
     // Test 5: Start on boundary
     const char *start_bound = "   word";
     pos = 0;
-    pos = move_forward_word(start_bound, pos, strlen(start_bound));
+    pos = move_forward_word(start_bound, pos, (int)strlen(start_bound));
     ASSERT_EQ(pos, 3, "Start on boundary moves to next word");
 }
 
