@@ -1,6 +1,6 @@
 /*
  * fallback_colors.h - Centralized Fallback Color Definitions
- * 
+ *
  * This header provides the single source of truth for all fallback ANSI colors
  * used throughout the application when the colorscheme system is not available
  * or fails to load. All modules should use these constants instead of defining
@@ -22,7 +22,7 @@
 // User messages - Green (standard terminal color)
 #define ANSI_FALLBACK_USER "\033[32m"
 
-// Assistant messages - Blue (standard terminal color)  
+// Assistant messages - Blue (standard terminal color)
 #define ANSI_FALLBACK_ASSISTANT "\033[34m"
 
 // Tool execution - Yellow (standard terminal color)
@@ -67,7 +67,7 @@ static inline const char* get_fallback_color(int element_type) {
             return ANSI_FALLBACK_FOREGROUND;
         case 1: // USER
             return ANSI_FALLBACK_USER;
-        case 2: // ASSISTANT  
+        case 2: // ASSISTANT
             return ANSI_FALLBACK_ASSISTANT;
         case 3: // TOOL
             return ANSI_FALLBACK_TOOL;
