@@ -68,6 +68,11 @@ export OPENAI_API_KEY="your-api-key"
 - **Caching**: `DISABLE_PROMPT_CACHING=1` to disable
 - **Logging**: `CLAUDE_LOG_LEVEL` (DEBUG/INFO/WARN/ERROR), `CLAUDE_C_LOG_PATH`
 - **Database**: `CLAUDE_C_DB_PATH` for API call history (SQLite)
+- **Database Rotation**:
+  - `CLAUDE_C_DB_MAX_DAYS` - Keep records for N days (default: 30, 0=unlimited)
+  - `CLAUDE_C_DB_MAX_RECORDS` - Keep last N records (default: 1000, 0=unlimited)
+  - `CLAUDE_C_DB_MAX_SIZE_MB` - Max database size in MB (default: 100, 0=unlimited)
+  - `CLAUDE_C_DB_AUTO_ROTATE` - Enable auto-rotation (default: 1, set to 0 to disable)
 - **Theme**: `CLAUDE_C_THEME` pointing to Kitty .conf file
 
 **Defaults:**

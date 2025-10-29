@@ -90,4 +90,55 @@ void persistence_close(PersistenceDB *db);
 // Returns: Newly allocated string with default path (caller must free)
 char* persistence_get_default_path(void);
 
+// Rotation functions for managing database size and age
+
+// Delete records older than specified number of days
+//
+// Parameters:
+//   db: Persistence database handle
+//   days: Maximum age of records to keep (records older than this will be deleted)
+//
+// Returns:
+//   Number of records deleted, or -1 on error
+int persistence_rotate_by_age(PersistenceDB *db, int days);
+
+// Keep only the most recent N records, delete older ones
+//
+// Parameters:
+//   db: Persistence database handle
+//   max_records: Maximum number of records to keep
+//
+// Returns:
+//   Number of records deleted, or -1 on error
+int persistence_rotate_by_count(PersistenceDB *db, int max_records);
+
+// Get current database file size in bytes
+//
+// Parameters:
+//   db: Persistence database handle
+//
+// Returns:
+//   Database size in bytes, or -1 on error
+long persistence_get_db_size(PersistenceDB *db);
+
+// Run VACUUM to reclaim space after deletions
+//
+// Parameters:
+//   db: Persistence database handle
+//
+// Returns:
+//   0 on success, -1 on error
+int persistence_vacuum(PersistenceDB *db);
+
+// Automatically apply rotation rules based on environment variables
+// Checks CLAUDE_C_DB_MAX_DAYS, CLAUDE_C_DB_MAX_RECORDS, CLAUDE_C_DB_MAX_SIZE_MB
+// and applies appropriate rotation strategies
+//
+// Parameters:
+//   db: Persistence database handle
+//
+// Returns:
+//   0 on success, -1 on error
+int persistence_auto_rotate(PersistenceDB *db);
+
 #endif // PERSISTENCE_H

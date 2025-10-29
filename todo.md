@@ -12,7 +12,7 @@
 - [x] write state and logs to ./.claude-c by default
 - [x] ctrl + l to clear input box
 - [x] env var for custom log dir and api call db file
-- [ ] rotation for api call db files
+- [x] rotation for api call db files
 - [x] pasting still fucks up the terminal
 - [x] add retries to falied API calls
 - [ ] implement instruction queue. so user can keep typing
