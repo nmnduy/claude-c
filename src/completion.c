@@ -30,10 +30,9 @@ static int split_path(const char *path, char *dir_out, char *base_out) {
     // Make a copy since dirname/basename may modify the string
     char path_copy1[PATH_MAX];
     char path_copy2[PATH_MAX];
-    strncpy(path_copy1, path, PATH_MAX - 1);
-    strncpy(path_copy2, path, PATH_MAX - 1);
-    path_copy1[PATH_MAX - 1] = '\0';
-    path_copy2[PATH_MAX - 1] = '\0';
+    // Copy path safely
+    snprintf(path_copy1, PATH_MAX, "%s", path);
+    snprintf(path_copy2, PATH_MAX, "%s", path);
 
     // Find the last '/' to split directory and basename
     char *last_slash = strrchr(path_copy1, '/');
@@ -41,20 +40,16 @@ static int split_path(const char *path, char *dir_out, char *base_out) {
     if (last_slash == NULL) {
         // No slash: complete in current directory
         strcpy(dir_out, ".");
-        strncpy(base_out, path, PATH_MAX - 1);
-        base_out[PATH_MAX - 1] = '\0';
+        snprintf(base_out, PATH_MAX, "%s", path);
     } else if (last_slash == path_copy1) {
         // Path starts with '/': root directory
         strcpy(dir_out, "/");
-        strncpy(base_out, path + 1, PATH_MAX - 1);
-        base_out[PATH_MAX - 1] = '\0';
+        snprintf(base_out, PATH_MAX, "%s", path + 1);
     } else {
         // Normal path: split at last slash
         *last_slash = '\0';
-        strncpy(dir_out, path_copy1, PATH_MAX - 1);
-        dir_out[PATH_MAX - 1] = '\0';
-        strncpy(base_out, last_slash + 1, PATH_MAX - 1);
-        base_out[PATH_MAX - 1] = '\0';
+        snprintf(dir_out, PATH_MAX, "%s", path_copy1);
+        snprintf(base_out, PATH_MAX, "%s", last_slash + 1);
     }
 
     return 0;
