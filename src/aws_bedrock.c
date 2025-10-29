@@ -1009,22 +1009,42 @@ char* bedrock_convert_request(const char *openai_request) {
                         cJSON_AddItemToArray(content_array, tool_use_block);
                     }
 
-                    cJSON_AddItemToObject(anthropic_msg, "content", content_array);
+                    // Only add content if array is non-empty
+                    if (cJSON_GetArraySize(content_array) > 0) {
+                        cJSON_AddItemToObject(anthropic_msg, "content", content_array);
+                    } else {
+                        // No content blocks - skip this message
+                        cJSON_Delete(content_array);
+                        cJSON_Delete(anthropic_msg);
+                        anthropic_msg = NULL;
+                        LOG_WARN("Skipping assistant message with no content blocks");
+                        continue;
+                    }
                 } else {
-                    // Simple text content
-                    if (cJSON_IsString(content)) {
+                    // Simple text content - must be non-empty
+                    if (cJSON_IsString(content) && strlen(content->valuestring) > 0) {
                         cJSON_AddStringToObject(anthropic_msg, "content", content->valuestring);
-                    } else if (cJSON_IsNull(content)) {
-                        cJSON_AddStringToObject(anthropic_msg, "content", "");
+                    } else {
+                        // No valid content - skip this message
+                        cJSON_Delete(anthropic_msg);
+                        anthropic_msg = NULL;
+                        LOG_WARN("Skipping assistant message with null or empty content");
+                        continue;
                     }
                 }
             } else if (strcmp(role_str, "user") == 0) {
                 cJSON_AddStringToObject(anthropic_msg, "role", "user");
 
-                if (cJSON_IsString(content)) {
+                if (cJSON_IsString(content) && strlen(content->valuestring) > 0) {
                     cJSON_AddStringToObject(anthropic_msg, "content", content->valuestring);
-                } else if (cJSON_IsArray(content)) {
+                } else if (cJSON_IsArray(content) && cJSON_GetArraySize(content) > 0) {
                     cJSON_AddItemToObject(anthropic_msg, "content", cJSON_Duplicate(content, 1));
+                } else {
+                    // No valid content - skip this message
+                    cJSON_Delete(anthropic_msg);
+                    anthropic_msg = NULL;
+                    LOG_WARN("Skipping user message with null or empty content");
+                    continue;
                 }
             } else if (strcmp(role_str, "tool") == 0) {
                 // Tool results are handled as user messages with tool_result blocks
