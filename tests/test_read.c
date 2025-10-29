@@ -83,26 +83,26 @@ static void print_test_summary(void) {
 
 static void test_read_entire_file(ConversationState *state) {
     print_test_header("Read Entire File");
-    
+
     const char *content = "Line 1\nLine 2\nLine 3\nLine 4\nLine 5\n";
     setup_test_file(content);
-    
+
     cJSON *params = cJSON_CreateObject();
     cJSON_AddStringToObject(params, "file_path", TEST_FILE);
-    
+
     cJSON *result = tool_read(params, state);
-    
+
     assert_test(result != NULL, "Result is not NULL");
     assert_test(!cJSON_HasObjectItem(result, "error"), "No error in result");
-    
+
     cJSON *content_json = cJSON_GetObjectItem(result, "content");
     assert_test(content_json != NULL, "Content field exists");
     assert_test(strcmp(content_json->valuestring, content) == 0, "Content matches");
-    
+
     cJSON *total_lines = cJSON_GetObjectItem(result, "total_lines");
     assert_test(total_lines != NULL, "total_lines field exists");
     assert_test(total_lines->valueint == 5, "Total lines is 5");
-    
+
     cJSON_Delete(params);
     cJSON_Delete(result);
     cleanup_test_file();
@@ -110,29 +110,29 @@ static void test_read_entire_file(ConversationState *state) {
 
 static void test_read_line_range(ConversationState *state) {
     print_test_header("Read Specific Line Range (lines 2-4)");
-    
+
     const char *content = "Line 1\nLine 2\nLine 3\nLine 4\nLine 5\n";
     setup_test_file(content);
-    
+
     cJSON *params = cJSON_CreateObject();
     cJSON_AddStringToObject(params, "file_path", TEST_FILE);
     cJSON_AddNumberToObject(params, "start_line", 2);
     cJSON_AddNumberToObject(params, "end_line", 4);
-    
+
     cJSON *result = tool_read(params, state);
-    
+
     assert_test(result != NULL, "Result is not NULL");
     assert_test(!cJSON_HasObjectItem(result, "error"), "No error in result");
-    
+
     cJSON *content_json = cJSON_GetObjectItem(result, "content");
     const char *expected = "Line 2\nLine 3\nLine 4\n";
     assert_test(strcmp(content_json->valuestring, expected) == 0, "Content matches lines 2-4");
-    
+
     cJSON *start_line = cJSON_GetObjectItem(result, "start_line");
     cJSON *end_line = cJSON_GetObjectItem(result, "end_line");
     assert_test(start_line->valueint == 2, "start_line is 2");
     assert_test(end_line->valueint == 4, "end_line is 4");
-    
+
     cJSON_Delete(params);
     cJSON_Delete(result);
     cleanup_test_file();
@@ -140,24 +140,24 @@ static void test_read_line_range(ConversationState *state) {
 
 static void test_read_invalid_range(ConversationState *state) {
     print_test_header("Invalid Range (start > end)");
-    
+
     const char *content = "Line 1\nLine 2\nLine 3\nLine 4\nLine 5\n";
     setup_test_file(content);
-    
+
     cJSON *params = cJSON_CreateObject();
     cJSON_AddStringToObject(params, "file_path", TEST_FILE);
     cJSON_AddNumberToObject(params, "start_line", 4);
     cJSON_AddNumberToObject(params, "end_line", 2);
-    
+
     cJSON *result = tool_read(params, state);
-    
+
     assert_test(result != NULL, "Result is not NULL");
     assert_test(cJSON_HasObjectItem(result, "error"), "Error field exists");
-    
+
     cJSON *error = cJSON_GetObjectItem(result, "error");
-    assert_test(strstr(error->valuestring, "start_line must be <= end_line") != NULL, 
+    assert_test(strstr(error->valuestring, "start_line must be <= end_line") != NULL,
                 "Error message mentions invalid range");
-    
+
     cJSON_Delete(params);
     cJSON_Delete(result);
     cleanup_test_file();

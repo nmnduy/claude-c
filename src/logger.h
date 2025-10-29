@@ -77,7 +77,7 @@ void log_set_flush_mode(int always_flush);
  * Core logging function (use macros instead of calling directly)
  */
 void log_message(LogLevel level, const char *file, int line,
-                const char *func, const char *fmt, ...) 
+                const char *func, const char *fmt, ...)
     __attribute__((format(printf, 5, 6)));
 
 /**

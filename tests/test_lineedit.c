@@ -728,7 +728,7 @@ static void test_ctrl_j_newline_handling() {
 
     // This test verifies that the terminal setup distinguishes Enter from Ctrl+J
     // The actual behavior is tested in the integration tests
-    
+
     // Verify that ICRNL and INLCR flags are mentioned in recent changes
     // This is more of a documentation test to ensure the feature is present
     printf("  ✓ Ctrl+J vs Enter distinction enabled via ICRNL/INLCR flags\n");
