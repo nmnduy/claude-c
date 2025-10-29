@@ -148,4 +148,4 @@ https://api.openai.com|400|{
     "code": null
   }
 }
-- [ ] remove paste confirmation
+- [x] remove paste confirmation

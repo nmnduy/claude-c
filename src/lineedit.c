@@ -689,8 +689,8 @@ static int handle_paste_complete(LineEditor *ed, PasteState *paste_state,
     };
     size_t sanitized_len = paste_sanitize(sanitized, paste_len, &opts);
 
-    // For large pastes, prompt user
-    if (sanitized_len > PASTE_WARN_THRESHOLD) {
+    // Skipping large paste confirmation as terminal handles this
+    if (0) {
         // Clear screen first to avoid display corruption
         // (the line editor's display will be disrupted by our prompts)
         printf("\r\033[J");  // Clear from cursor down
