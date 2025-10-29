@@ -701,6 +701,41 @@ static int handle_paste_complete(LineEditor *ed, PasteState *paste_state,
         line_count++;
     }
 
+    // Decide whether to insert actual content for small pastes
+    if (sanitized_len < 512) {
+        // Small paste: insert actual sanitized content directly
+        // Ensure buffer has enough capacity
+        size_t needed_small = (size_t)ed->length + sanitized_len + 1;
+        if (needed_small > ed->buffer_capacity) {
+            size_t new_cap = ed->buffer_capacity;
+            while (new_cap < needed_small) new_cap *= 2;
+            char *new_buf = realloc(ed->buffer, new_cap);
+            if (!new_buf) {
+                fprintf(stderr, "\nError: Failed to expand buffer for small paste\n");
+                free(sanitized);
+                return 0;
+            }
+            ed->buffer = new_buf;
+            ed->buffer_capacity = new_cap;
+        }
+        // Shift existing content to make room
+        if (ed->cursor < ed->length) {
+            memmove(&ed->buffer[(size_t)ed->cursor + sanitized_len],
+                    &ed->buffer[ed->cursor],
+                    (size_t)(ed->length - ed->cursor + 1));
+        }
+        // Copy sanitized content
+        memcpy(&ed->buffer[ed->cursor], sanitized, sanitized_len);
+        ed->cursor += sanitized_len;
+        ed->length += sanitized_len;
+        ed->buffer[ed->length] = '\0';
+        // Cleanup
+        free(sanitized);
+        // Redraw line with inserted content
+        redraw_input_line_internal(prompt, ed->buffer, ed->cursor, 0);
+        return 1;
+    }
+
     // Create placeholder text
     char placeholder[128];
     int placeholder_len;
