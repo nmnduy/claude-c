@@ -19,6 +19,7 @@
 #define VERSION CLAUDE_C_VERSION
 
 // API Configuration - defaults can be overridden by environment variables
+// Note: For OpenAI, the provider will automatically append "/v1/chat/completions" if needed
 #define API_BASE_URL "https://api.openai.com"
 #define DEFAULT_MODEL "o4-mini"
 #define MAX_TOKENS 16384
