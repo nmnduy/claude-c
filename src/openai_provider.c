@@ -149,7 +149,40 @@ static ApiCallResult openai_call_api(Provider *self, ConversationState *state) {
         if (!result.response) {
             result.error_message = strdup("Failed to parse JSON response");
             result.is_retryable = 0;
+            return result;
         }
+
+        // Validate and sanitize tool_calls in the response
+        // OpenAI format requires tool_calls to have a 'function' object
+        cJSON *choices = cJSON_GetObjectItem(result.response, "choices");
+        if (choices && cJSON_IsArray(choices)) {
+            int choice_count = cJSON_GetArraySize(choices);
+            for (int i = 0; i < choice_count; i++) {
+                cJSON *choice = cJSON_GetArrayItem(choices, i);
+                cJSON *message = cJSON_GetObjectItem(choice, "message");
+                if (message) {
+                    cJSON *tool_calls = cJSON_GetObjectItem(message, "tool_calls");
+                    if (tool_calls && cJSON_IsArray(tool_calls)) {
+                        int tool_count = cJSON_GetArraySize(tool_calls);
+                        // Check each tool_call for required 'function' field
+                        for (int j = tool_count - 1; j >= 0; j--) {
+                            cJSON *tool_call = cJSON_GetArrayItem(tool_calls, j);
+                            cJSON *function = cJSON_GetObjectItem(tool_call, "function");
+                            if (!function) {
+                                // Remove malformed tool_call from array
+                                LOG_WARN("Removing malformed tool_call at index %d (missing 'function' field)", j);
+                                cJSON_DeleteItemFromArray(tool_calls, j);
+                            }
+                        }
+                        // If all tool_calls were removed, delete the tool_calls array
+                        if (cJSON_GetArraySize(tool_calls) == 0) {
+                            cJSON_DeleteItemFromObject(message, "tool_calls");
+                        }
+                    }
+                }
+            }
+        }
+
         return result;
     }
 
