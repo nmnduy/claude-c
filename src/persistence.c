@@ -189,6 +189,9 @@ PersistenceDB* persistence_init(const char *db_path) {
         return NULL;
     }
 
+    // Apply automatic rotation rules if enabled
+    persistence_auto_rotate(pdb);
+
     return pdb;
 }
 
@@ -306,4 +309,250 @@ void persistence_close(PersistenceDB *db) {
     }
 
     free(db);
+}
+
+// Rotation functions implementation
+
+// Delete records older than specified number of days
+int persistence_rotate_by_age(PersistenceDB *db, int days) {
+    if (!db || !db->db || days < 0) {
+        LOG_ERROR("Invalid parameters to persistence_rotate_by_age");
+        return -1;
+    }
+
+    if (days == 0) {
+        // 0 means unlimited, don't delete anything
+        return 0;
+    }
+
+    // Calculate cutoff timestamp (current time - days * 86400 seconds)
+    time_t now = time(NULL);
+    time_t cutoff = now - (days * 86400);
+
+    const char *sql = "DELETE FROM api_calls WHERE created_at < ?;";
+    sqlite3_stmt *stmt;
+    int rc = sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        LOG_ERROR("Failed to prepare delete statement: %s", sqlite3_errmsg(db->db));
+        return -1;
+    }
+
+    sqlite3_bind_int64(stmt, 1, cutoff);
+
+    rc = sqlite3_step(stmt);
+    if (rc != SQLITE_DONE) {
+        LOG_ERROR("Failed to delete old records: %s", sqlite3_errmsg(db->db));
+        sqlite3_finalize(stmt);
+        return -1;
+    }
+
+    int deleted = sqlite3_changes(db->db);
+    sqlite3_finalize(stmt);
+
+    if (deleted > 0) {
+        LOG_INFO("Rotated database: deleted %d records older than %d days", deleted, days);
+    }
+
+    return deleted;
+}
+
+// Keep only the most recent N records
+int persistence_rotate_by_count(PersistenceDB *db, int max_records) {
+    if (!db || !db->db || max_records < 0) {
+        LOG_ERROR("Invalid parameters to persistence_rotate_by_count");
+        return -1;
+    }
+
+    if (max_records == 0) {
+        // 0 means unlimited, don't delete anything
+        return 0;
+    }
+
+    // First, get the total count
+    const char *count_sql = "SELECT COUNT(*) FROM api_calls;";
+    sqlite3_stmt *stmt;
+    int rc = sqlite3_prepare_v2(db->db, count_sql, -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        LOG_ERROR("Failed to prepare count statement: %s", sqlite3_errmsg(db->db));
+        return -1;
+    }
+
+    int total_records = 0;
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        total_records = sqlite3_column_int(stmt, 0);
+    }
+    sqlite3_finalize(stmt);
+
+    if (total_records <= max_records) {
+        // Nothing to delete
+        return 0;
+    }
+
+    // Delete oldest records, keeping only max_records
+    // Strategy: Delete records where id is not in the top N most recent records
+    const char *delete_sql =
+        "DELETE FROM api_calls WHERE id NOT IN "
+        "(SELECT id FROM api_calls ORDER BY created_at DESC LIMIT ?);";
+
+    rc = sqlite3_prepare_v2(db->db, delete_sql, -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        LOG_ERROR("Failed to prepare delete statement: %s", sqlite3_errmsg(db->db));
+        return -1;
+    }
+
+    sqlite3_bind_int(stmt, 1, max_records);
+
+    rc = sqlite3_step(stmt);
+    if (rc != SQLITE_DONE) {
+        LOG_ERROR("Failed to delete excess records: %s", sqlite3_errmsg(db->db));
+        sqlite3_finalize(stmt);
+        return -1;
+    }
+
+    int deleted = sqlite3_changes(db->db);
+    sqlite3_finalize(stmt);
+
+    if (deleted > 0) {
+        LOG_INFO("Rotated database: deleted %d records, keeping %d most recent", deleted, max_records);
+    }
+
+    return deleted;
+}
+
+// Get current database file size in bytes
+long persistence_get_db_size(PersistenceDB *db) {
+    if (!db || !db->db_path) {
+        LOG_ERROR("Invalid parameters to persistence_get_db_size");
+        return -1;
+    }
+
+    struct stat st;
+    if (stat(db->db_path, &st) != 0) {
+        LOG_ERROR("Failed to stat database file %s: %s", db->db_path, strerror(errno));
+        return -1;
+    }
+
+    return st.st_size;
+}
+
+// Run VACUUM to reclaim space
+int persistence_vacuum(PersistenceDB *db) {
+    if (!db || !db->db) {
+        LOG_ERROR("Invalid parameters to persistence_vacuum");
+        return -1;
+    }
+
+    char *err_msg = NULL;
+    int rc = sqlite3_exec(db->db, "VACUUM;", NULL, NULL, &err_msg);
+    if (rc != SQLITE_OK) {
+        LOG_ERROR("Failed to vacuum database: %s", err_msg);
+        sqlite3_free(err_msg);
+        return -1;
+    }
+
+    LOG_INFO("Database vacuum completed successfully");
+    return 0;
+}
+
+// Parse integer from environment variable with default
+static int get_env_int(const char *name, int default_value) {
+    const char *value = getenv(name);
+    if (!value || value[0] == '\0') {
+        return default_value;
+    }
+
+    char *endptr;
+    long result = strtol(value, &endptr, 10);
+    if (*endptr != '\0' || result < 0 || result > INT_MAX) {
+        LOG_WARN("Invalid value for %s: '%s', using default %d", name, value, default_value);
+        return default_value;
+    }
+
+    return (int)result;
+}
+
+// Automatically apply rotation rules based on environment variables
+int persistence_auto_rotate(PersistenceDB *db) {
+    if (!db || !db->db) {
+        LOG_ERROR("Invalid parameters to persistence_auto_rotate");
+        return -1;
+    }
+
+    // Check if auto-rotation is enabled (default: yes)
+    const char *auto_rotate_env = getenv("CLAUDE_C_DB_AUTO_ROTATE");
+    if (auto_rotate_env && strcmp(auto_rotate_env, "0") == 0) {
+        LOG_DEBUG("Auto-rotation disabled by CLAUDE_C_DB_AUTO_ROTATE=0");
+        return 0;
+    }
+
+    int total_deleted = 0;
+    int need_vacuum = 0;
+
+    // Rotate by age (default: 30 days, 0 = unlimited)
+    int max_days = get_env_int("CLAUDE_C_DB_MAX_DAYS", 30);
+    if (max_days > 0) {
+        int deleted = persistence_rotate_by_age(db, max_days);
+        if (deleted > 0) {
+            total_deleted += deleted;
+            need_vacuum = 1;
+        } else if (deleted < 0) {
+            return -1;
+        }
+    }
+
+    // Rotate by count (default: 1000 records, 0 = unlimited)
+    int max_records = get_env_int("CLAUDE_C_DB_MAX_RECORDS", 1000);
+    if (max_records > 0) {
+        int deleted = persistence_rotate_by_count(db, max_records);
+        if (deleted > 0) {
+            total_deleted += deleted;
+            need_vacuum = 1;
+        } else if (deleted < 0) {
+            return -1;
+        }
+    }
+
+    // Check size limit (default: 100 MB, 0 = unlimited)
+    int max_size_mb = get_env_int("CLAUDE_C_DB_MAX_SIZE_MB", 100);
+    if (max_size_mb > 0) {
+        long size_bytes = persistence_get_db_size(db);
+        long max_size_bytes = max_size_mb * 1024L * 1024L;
+
+        if (size_bytes > max_size_bytes) {
+            LOG_WARN("Database size (%ld bytes) exceeds maximum (%ld bytes)",
+                     size_bytes, max_size_bytes);
+
+            // If size is exceeded, try more aggressive count-based rotation
+            // Delete oldest 25% of records
+            const char *count_sql = "SELECT COUNT(*) FROM api_calls;";
+            sqlite3_stmt *stmt;
+            int rc = sqlite3_prepare_v2(db->db, count_sql, -1, &stmt, NULL);
+            if (rc == SQLITE_OK && sqlite3_step(stmt) == SQLITE_ROW) {
+                int current_count = sqlite3_column_int(stmt, 0);
+                int target_count = (current_count * 3) / 4; // Keep 75%
+                sqlite3_finalize(stmt);
+
+                if (target_count > 0) {
+                    int deleted = persistence_rotate_by_count(db, target_count);
+                    if (deleted > 0) {
+                        total_deleted += deleted;
+                        need_vacuum = 1;
+                    }
+                }
+            } else {
+                sqlite3_finalize(stmt);
+            }
+        }
+    }
+
+    // Run VACUUM if we deleted anything
+    if (need_vacuum) {
+        persistence_vacuum(db);
+    }
+
+    if (total_deleted > 0) {
+        LOG_INFO("Auto-rotation completed: deleted %d total records", total_deleted);
+    }
+
+    return 0;
 }

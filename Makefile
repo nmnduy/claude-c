@@ -54,6 +54,7 @@ TEST_PASTE_TARGET = $(BUILD_DIR)/test_paste
 TEST_RETRY_JITTER_TARGET = $(BUILD_DIR)/test_retry_jitter
 TEST_OPENAI_FORMAT_TARGET = $(BUILD_DIR)/test_openai_format
 TEST_WRITE_DIFF_INTEGRATION_TARGET = $(BUILD_DIR)/test_write_diff_integration
+TEST_ROTATION_TARGET = $(BUILD_DIR)/test_rotation
 QUERY_TOOL = $(BUILD_DIR)/query_logs
 SRC = src/claude.c
 LOGGER_SRC = src/logger.c
@@ -94,9 +95,10 @@ TEST_PASTE_SRC = tests/test_paste.c
 TEST_RETRY_JITTER_SRC = tests/test_retry_jitter.c
 TEST_OPENAI_FORMAT_SRC = tests/test_openai_format.c
 TEST_WRITE_DIFF_INTEGRATION_SRC = tests/test_write_diff_integration.c
+TEST_ROTATION_SRC = tests/test_rotation.c
 QUERY_TOOL_SRC = tools/query_logs.c
 
-.PHONY: all clean check-deps install test test-edit test-input test-read test-lineedit test-todo test-todo-write test-paste test-retry-jitter test-openai-format test-write-diff-integration query-tool debug analyze sanitize-ub sanitize-all sanitize-leak valgrind memscan version show-version update-version bump-patch build clang
+.PHONY: all clean check-deps install test test-edit test-input test-read test-lineedit test-todo test-todo-write test-paste test-retry-jitter test-openai-format test-write-diff-integration test-rotation query-tool debug analyze sanitize-ub sanitize-all sanitize-leak valgrind memscan version show-version update-version bump-patch build clang
 
 all: check-deps $(TARGET)
 
@@ -108,7 +110,7 @@ debug: check-deps $(BUILD_DIR)/claude-c-debug
 
 query-tool: check-deps $(QUERY_TOOL)
 
-test: test-edit test-input test-read test-lineedit test-todo test-paste test-timing test-openai-format test-write-diff-integration
+test: test-edit test-input test-read test-lineedit test-todo test-paste test-timing test-openai-format test-write-diff-integration test-rotation
 
 test-edit: check-deps $(TEST_EDIT_TARGET)
 	@echo ""
@@ -175,6 +177,12 @@ test-write-diff-integration: check-deps $(TEST_WRITE_DIFF_INTEGRATION_TARGET)
 	@echo "Running Write tool diff integration tests..."
 	@echo ""
 	@./$(TEST_WRITE_DIFF_INTEGRATION_TARGET)
+
+test-rotation: check-deps $(TEST_ROTATION_TARGET)
+	@echo ""
+	@echo "Running database rotation tests..."
+	@echo ""
+	@./$(TEST_ROTATION_TARGET)
 
 $(TARGET): $(SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(LINEEDIT_OBJ) $(COMMANDS_OBJ) $(COMPLETION_OBJ) $(TUI_OBJ) $(TODO_OBJ) $(AWS_BEDROCK_OBJ) $(PROVIDER_OBJ) $(OPENAI_PROVIDER_OBJ) $(OPENAI_MESSAGES_OBJ) $(BEDROCK_PROVIDER_OBJ) $(BUILTIN_THEMES_OBJ) $(VERSION_H)
 	@mkdir -p $(BUILD_DIR)
@@ -560,6 +568,15 @@ $(TEST_WRITE_DIFF_INTEGRATION_TARGET): $(SRC) $(TEST_WRITE_DIFF_INTEGRATION_SRC)
 	@$(CC) -o $(TEST_WRITE_DIFF_INTEGRATION_TARGET) $(BUILD_DIR)/claude_write_diff_test.o $(BUILD_DIR)/test_write_diff_integration.o $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(TODO_OBJ) $(LINEEDIT_OBJ) $(LDFLAGS)
 	@echo ""
 	@echo "✓ Write tool diff integration test build successful!"
+	@echo ""
+
+# Test target for database rotation
+$(TEST_ROTATION_TARGET): $(TEST_ROTATION_SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ)
+	@mkdir -p $(BUILD_DIR)
+	@echo "Compiling database rotation tests..."
+	$(CC) $(CFLAGS) -o $(TEST_ROTATION_TARGET) $(TEST_ROTATION_SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(LDFLAGS)
+	@echo ""
+	@echo "✓ Rotation test build successful!"
 	@echo ""
 
 install: $(TARGET)

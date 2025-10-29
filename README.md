@@ -82,6 +82,12 @@ export OPENAI_API_KEY="your-api-key-here"
 - `CLAUDE_LOG_LEVEL` - Minimum log level: `DEBUG`, `INFO`, `WARN`, `ERROR` (default: INFO)
 - `CLAUDE_C_DB_PATH` - Path to SQLite database for API call history (default: `./.claude-c/api_calls.db`)
 
+**Database Rotation:**
+- `CLAUDE_C_DB_MAX_DAYS` - Keep records for N days (default: 30, 0=unlimited)
+- `CLAUDE_C_DB_MAX_RECORDS` - Keep last N records (default: 1000, 0=unlimited)
+- `CLAUDE_C_DB_MAX_SIZE_MB` - Max database size in MB (default: 100, 0=unlimited)
+- `CLAUDE_C_DB_AUTO_ROTATE` - Enable auto-rotation on startup (default: 1, set to 0 to disable)
+
 **Default Locations:**
 By default, logs and API call history are stored in `./.claude-c/` in the current working directory. This makes each project self-contained. Override with the environment variables above if needed.
 
