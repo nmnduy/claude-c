@@ -3,7 +3,9 @@
 
 - [ ] plan mode
 - [ ] remove ANTHROPIC_MODEL env var usage. its confusing
+- [ ] colorize the diff using the colorscheme we got
 - [ ] tmux paste doesn't get handled correctly in the input
+- [ ] object files in same dir?
 - [ ] receive user input
 - [x] print todo list after creating it or when updating the TODO list
 - [ ] {"message":"Too many tokens, please wait before trying again."}. if api responded with this then handle appropriately
