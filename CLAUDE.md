@@ -178,8 +178,3 @@ Verify: `make check-deps`
 - Typically 5-10KB cached per conversation
 
 **Control**: `DISABLE_PROMPT_CACHING=1` to disable
-
-## Formwork
-
-Experimental: Consistent API for tool call extraction (replacing raw tool_use blocks)
-**Status**: In development
