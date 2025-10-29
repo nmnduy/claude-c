@@ -1706,6 +1706,8 @@ char* build_request_json_from_state(ConversationState *state) {
                         cJSON_AddItemToArray(messages_array, tool_msg);
                     }
                 }
+                // Free the msg object we created but won't use
+                cJSON_Delete(msg);
                 continue; // Skip adding the user message itself
             } else {
                 // Regular user text message
@@ -2522,6 +2524,8 @@ static void process_response(ConversationState *state, cJSON *response, TUIState
             cJSON *id = cJSON_GetObjectItem(tool_call, "id");
             cJSON *function = cJSON_GetObjectItem(tool_call, "function");
             if (!function) {
+                // This should never happen - provider should sanitize responses
+                LOG_ERROR("Tool call missing 'function' object (provider validation failed)");
                 continue;
             }
             cJSON *name = cJSON_GetObjectItem(function, "name");

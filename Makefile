@@ -51,6 +51,7 @@ TEST_TODO_WRITE_TARGET = $(BUILD_DIR)/test_todo_write
 TEST_TIMING_TARGET = $(BUILD_DIR)/test_tool_timing
 TEST_PASTE_TARGET = $(BUILD_DIR)/test_paste
 TEST_RETRY_JITTER_TARGET = $(BUILD_DIR)/test_retry_jitter
+TEST_OPENAI_FORMAT_TARGET = $(BUILD_DIR)/test_openai_format
 QUERY_TOOL = $(BUILD_DIR)/query_logs
 SRC = src/claude.c
 LOGGER_SRC = src/logger.c
@@ -85,9 +86,10 @@ TEST_TODO_SRC = tests/test_todo.c
 TEST_TODO_WRITE_SRC = tests/test_todo_write.c
 TEST_PASTE_SRC = tests/test_paste.c
 TEST_RETRY_JITTER_SRC = tests/test_retry_jitter.c
+TEST_OPENAI_FORMAT_SRC = tests/test_openai_format.c
 QUERY_TOOL_SRC = tools/query_logs.c
 
-.PHONY: all clean check-deps install test test-edit test-input test-read test-lineedit test-todo test-todo-write test-paste test-retry-jitter query-tool debug analyze sanitize-ub sanitize-all sanitize-leak valgrind memscan version show-version update-version bump-patch build
+.PHONY: all clean check-deps install test test-edit test-input test-read test-lineedit test-todo test-todo-write test-paste test-retry-jitter test-openai-format query-tool debug analyze sanitize-ub sanitize-all sanitize-leak valgrind memscan version show-version update-version bump-patch build
 
 all: check-deps $(TARGET)
 
@@ -97,7 +99,7 @@ debug: check-deps $(BUILD_DIR)/claude-c-debug
 
 query-tool: check-deps $(QUERY_TOOL)
 
-test: test-edit test-input test-read test-lineedit test-todo test-paste test-timing
+test: test-edit test-input test-read test-lineedit test-todo test-paste test-timing test-openai-format
 
 test-edit: check-deps $(TEST_EDIT_TARGET)
 	@echo ""
@@ -152,6 +154,12 @@ test-timing: check-deps $(TEST_TIMING_TARGET)
 	@echo "Running tool timing tests..."
 	@echo ""
 	@./$(TEST_TIMING_TARGET)
+
+test-openai-format: check-deps $(TEST_OPENAI_FORMAT_TARGET)
+	@echo ""
+	@echo "Running OpenAI message format validation tests..."
+	@echo ""
+	@./$(TEST_OPENAI_FORMAT_TARGET)
 
 $(TARGET): $(SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(LINEEDIT_OBJ) $(COMMANDS_OBJ) $(COMPLETION_OBJ) $(TUI_OBJ) $(TODO_OBJ) $(AWS_BEDROCK_OBJ) $(PROVIDER_OBJ) $(OPENAI_PROVIDER_OBJ) $(BEDROCK_PROVIDER_OBJ) $(VERSION_H)
 	@mkdir -p $(BUILD_DIR)
@@ -493,6 +501,15 @@ $(TEST_TIMING_TARGET): tests/test_tool_timing.c
 	@$(CC) $(CFLAGS) -o $(TEST_TIMING_TARGET) tests/test_tool_timing.c -lpthread
 	@echo ""
 	@echo "✓ Tool timing test build successful!"
+	@echo ""
+
+# Test target for OpenAI message format validation
+$(TEST_OPENAI_FORMAT_TARGET): $(TEST_OPENAI_FORMAT_SRC)
+	@mkdir -p $(BUILD_DIR)
+	@echo "Compiling OpenAI format validation test suite..."
+	@$(CC) $(CFLAGS) -o $(TEST_OPENAI_FORMAT_TARGET) $(TEST_OPENAI_FORMAT_SRC) $(LDFLAGS)
+	@echo ""
+	@echo "✓ OpenAI format test build successful!"
 	@echo ""
 
 install: $(TARGET)
