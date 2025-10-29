@@ -142,8 +142,9 @@ static cJSON* openai_parse_response(Provider *self, const char *response_body) {
  * Handle authentication errors
  * For OpenAI, we don't have automatic credential refresh, so just log and return 0
  */
-static int openai_handle_auth_error(Provider *self, long http_status, const char *error_message) {
+static int openai_handle_auth_error(Provider *self, long http_status, const char *error_message, const char *response_body) {
     (void)self;  // No credential refresh for OpenAI
+    (void)response_body;  // Not used for OpenAI
 
     LOG_WARN("OpenAI provider: authentication error (HTTP %ld): %s",
              http_status, error_message ? error_message : "(no message)");

@@ -87,8 +87,8 @@ static struct curl_slist* bedrock_sign_request(
     const char *region,
     const char *service
 ) { (void)method; (void)url; (void)payload; (void)creds; (void)region; (void)service; return headers; }
-static int bedrock_handle_auth_error(BedrockConfig *config, long http_status, const char *error_message) {
-    (void)config; (void)http_status; (void)error_message;
+static int bedrock_handle_auth_error(BedrockConfig *config, long http_status, const char *error_message, const char *response_body) {
+    (void)config; (void)http_status; (void)error_message; (void)response_body;
     return 0;
 }
 #else
@@ -2039,8 +2039,8 @@ static cJSON* call_api(ConversationState *state) {
             if (retry_count < MAX_RETRIES && state->provider &&
                 (http_status == 401 || http_status == 403 || http_status == 400)) {
 
-                // Try to handle auth error using provider
-                if (state->provider->handle_auth_error(state->provider, http_status, error_msg)) {
+                // Try to handle auth error using provider (pass response body for detailed error analysis)
+                if (state->provider->handle_auth_error(state->provider, http_status, error_msg, response.output)) {
                     LOG_INFO("Provider handled auth error successfully, retrying request (attempt %d/%d)",
                              retry_count + 1, MAX_RETRIES);
 

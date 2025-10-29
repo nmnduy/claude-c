@@ -88,9 +88,10 @@ typedef struct Provider {
      * @param self - Provider instance (config may be updated with new credentials)
      * @param http_status - HTTP status code from failed request
      * @param error_message - Error message from API response
+     * @param response_body - Full response body from API (for detailed error analysis)
      * @return 1 if credentials were refreshed (caller should retry), 0 otherwise
      */
-    int (*handle_auth_error)(struct Provider *self, long http_status, const char *error_message);
+    int (*handle_auth_error)(struct Provider *self, long http_status, const char *error_message, const char *response_body);
 
     /**
      * Cleanup provider resources

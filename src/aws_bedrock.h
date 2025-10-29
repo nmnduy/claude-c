@@ -111,10 +111,11 @@ int bedrock_authenticate(const char *profile);
  *   config - BedrockConfig with current credentials (will be updated if successful)
  *   http_status - HTTP status code from failed API request
  *   error_message - Error message from API response
+ *   response_body - Full response body from API (for detailed error analysis)
  *
  * Returns: 1 if credentials were refreshed (caller should retry request), 0 otherwise
  */
-int bedrock_handle_auth_error(BedrockConfig *config, long http_status, const char *error_message);
+int bedrock_handle_auth_error(BedrockConfig *config, long http_status, const char *error_message, const char *response_body);
 
 /**
  * Build AWS Bedrock API endpoint URL

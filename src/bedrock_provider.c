@@ -131,7 +131,7 @@ static cJSON* bedrock_parse_response(Provider *self, const char *response_body) 
 /**
  * Handle authentication errors and attempt credential refresh
  */
-static int bedrock_provider_handle_auth_error(Provider *self, long http_status, const char *error_message) {
+static int bedrock_provider_handle_auth_error(Provider *self, long http_status, const char *error_message, const char *response_body) {
     BedrockConfig *config = (BedrockConfig*)self->config;
 
     if (!config) {
@@ -144,7 +144,7 @@ static int bedrock_provider_handle_auth_error(Provider *self, long http_status, 
 
     // Use the existing bedrock_handle_auth_error function from aws_bedrock.c
     // This will attempt to refresh credentials if it's an auth error
-    int refreshed = bedrock_handle_auth_error(config, http_status, error_message);
+    int refreshed = bedrock_handle_auth_error(config, http_status, error_message, response_body);
 
     if (refreshed) {
         LOG_INFO("Bedrock provider: credentials refreshed successfully, retry recommended");
