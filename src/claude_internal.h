@@ -9,6 +9,7 @@
 
 #include <cjson/cJSON.h>
 #include "version.h"
+#include "provider.h"
 
 // ============================================================================
 // Configuration Constants
@@ -94,7 +95,7 @@ typedef struct ConversationState {
     char *session_id;               // Unique session identifier for this conversation
     struct PersistenceDB *persistence_db;  // For logging API calls to SQLite
     struct TodoList *todo_list;     // Task tracking list
-    struct BedrockConfigStruct *bedrock_config;  // AWS Bedrock configuration (NULL if not using Bedrock)
+    Provider *provider;             // API provider abstraction (OpenAI, Bedrock, etc.)
 } ConversationState;
 
 // ============================================================================

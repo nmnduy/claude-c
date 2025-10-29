@@ -71,6 +71,12 @@ TODO_SRC = src/todo.c
 TODO_OBJ = $(BUILD_DIR)/todo.o
 AWS_BEDROCK_SRC = src/aws_bedrock.c
 AWS_BEDROCK_OBJ = $(BUILD_DIR)/aws_bedrock.o
+PROVIDER_SRC = src/provider.c
+PROVIDER_OBJ = $(BUILD_DIR)/provider.o
+OPENAI_PROVIDER_SRC = src/openai_provider.c
+OPENAI_PROVIDER_OBJ = $(BUILD_DIR)/openai_provider.o
+BEDROCK_PROVIDER_SRC = src/bedrock_provider.c
+BEDROCK_PROVIDER_OBJ = $(BUILD_DIR)/bedrock_provider.o
 TEST_EDIT_SRC = tests/test_edit.c
 TEST_INPUT_SRC = tests/test_input.c
 TEST_READ_SRC = tests/test_read.c
@@ -147,9 +153,9 @@ test-timing: check-deps $(TEST_TIMING_TARGET)
 	@echo ""
 	@./$(TEST_TIMING_TARGET)
 
-$(TARGET): $(SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(LINEEDIT_OBJ) $(COMMANDS_OBJ) $(COMPLETION_OBJ) $(TUI_OBJ) $(TODO_OBJ) $(VERSION_H) $(AWS_BEDROCK_OBJ)
+$(TARGET): $(SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(LINEEDIT_OBJ) $(COMMANDS_OBJ) $(COMPLETION_OBJ) $(TUI_OBJ) $(TODO_OBJ) $(AWS_BEDROCK_OBJ) $(PROVIDER_OBJ) $(OPENAI_PROVIDER_OBJ) $(BEDROCK_PROVIDER_OBJ) $(VERSION_H)
 	@mkdir -p $(BUILD_DIR)
-	$(CC) $(CFLAGS) -o $(TARGET) $(SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(LINEEDIT_OBJ) $(COMMANDS_OBJ) $(COMPLETION_OBJ) $(TUI_OBJ) $(TODO_OBJ) $(AWS_BEDROCK_OBJ) $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $(TARGET) $(SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(LINEEDIT_OBJ) $(COMMANDS_OBJ) $(COMPLETION_OBJ) $(TUI_OBJ) $(TODO_OBJ) $(AWS_BEDROCK_OBJ) $(PROVIDER_OBJ) $(OPENAI_PROVIDER_OBJ) $(BEDROCK_PROVIDER_OBJ) $(LDFLAGS)
 	@echo ""
 	@echo "✓ Build successful!"
 	@echo "Version: $(VERSION)"
@@ -201,7 +207,7 @@ $(VERSION_H): $(VERSION_FILE)
 	@echo "✓ Version: $(VERSION)"
 
 # Debug build with AddressSanitizer for finding memory bugs
-$(BUILD_DIR)/claude-c-debug: $(SRC) $(LOGGER_SRC) $(PERSISTENCE_SRC) $(MIGRATIONS_SRC) $(LINEEDIT_SRC) $(COMMANDS_SRC) $(COMPLETION_SRC) $(TUI_SRC) $(TODO_SRC) $(AWS_BEDROCK_SRC)
+$(BUILD_DIR)/claude-c-debug: $(SRC) $(LOGGER_SRC) $(PERSISTENCE_SRC) $(MIGRATIONS_SRC) $(LINEEDIT_SRC) $(COMMANDS_SRC) $(COMPLETION_SRC) $(TUI_SRC) $(TODO_SRC) $(AWS_BEDROCK_SRC) $(PROVIDER_SRC) $(OPENAI_PROVIDER_SRC) $(BEDROCK_PROVIDER_SRC)
 	@mkdir -p $(BUILD_DIR)
 	@echo "Building with AddressSanitizer (debug mode)..."
 	$(CC) $(DEBUG_CFLAGS) -c -o $(BUILD_DIR)/logger_debug.o $(LOGGER_SRC)
@@ -213,7 +219,10 @@ $(BUILD_DIR)/claude-c-debug: $(SRC) $(LOGGER_SRC) $(PERSISTENCE_SRC) $(MIGRATION
 	$(CC) $(DEBUG_CFLAGS) -c -o $(BUILD_DIR)/tui_debug.o $(TUI_SRC)
 	$(CC) $(DEBUG_CFLAGS) -c -o $(BUILD_DIR)/todo_debug.o $(TODO_SRC)
 	$(CC) $(DEBUG_CFLAGS) -c -o $(BUILD_DIR)/aws_bedrock_debug.o $(AWS_BEDROCK_SRC)
-	$(CC) $(DEBUG_CFLAGS) -o $(BUILD_DIR)/claude-c-debug $(SRC) $(BUILD_DIR)/logger_debug.o $(BUILD_DIR)/persistence_debug.o $(BUILD_DIR)/migrations_debug.o $(BUILD_DIR)/lineedit_debug.o $(BUILD_DIR)/commands_debug.o $(BUILD_DIR)/completion_debug.o $(BUILD_DIR)/tui_debug.o $(BUILD_DIR)/todo_debug.o $(BUILD_DIR)/aws_bedrock_debug.o $(DEBUG_LDFLAGS)
+	$(CC) $(DEBUG_CFLAGS) -c -o $(BUILD_DIR)/provider_debug.o $(PROVIDER_SRC)
+	$(CC) $(DEBUG_CFLAGS) -c -o $(BUILD_DIR)/openai_provider_debug.o $(OPENAI_PROVIDER_SRC)
+	$(CC) $(DEBUG_CFLAGS) -c -o $(BUILD_DIR)/bedrock_provider_debug.o $(BEDROCK_PROVIDER_SRC)
+	$(CC) $(DEBUG_CFLAGS) -o $(BUILD_DIR)/claude-c-debug $(SRC) $(BUILD_DIR)/logger_debug.o $(BUILD_DIR)/persistence_debug.o $(BUILD_DIR)/migrations_debug.o $(BUILD_DIR)/lineedit_debug.o $(BUILD_DIR)/commands_debug.o $(BUILD_DIR)/completion_debug.o $(BUILD_DIR)/tui_debug.o $(BUILD_DIR)/todo_debug.o $(BUILD_DIR)/aws_bedrock_debug.o $(BUILD_DIR)/provider_debug.o $(BUILD_DIR)/openai_provider_debug.o $(BUILD_DIR)/bedrock_provider_debug.o $(DEBUG_LDFLAGS)
 	@echo ""
 	@echo "✓ Debug build successful with AddressSanitizer!"
 	@echo "Run: ./$(BUILD_DIR)/claude-c-debug \"your prompt here\""
@@ -357,6 +366,18 @@ $(TODO_OBJ): $(TODO_SRC) src/todo.h
 $(AWS_BEDROCK_OBJ): $(AWS_BEDROCK_SRC) src/aws_bedrock.h src/logger.h
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c -o $(AWS_BEDROCK_OBJ) $(AWS_BEDROCK_SRC)
+
+$(PROVIDER_OBJ): $(PROVIDER_SRC) src/provider.h src/openai_provider.h src/bedrock_provider.h src/logger.h
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c -o $(PROVIDER_OBJ) $(PROVIDER_SRC)
+
+$(OPENAI_PROVIDER_OBJ): $(OPENAI_PROVIDER_SRC) src/openai_provider.h src/provider.h src/logger.h
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c -o $(OPENAI_PROVIDER_OBJ) $(OPENAI_PROVIDER_SRC)
+
+$(BEDROCK_PROVIDER_OBJ): $(BEDROCK_PROVIDER_SRC) src/bedrock_provider.h src/provider.h src/aws_bedrock.h src/logger.h
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c -o $(BEDROCK_PROVIDER_OBJ) $(BEDROCK_PROVIDER_SRC)
 
 # Query tool - utility to inspect API call logs
 $(QUERY_TOOL): $(QUERY_TOOL_SRC) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ)

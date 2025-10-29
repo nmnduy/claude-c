@@ -1746,47 +1746,40 @@ static cJSON* call_api(ConversationState *state) {
         return NULL;
     }
 
-    // Build full API URL and prepare request payload
-    char full_url[512];
-    char *api_payload = json_str;  // Default: use OpenAI format
-    int using_bedrock = 0;
-
-#ifndef TEST_BUILD
-    if (state->bedrock_config && state->bedrock_config->enabled) {
-        LOG_DEBUG("=== BEDROCK API CALL START ===");
-        LOG_DEBUG("Using AWS Bedrock endpoint: %s", state->api_url);
-        LOG_DEBUG("Model: %s, Region: %s", state->bedrock_config->model_id, state->bedrock_config->region);
-
-        // Bedrock mode: use Bedrock endpoint directly (already includes /invoke path)
-        snprintf(full_url, sizeof(full_url), "%s", state->api_url);
-        using_bedrock = 1;
-
-        // Convert OpenAI format to Bedrock/Anthropic format
-        LOG_DEBUG("Converting OpenAI request format to Bedrock/Anthropic format...");
-        char *bedrock_payload = bedrock_convert_request(json_str);
-        if (!bedrock_payload) {
-            LOG_ERROR("Failed to convert request to Bedrock format");
-            free(request_copy);
-            free(json_str);
-            return NULL;
-        }
-        api_payload = bedrock_payload;
-        LOG_DEBUG("Converted request to Bedrock format (payload size: %zu bytes)", strlen(api_payload));
-
-        // Update request_copy to log the actual Bedrock payload sent to API
+    // Build full API URL using provider
+    char *full_url = NULL;
+    if (state->provider) {
+        full_url = state->provider->build_request_url(state->provider, state->api_url);
+    }
+    if (!full_url) {
+        LOG_ERROR("Failed to build API URL from provider");
         free(request_copy);
-        request_copy = strdup(bedrock_payload);
-        if (!request_copy) {
-            LOG_ERROR("Failed to copy Bedrock payload for logging");
-            free(bedrock_payload);
-            free(json_str);
-            return NULL;
-        }
-    } else
-#endif
-    {
-        // Standard OpenAI mode: append /v1/chat/completions to base URL
-        snprintf(full_url, sizeof(full_url), "%s/v1/chat/completions", state->api_url);
+        free(json_str);
+        return NULL;
+    }
+
+    // Format request using provider (may convert format)
+    char *api_payload = NULL;
+    if (state->provider) {
+        api_payload = state->provider->format_request(state->provider, json_str);
+    }
+    if (!api_payload) {
+        LOG_ERROR("Failed to format request using provider");
+        free(full_url);
+        free(request_copy);
+        free(json_str);
+        return NULL;
+    }
+
+    // Update request_copy to log the actual payload sent to API
+    free(request_copy);
+    request_copy = strdup(api_payload);
+    if (!request_copy) {
+        LOG_ERROR("Failed to copy formatted payload for logging");
+        free(api_payload);
+        free(full_url);
+        free(json_str);
+        return NULL;
     }
 
     // Retry loop for handling rate limits
@@ -1798,51 +1791,33 @@ static cJSON* call_api(ConversationState *state) {
         curl = curl_easy_init();
         if (!curl) {
             LOG_ERROR("Failed to initialize CURL");
+            free(full_url);
+            free(api_payload);
             free(json_str);
             free(request_copy);
-            if (using_bedrock && api_payload != json_str) {
-                free(api_payload);
-            }
             return NULL;
         }
 
-        // Set up headers
+        // Set up headers using provider
         struct curl_slist *headers = NULL;
-
-#ifndef TEST_BUILD
-        if (using_bedrock && state->bedrock_config) {
-            // Bedrock mode: use SigV4 signing
-            LOG_DEBUG("Signing Bedrock request with AWS SigV4...");
-            headers = bedrock_sign_request(
+        if (state->provider) {
+            headers = state->provider->setup_headers(
+                state->provider,
                 headers,
                 "POST",
                 full_url,
-                api_payload,
-                state->bedrock_config->creds,
-                state->bedrock_config->region,
-                AWS_BEDROCK_SERVICE
+                api_payload
             );
+        }
 
-            if (!headers) {
-                LOG_ERROR("Failed to sign Bedrock request");
-                curl_easy_cleanup(curl);
-                free(json_str);
-                free(request_copy);
-                if (api_payload != json_str) {
-                    free(api_payload);
-                }
-                return NULL;
-            }
-            LOG_DEBUG("Bedrock request signed successfully");
-        } else
-#endif
-        {
-            // Standard mode: use Bearer token
-            headers = curl_slist_append(headers, "Content-Type: application/json");
-
-            char auth_header[512];
-            snprintf(auth_header, sizeof(auth_header), "Authorization: Bearer %s", state->api_key);
-            headers = curl_slist_append(headers, auth_header);
+        if (!headers) {
+            LOG_ERROR("Failed to setup headers using provider");
+            curl_easy_cleanup(curl);
+            free(full_url);
+            free(api_payload);
+            free(json_str);
+            free(request_copy);
+            return NULL;
         }
 
         // Configure CURL
@@ -1860,11 +1835,10 @@ static cJSON* call_api(ConversationState *state) {
         if (check_for_esc()) {
             curl_slist_free_all(headers);
             curl_easy_cleanup(curl);
-            free(request_copy);
+            free(full_url);
+            free(api_payload);
             free(json_str);
-            if (using_bedrock && api_payload != json_str) {
-                free(api_payload);
-            }
+            free(request_copy);
             LOG_INFO("API call interrupted by user (ESC pressed)");
             return NULL;
         }
@@ -1934,12 +1908,11 @@ static cJSON* call_api(ConversationState *state) {
                     if (actual_delay_ms <= 0) {
                         LOG_ERROR("Maximum total wait time (%d ms) exceeded", MAX_TOTAL_WAIT_MS);
                         print_error("Maximum retry wait time exceeded");
-                        free(response.output);
-                        free(request_copy);
+                        free(full_url);
+                        free(api_payload);
                         free(json_str);
-                        if (using_bedrock && api_payload != json_str) {
-                            free(api_payload);
-                        }
+                        free(request_copy);
+                        free(response.output);
                         return NULL;
                     }
                 }
@@ -1963,11 +1936,10 @@ static cJSON* call_api(ConversationState *state) {
             }
 
             // Non-retryable error or max retries exceeded
-            free(request_copy);
+            free(full_url);
+            free(api_payload);
             free(json_str);
-            if (using_bedrock && api_payload != json_str) {
-                free(api_payload);
-            }
+            free(request_copy);
             free(response.output);
             return NULL;
         }
@@ -2033,12 +2005,11 @@ static cJSON* call_api(ConversationState *state) {
                     if (actual_delay_ms <= 0) {
                         LOG_ERROR("Maximum total wait time (%d ms) exceeded", MAX_TOTAL_WAIT_MS);
                         print_error("Maximum retry wait time exceeded");
-                        free(response.output);
-                        free(request_copy);
+                        free(full_url);
+                        free(api_payload);
                         free(json_str);
-                        if (using_bedrock && api_payload != json_str) {
-                            free(api_payload);
-                        }
+                        free(request_copy);
+                        free(response.output);
                         return NULL;
                     }
                 }
@@ -2063,14 +2034,14 @@ static cJSON* call_api(ConversationState *state) {
                 continue; // Retry the request
             }
 
-            // Check if this is an AWS Bedrock authentication error (403/400)
-            if (using_bedrock && retry_count < MAX_RETRIES &&
+            // Check if this is an authentication error (403/400)
+            // Let the provider handle it (e.g., credential refresh for AWS)
+            if (retry_count < MAX_RETRIES && state->provider &&
                 (http_status == 403 || http_status == 400)) {
 
-                // Try to handle auth error - this will check the error message
-                // and refresh credentials if it matches auth error patterns
-                if (bedrock_handle_auth_error(state->bedrock_config, http_status, error_msg)) {
-                    LOG_INFO("Bedrock credentials refreshed, retrying request (attempt %d/%d)",
+                // Try to handle auth error using provider
+                if (state->provider->handle_auth_error(state->provider, http_status, error_msg)) {
+                    LOG_INFO("Provider handled auth error successfully, retrying request (attempt %d/%d)",
                              retry_count + 1, MAX_RETRIES);
 
                     // Log the retry attempt
@@ -2084,7 +2055,7 @@ static cJSON* call_api(ConversationState *state) {
                             state->model,
                             "error",
                             (int)http_status,
-                            "AWS credentials expired - refreshed and retrying",
+                            "Authentication error - provider refreshed credentials and retrying",
                             duration_ms,
                             0
                         );
@@ -2098,35 +2069,30 @@ static cJSON* call_api(ConversationState *state) {
 
             print_error(error_msg);
 
-            free(request_copy);
+            free(full_url);
+            free(api_payload);
             free(json_str);
-            if (using_bedrock && api_payload != json_str) {
-                free(api_payload);
-            }
+            free(request_copy);
             free(response.output);
             return NULL;
         }
 
-        // Parse response
+        // Parse response using provider (may convert format)
         struct timespec parse_start, parse_end;
         clock_gettime(CLOCK_MONOTONIC, &parse_start);
 
-        cJSON *json_response = cJSON_Parse(response.output);
+        cJSON *json_response = NULL;
+        if (state->provider) {
+            json_response = state->provider->parse_response(state->provider, response.output);
+        }
 
         clock_gettime(CLOCK_MONOTONIC, &parse_end);
         long parse_ms = (parse_end.tv_sec - parse_start.tv_sec) * 1000 +
                         (parse_end.tv_nsec - parse_start.tv_nsec) / 1000000;
-        LOG_INFO("JSON parsing took %ld ms", parse_ms);
+        LOG_INFO("Response parsing took %ld ms", parse_ms);
 
         if (!json_response) {
-            LOG_ERROR("Failed to parse JSON response");
-
-#ifndef TEST_BUILD
-            // If Bedrock mode, the response format might be different
-            if (using_bedrock) {
-                LOG_DEBUG("Bedrock raw response: %s", response.output);
-            }
-#endif
+            LOG_ERROR("Failed to parse response using provider");
 
             // Log parsing error
             if (state->persistence_db) {
@@ -2139,60 +2105,19 @@ static cJSON* call_api(ConversationState *state) {
                     state->model,
                     "error",
                     (int)http_status,
-                    "Failed to parse JSON response",
+                    "Failed to parse response using provider",
                     duration_ms,
                     0
                 );
             }
 
-            free(request_copy);
+            free(full_url);
+            free(api_payload);
             free(json_str);
-            if (using_bedrock && api_payload != json_str) {
-                free(api_payload);
-            }
+            free(request_copy);
             free(response.output);
             return NULL;
         }
-
-#ifndef TEST_BUILD
-        // Convert Bedrock response to OpenAI format if using Bedrock
-        if (using_bedrock) {
-            LOG_DEBUG("Converting Bedrock response to OpenAI format...");
-            cJSON *converted_response = bedrock_convert_response(response.output);
-            if (!converted_response) {
-                LOG_ERROR("Failed to convert Bedrock response to OpenAI format");
-                cJSON_Delete(json_response);
-                free(request_copy);
-                free(json_str);
-                if (api_payload != json_str) {
-                    free(api_payload);
-                }
-                free(response.output);
-                return NULL;
-            }
-
-            // Debug: log key fields of converted response
-            cJSON *choices = cJSON_GetObjectItem(converted_response, "choices");
-            if (choices && cJSON_IsArray(choices) && cJSON_GetArraySize(choices) > 0) {
-                cJSON *choice = cJSON_GetArrayItem(choices, 0);
-                cJSON *finish_reason = cJSON_GetObjectItem(choice, "finish_reason");
-                cJSON *message = cJSON_GetObjectItem(choice, "message");
-                if (finish_reason && cJSON_IsString(finish_reason)) {
-                    LOG_DEBUG("Converted response - finish_reason: %s", finish_reason->valuestring);
-                }
-                if (message) {
-                    cJSON *tool_calls = cJSON_GetObjectItem(message, "tool_calls");
-                    int tc_count = tool_calls && cJSON_IsArray(tool_calls) ? cJSON_GetArraySize(tool_calls) : 0;
-                    LOG_DEBUG("Converted response - tool_calls count: %d", tc_count);
-                }
-            }
-            LOG_DEBUG("Bedrock response conversion complete");
-            LOG_DEBUG("=== BEDROCK API CALL END ===");
-
-            cJSON_Delete(json_response);
-            json_response = converted_response;
-        }
-#endif
 
         // Check for API error response
         cJSON *error = cJSON_GetObjectItem(json_response, "error");
@@ -2227,9 +2152,8 @@ static cJSON* call_api(ConversationState *state) {
                         free(response.output);
                         free(request_copy);
                         free(json_str);
-                        if (using_bedrock && api_payload != json_str) {
-                            free(api_payload);
-                        }
+                        free(full_url);
+                        free(api_payload);
                         return NULL;
                     }
                 }
@@ -2295,9 +2219,7 @@ static cJSON* call_api(ConversationState *state) {
             cJSON_Delete(json_response);
             free(request_copy);
             free(json_str);
-            if (using_bedrock && api_payload != json_str) {
-                free(api_payload);
-            }
+            free(api_payload);
             free(response.output);
             return NULL;
         }
@@ -2327,9 +2249,7 @@ static cJSON* call_api(ConversationState *state) {
             cJSON_Delete(json_response);
             free(request_copy);
             free(json_str);
-            if (using_bedrock && api_payload != json_str) {
-                free(api_payload);
-            }
+            free(api_payload);
             free(response.output);
             return NULL;
         }
@@ -2366,9 +2286,7 @@ static cJSON* call_api(ConversationState *state) {
 
         free(request_copy);
         free(json_str);
-        if (using_bedrock && api_payload != json_str) {
-            free(api_payload);
-        }
+        free(api_payload);
         free(response.output);
 
         // Log total API call duration
@@ -2382,11 +2300,10 @@ static cJSON* call_api(ConversationState *state) {
     }
 
     // Max retries exceeded (shouldn't reach here normally)
-    free(request_copy);
+    free(full_url);
+    free(api_payload);
     free(json_str);
-    if (using_bedrock && api_payload != json_str) {
-        free(api_payload);
-    }
+    free(request_copy);
     LOG_ERROR("API call failed after %d retries", MAX_RETRIES);
     return NULL;
 }
@@ -3533,31 +3450,35 @@ int main(int argc, char *argv[]) {
     }
 
 #ifndef TEST_BUILD
-    // Initialize AWS Bedrock configuration if enabled
-    if (use_bedrock) {
-        state.bedrock_config = bedrock_config_init(model);
-        if (!state.bedrock_config) {
-            LOG_ERROR("Failed to initialize Bedrock configuration");
-            fprintf(stderr, "Error: Failed to initialize AWS Bedrock. Check your AWS credentials and configuration.\n");
-            free(state.api_key);
-            free(state.api_url);
-            free(state.model);
-            free(state.working_dir);
-            if (state.todo_list) {
-                free(state.todo_list);
-            }
-            curl_global_cleanup();
-            return 1;
-        }
-        // Override api_url with Bedrock endpoint
+    // Initialize provider (OpenAI or Bedrock based on environment)
+    ProviderInitResult provider_result = provider_init(model, state.api_key);
+    if (!provider_result.provider) {
+        LOG_ERROR("Failed to initialize provider: %s",
+                  provider_result.error_message ? provider_result.error_message : "unknown error");
+        fprintf(stderr, "Error: Failed to initialize API provider: %s\n",
+                provider_result.error_message ? provider_result.error_message : "unknown error");
+        free(provider_result.error_message);
+        free(provider_result.api_url);
+        free(state.api_key);
         free(state.api_url);
-        state.api_url = strdup(state.bedrock_config->endpoint);
-        LOG_INFO("Bedrock configuration initialized, endpoint: %s", state.api_url);
-    } else {
-        state.bedrock_config = NULL;
+        free(state.model);
+        free(state.working_dir);
+        if (state.todo_list) {
+            free(state.todo_list);
+        }
+        curl_global_cleanup();
+        return 1;
     }
+
+    // Update api_url with provider's URL
+    free(state.api_url);
+    state.api_url = provider_result.api_url;  // Transfer ownership
+    state.provider = provider_result.provider;  // Transfer ownership
+    free(provider_result.error_message);  // Should be NULL on success, but free anyway
+
+    LOG_INFO("Provider initialized: %s, API URL: %s", state.provider->name, state.api_url);
 #else
-    state.bedrock_config = NULL;
+    state.provider = NULL;
 #endif
 
     // Check for allocation failures
@@ -3635,10 +3556,10 @@ int main(int argc, char *argv[]) {
     }
 
 #ifndef TEST_BUILD
-    // Cleanup Bedrock configuration
-    if (state.bedrock_config) {
-        bedrock_config_free(state.bedrock_config);
-        LOG_DEBUG("Bedrock configuration cleaned up");
+    // Cleanup provider
+    if (state.provider) {
+        state.provider->cleanup(state.provider);
+        LOG_DEBUG("Provider cleaned up");
     }
 #endif
 
