@@ -5,9 +5,8 @@
 - [ ] remove ANTHROPIC_MODEL env var usage. its confusing
 - [x] colorize the diff using the colorscheme we got
 - [x] tmux paste doesn't get handled correctly in the input
-- [ ] object files in same dir?
-- [ ] receive user input
-- [ ] write tool should also show diff
+- [x] object files in same dir?
+- [x] write tool should also show diff
 - [x] print todo list after creating it or when updating the TODO list
 - [ ] thinking vs non thinking
 - [ ] fast model vs slow model
@@ -16,10 +15,10 @@
 - [x] env var for custom log dir and api call db file
 - [ ] rotation for api call db files
 - [x] pasting still fucks up the terminal
-- [ ] add retries to falied API calls
+- [x] add retries to falied API calls
 - [ ] implement instruction queue. so user can keep typing
 
-- [ ]
+- [x]
 ```sh
 [2025-10-28 02:18:55] [sess_1761635777_511588dc] WARN  [indicators.h:53] get_spinner_color_tool: Using fallback color for spinner (tool)
 ```
@@ -33,7 +32,7 @@
 
 - [x] can we use ctrl + J for new line. what trick this node js claude used to achieve this?
 
-- [ ]
+- [x]
 Goodbye!
 claude-c(35580,0x209b9a0c0) malloc: *** error for object 0x6f: pointer being freed was not allocated
 claude-c(35580,0x209b9a0c0) malloc: *** set a breakpoint in malloc_error_break to debug
@@ -55,7 +54,7 @@ Abort trap: 6
 ⠸ Processing tool results...
 ```
 
-- [ ] pasting still causes enter
+- [x] pasting still causes enter
 - [x] large paste fails. how does node js claude prevents that and show X lines pasted.
 - [x] pressing Esc will wait for tool to finish but there is no indicator
     - [ ] 'esc' doesn't show interrupted right away.
@@ -90,7 +89,7 @@ Abort trap: 6
 ⠼ Running 1 tool...   Compiling uniffi v0.28.3
 ```
 
-- [ ] we need this output
+- [x] we need this output
 ```sh
 ⏺ Update(src/aws_bedrock.c)
   ⎿  Updated src/aws_bedrock.c with 18 additions and 4 removals
@@ -137,7 +136,7 @@ Abort trap: 6
 - [ ] add Sleep tool. agent can wait for certain thing to happen before continuing with work
 
 
-- [ ] ~/fgit/claude-c/msg-q (msg-q ✓)
+- [x] ~/fgit/claude-c/msg-q (msg-q ✓)
 $ sqlite3 .claude-c/api_calls.db 'select api_base_url, http_status, response_json from api_calls order by timestamp desc limit 1;'
 https://api.openai.com|400|{
   "error": {

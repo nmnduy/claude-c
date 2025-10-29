@@ -368,6 +368,7 @@ static int check_for_esc(void) {
 char* read_file(const char *path);
 int write_file(const char *path, const char *content);
 cJSON* tool_read(cJSON *params, ConversationState *state);
+cJSON* tool_write(cJSON *params, ConversationState *state);
 cJSON* tool_edit(cJSON *params, ConversationState *state);
 cJSON* tool_todo_write(cJSON *params, ConversationState *state);
 #else
@@ -856,7 +857,7 @@ STATIC cJSON* tool_read(cJSON *params, ConversationState *state) {
     return result;
 }
 
-static cJSON* tool_write(cJSON *params, ConversationState *state) {
+STATIC cJSON* tool_write(cJSON *params, ConversationState *state) {
     const cJSON *path_json = cJSON_GetObjectItem(params, "file_path");
     const cJSON *content_json = cJSON_GetObjectItem(params, "content");
 
@@ -879,8 +880,35 @@ static cJSON* tool_write(cJSON *params, ConversationState *state) {
         return error;
     }
 
+    // Check if file exists and read original content for diff
+    char *original_content = NULL;
+    FILE *existing_file = fopen(resolved_path, "r");
+    if (existing_file) {
+        fclose(existing_file);
+        original_content = read_file(resolved_path);
+        if (!original_content) {
+            free(resolved_path);
+            cJSON *error = cJSON_CreateObject();
+            cJSON_AddStringToObject(error, "error", "Failed to read existing file for diff comparison");
+            return error;
+        }
+    }
+
     int ret = write_file(resolved_path, content_json->valuestring);
+
+    // Show diff if write was successful and file existed before
+    if (ret == 0) {
+        if (original_content) {
+            show_diff(resolved_path, original_content);
+        } else {
+            // New file creation
+            printf("\n--- Created new file: %s ---\n", resolved_path);
+            printf("(New file written - no previous content to compare)\n\n");
+        }
+    }
+
     free(resolved_path);
+    free(original_content);
 
     if (ret != 0) {
         cJSON *error = cJSON_CreateObject();
