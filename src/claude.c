@@ -2312,6 +2312,8 @@ char* build_system_prompt(ConversationState *state) {
 static void add_system_message(ConversationState *state, const char *text) {
     if (state->count >= MAX_MESSAGES) {
         LOG_ERROR("Maximum message count reached");
+        // Free results to avoid leak when message isn't recorded
+        free_internal_contents(results, count);
         return;
     }
 
@@ -2500,7 +2502,27 @@ static void add_assistant_message_openai(ConversationState *state, cJSON *messag
     }
 }
 
+// Helper: Free an array of InternalContent and its internal allocations
+static void free_internal_contents(InternalContent *results, int count) {
+    if (!results) return;
+    for (int i = 0; i < count; i++) {
+        InternalContent *cb = &results[i];
+        free(cb->text);
+        free(cb->tool_id);
+        free(cb->tool_name);
+        if (cb->tool_params) cJSON_Delete(cb->tool_params);
+        if (cb->tool_output) cJSON_Delete(cb->tool_output);
+    }
+    free(results);
+}
+
 static void add_tool_results(ConversationState *state, InternalContent *results, int count) {
+    if (state->count >= MAX_MESSAGES) {
+        LOG_ERROR("Maximum message count reached");
+        // Free results since they won't be added to state
+        free_internal_contents(results, count);
+        return;
+    }
     if (state->count >= MAX_MESSAGES) {
         LOG_ERROR("Maximum message count reached");
         return;
@@ -2517,6 +2539,59 @@ static void add_tool_results(ConversationState *state, InternalContent *results,
 // ============================================================================
 
 void clear_conversation(ConversationState *state) {
+    // Keep the system message (first message)
+    int system_msg_count = 0;
+
+    if (state->count > 0 && state->messages[0].role == MSG_SYSTEM) {
+        // System message remains intact
+        system_msg_count = 1;
+    }
+
+    // Free all other message content
+    for (int i = system_msg_count; i < state->count; i++) {
+        for (int j = 0; j < state->messages[i].content_count; j++) {
+            InternalContent *cb = &state->messages[i].contents[j];
+            free(cb->text);
+            free(cb->tool_id);
+            free(cb->tool_name);
+            if (cb->tool_params) cJSON_Delete(cb->tool_params);
+            if (cb->tool_output) cJSON_Delete(cb->tool_output);
+        }
+        free(state->messages[i].contents);
+    }
+
+    // Reset message count (keeping system message)
+    state->count = system_msg_count;
+
+    // Clear todo list
+    if (state->todo_list) {
+        todo_free(state->todo_list);
+        todo_init(state->todo_list);
+        LOG_DEBUG("Todo list cleared and reinitialized");
+    }
+}
+
+// Free all messages and their contents (including system message). Use at program shutdown.
+void conversation_free(ConversationState *state) {
+    // Free all messages
+    for (int i = 0; i < state->count; i++) {
+        for (int j = 0; j < state->messages[i].content_count; j++) {
+            InternalContent *cb = &state->messages[i].contents[j];
+            free(cb->text);
+            free(cb->tool_id);
+            free(cb->tool_name);
+            if (cb->tool_params) cJSON_Delete(cb->tool_params);
+            if (cb->tool_output) cJSON_Delete(cb->tool_output);
+        }
+        free(state->messages[i].contents);
+    }
+    state->count = 0;
+
+    // Clear todo list structure
+    if (state->todo_list) {
+        todo_free(state->todo_list);
+    }
+}
     // Keep the system message (first message)
     int system_msg_count = 0;
 
@@ -2594,6 +2669,8 @@ static void process_response(ConversationState *state, ApiResponse *response, TU
 
         // Parallel tool execution
         InternalContent *results = calloc((size_t)tool_count, sizeof(InternalContent));
+        // results will be owned by ConversationState after add_tool_results().
+        // Use free_internal_contents() to free in early exits.
         pthread_t *threads = malloc((size_t)tool_count * sizeof(pthread_t));
         ToolThreadArg *args = malloc((size_t)tool_count * sizeof(ToolThreadArg));
         int thread_count = 0;
@@ -2699,7 +2776,7 @@ static void process_response(ConversationState *state, ApiResponse *response, TU
 
             free(threads);
             free(args);
-            free(results);
+            // results will be freed when conversation state is cleaned up
             return;  // Exit without continuing conversation
         }
 
@@ -2773,7 +2850,7 @@ static void process_response(ConversationState *state, ApiResponse *response, TU
             } else {
                 print_error(error_msg);
             }
-            free(results);
+            // results will be freed when conversation state is cleaned up
             return;
         }
 
@@ -2804,8 +2881,7 @@ static void process_response(ConversationState *state, ApiResponse *response, TU
             LOG_ERROR("API call returned NULL after tool execution");
         }
 
-        // Free results array; content of results will be freed in cleanup
-        free(results);
+        // results is now owned by the conversation state and will be freed upon state cleanup
 
         clock_gettime(CLOCK_MONOTONIC, &proc_end);
         long proc_ms = (proc_end.tv_sec - proc_start.tv_sec) * 1000 +
@@ -3280,20 +3356,8 @@ int main(int argc, char *argv[]) {
     // Run interactive mode
     interactive_mode(&state);
 
-    // Cleanup
-    for (int i = 0; i < state.count; i++) {
-        if (state.messages[i].contents) {
-            for (int j = 0; j < state.messages[i].content_count; j++) {
-                InternalContent *cb = &state.messages[i].contents[j];
-                free(cb->text);
-                free(cb->tool_id);
-                free(cb->tool_name);
-                if (cb->tool_params) cJSON_Delete(cb->tool_params);
-                if (cb->tool_output) cJSON_Delete(cb->tool_output);
-            }
-            free(state.messages[i].contents);
-        }
-    }
+    // Cleanup conversation messages
+    conversation_free(&state);
 
     // Free additional directories
     for (int i = 0; i < state.additional_dirs_count; i++) {
