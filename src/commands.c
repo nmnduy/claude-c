@@ -273,7 +273,16 @@ static CompletionResult* dir_path_completer(const char *line, int cursor_pos, vo
     memcpy(prefix, arg, (size_t)plen);
     prefix[plen] = '\0';
     char pattern[PATH_MAX];
-    if (plen == 0) strcpy(pattern, "*"); else snprintf(pattern, sizeof(pattern), "%s*", prefix);
+    if (plen == 0) {
+        strcpy(pattern, "*");
+    } else {
+        // Build pattern: prefix + '*' with safety against overflow
+        size_t max_copy = sizeof(pattern) - 2; // leave space for '*' and '\0'
+        size_t to_copy = (size_t)plen < max_copy ? (size_t)plen : max_copy;
+        memcpy(pattern, prefix, to_copy);
+        pattern[to_copy] = '*';
+        pattern[to_copy + 1] = '\0';
+    }
     glob_t globbuf;
     int ret = glob(pattern, GLOB_MARK | GLOB_NOSORT, NULL, &globbuf);
     if (ret != 0) { globfree(&globbuf); return NULL; }

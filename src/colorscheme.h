@@ -5,7 +5,9 @@
 #pragma GCC diagnostic ignored "-Wcast-qual"
 #pragma GCC diagnostic ignored "-Wunused-but-set-variable"
 #pragma GCC diagnostic ignored "-Wstrict-prototypes"
+#ifdef __clang__
 #pragma GCC diagnostic ignored "-Wdeprecated-non-prototype"
+#endif
 #pragma GCC diagnostic ignored "-Wimplicit-int"
 
 #include <stdio.h>
