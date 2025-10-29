@@ -2908,12 +2908,21 @@ static void interactive_mode(ConversationState *state) {
                     tui_add_conversation_line(&tui, "[System]", "Directory added successfully", COLOR_PAIR_STATUS);
                     // Update system message
                     char *new_system_prompt = build_system_prompt(state);
-                    if (new_system_prompt) {
-                        if (state->count > 0 && state->messages[0].role == MSG_SYSTEM) {
-                            free(state->messages[0].contents[0].text);
-                            state->messages[0].contents[0].text = new_system_prompt;
+                    if (!new_system_prompt) {
+                        goto cleanup_add_dir;
+                    }
+
+                    if (state->count > 0 && state->messages[0].role == MSG_SYSTEM) {
+                        free(state->messages[0].contents[0].text);
+                        state->messages[0].contents[0].text = strdup(new_system_prompt);
+                        if (!state->messages[0].contents[0].text) {
+                            // Failed to allocate, but we'll still cleanup
+                            tui_add_conversation_line(&tui, "[Error]", "Memory allocation failed", COLOR_PAIR_ERROR);
                         }
                     }
+
+                cleanup_add_dir:
+                    free(new_system_prompt);
                 } else {
                     tui_add_conversation_line(&tui, "[Error]", "Failed to add directory", COLOR_PAIR_ERROR);
                 }
