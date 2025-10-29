@@ -142,6 +142,7 @@ static void print_assistant(const char *text) {
     if (get_colorscheme_color(COLORSCHEME_ASSISTANT, role_color_code, sizeof(role_color_code)) == 0) {
         role_color_start = role_color_code;
     } else {
+        LOG_WARN("Using fallback ANSI color for ASSISTANT");
         role_color_start = ANSI_FALLBACK_ASSISTANT;
     }
 
@@ -149,6 +150,7 @@ static void print_assistant(const char *text) {
     if (get_colorscheme_color(COLORSCHEME_FOREGROUND, text_color_code, sizeof(text_color_code)) == 0) {
         text_color_start = text_color_code;
     } else {
+        LOG_WARN("Using fallback ANSI color for FOREGROUND");
         text_color_start = ANSI_FALLBACK_FOREGROUND;
     }
 
@@ -167,6 +169,7 @@ static void print_tool(const char *tool_name, const char *details) {
     if (get_colorscheme_color(COLORSCHEME_TOOL, tool_color_code, sizeof(tool_color_code)) == 0) {
         tool_color_start = tool_color_code;
     } else {
+        LOG_WARN("Using fallback ANSI color for TOOL");
         tool_color_start = ANSI_FALLBACK_TOOL;
     }
 
@@ -174,6 +177,7 @@ static void print_tool(const char *tool_name, const char *details) {
     if (get_colorscheme_color(COLORSCHEME_FOREGROUND, text_color_code, sizeof(text_color_code)) == 0) {
         text_color_start = text_color_code;
     } else {
+        LOG_WARN("Using fallback ANSI color for FOREGROUND");
         text_color_start = ANSI_FALLBACK_FOREGROUND;
     }
 
@@ -558,14 +562,64 @@ static int show_diff(const char *file_path, const char *original_content) {
         return -1;
     }
 
-    // Read and display diff output
-    printf("\n--- Changes made to %s ---\n", file_path);
+    // Get color codes for diff elements
+    char add_color[32], remove_color[32], header_color[32], context_color[32];
+    const char *add_color_start, *remove_color_start, *header_color_start, *context_color_start;
+    
+    // Try to get colors from colorscheme, fall back to ANSI colors
+    if (get_colorscheme_color(COLORSCHEME_DIFF_ADD, add_color, sizeof(add_color)) == 0) {
+        add_color_start = add_color;
+    } else {
+        LOG_WARN("Using fallback ANSI color for DIFF_ADD");
+        add_color_start = ANSI_FALLBACK_DIFF_ADD;
+    }
+    
+    if (get_colorscheme_color(COLORSCHEME_DIFF_REMOVE, remove_color, sizeof(remove_color)) == 0) {
+        remove_color_start = remove_color;
+    } else {
+        LOG_WARN("Using fallback ANSI color for DIFF_REMOVE");
+        remove_color_start = ANSI_FALLBACK_DIFF_REMOVE;
+    }
+    
+    if (get_colorscheme_color(COLORSCHEME_DIFF_HEADER, header_color, sizeof(header_color)) == 0) {
+        header_color_start = header_color;
+    } else {
+        LOG_WARN("Using fallback ANSI color for DIFF_HEADER");
+        header_color_start = ANSI_FALLBACK_DIFF_HEADER;
+    }
+    
+    if (get_colorscheme_color(COLORSCHEME_DIFF_CONTEXT, context_color, sizeof(context_color)) == 0) {
+        context_color_start = context_color;
+    } else {
+        LOG_WARN("Using fallback ANSI color for DIFF_CONTEXT");
+        context_color_start = ANSI_FALLBACK_DIFF_CONTEXT;
+    }
+
+    // Read and display colorized diff output
+    printf("\n%s--- Changes made to %s ---%s\n", header_color_start, file_path, ANSI_RESET);
     char line[1024];
     int has_diff = 0;
 
     while (fgets(line, sizeof(line), pipe)) {
-        printf("%s", line);
         has_diff = 1;
+        
+        // Colorize based on line prefix
+        if (line[0] == '+' && line[1] != '+') {
+            // Added line (but not +++ header)
+            printf("%s%s%s", add_color_start, line, ANSI_RESET);
+        } else if (line[0] == '-' && line[1] != '-') {
+            // Removed line (but not --- header)
+            printf("%s%s%s", remove_color_start, line, ANSI_RESET);
+        } else if (strncmp(line, "@@", 2) == 0) {
+            // Line number context (@@ -line,count +line,count @@)
+            printf("%s%s%s", context_color_start, line, ANSI_RESET);
+        } else if (strncmp(line, "---", 3) == 0 || strncmp(line, "+++", 3) == 0) {
+            // File headers
+            printf("%s%s%s", header_color_start, line, ANSI_RESET);
+        } else {
+            // Context lines (no change)
+            printf("%s", line);
+        }
     }
 
     int result = pclose(pipe);
@@ -578,7 +632,7 @@ static int show_diff(const char *file_path, const char *original_content) {
         printf("(No differences found)\n");
     }
 
-    printf("--- End of diff ---\n\n");
+    printf("%s--- End of diff ---%s\n\n", header_color_start, ANSI_RESET);
     return 0;
 }
 
@@ -2660,6 +2714,7 @@ static void process_response(ConversationState *state, cJSON *response, TUIState
                     if (get_colorscheme_color(COLORSCHEME_ERROR, color_code, sizeof(color_code)) == 0) {
                         color_start = color_code;
                     } else {
+                        LOG_WARN("Using fallback ANSI color for ERROR");
                         color_start = ANSI_FALLBACK_ERROR;
                     }
                     printf("%s%s%s\n", color_start, error_display, ANSI_RESET);
@@ -2773,6 +2828,7 @@ static void interactive_mode(ConversationState *state) {
     if (get_colorscheme_color(COLORSCHEME_ASSISTANT, color_code, sizeof(color_code)) == 0) {
         banner_color = color_code;
     } else {
+        LOG_WARN("Using fallback ANSI color for ASSISTANT (banner)");
         banner_color = ANSI_FALLBACK_BOLD_BLUE;  // Bold blue fallback from centralized system
     }
 

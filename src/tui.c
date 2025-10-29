@@ -101,6 +101,7 @@ void tui_add_conversation_line(TUIState *tui, const char *prefix, const char *te
             if (get_colorscheme_color(COLORSCHEME_FOREGROUND, text_color_code, sizeof(text_color_code)) == 0) {
                 text_color_start = text_color_code;
             } else {
+                LOG_WARN("Using fallback ANSI color for FOREGROUND");
                 text_color_start = ANSI_FALLBACK_FOREGROUND;  // Default terminal color
             }
             prefix_color_start = text_color_start;  // Same color for prefix
@@ -111,11 +112,13 @@ void tui_add_conversation_line(TUIState *tui, const char *prefix, const char *te
             if (get_colorscheme_color(COLORSCHEME_USER, prefix_color_code, sizeof(prefix_color_code)) == 0) {
                 prefix_color_start = prefix_color_code;
             } else {
+                LOG_WARN("Using fallback ANSI color for USER");
                 prefix_color_start = ANSI_FALLBACK_USER;  // Green fallback
             }
             if (get_colorscheme_color(COLORSCHEME_FOREGROUND, text_color_code, sizeof(text_color_code)) == 0) {
                 text_color_start = text_color_code;
             } else {
+                LOG_WARN("Using fallback ANSI color for FOREGROUND");
                 text_color_start = ANSI_FALLBACK_FOREGROUND;  // Default terminal color
             }
             break;
@@ -125,11 +128,13 @@ void tui_add_conversation_line(TUIState *tui, const char *prefix, const char *te
             if (get_colorscheme_color(COLORSCHEME_ASSISTANT, prefix_color_code, sizeof(prefix_color_code)) == 0) {
                 prefix_color_start = prefix_color_code;
             } else {
+                LOG_WARN("Using fallback ANSI color for ASSISTANT");
                 prefix_color_start = ANSI_FALLBACK_ASSISTANT;  // Blue fallback
             }
             if (get_colorscheme_color(COLORSCHEME_FOREGROUND, text_color_code, sizeof(text_color_code)) == 0) {
                 text_color_start = text_color_code;
             } else {
+                LOG_WARN("Using fallback ANSI color for FOREGROUND");
                 text_color_start = ANSI_FALLBACK_FOREGROUND;  // Default terminal color
             }
             break;
@@ -139,11 +144,13 @@ void tui_add_conversation_line(TUIState *tui, const char *prefix, const char *te
             if (get_colorscheme_color(COLORSCHEME_TOOL, prefix_color_code, sizeof(prefix_color_code)) == 0) {
                 prefix_color_start = prefix_color_code;
             } else {
+                LOG_WARN("Using fallback ANSI color for TOOL");
                 prefix_color_start = ANSI_FALLBACK_TOOL;  // Yellow fallback
             }
             if (get_colorscheme_color(COLORSCHEME_FOREGROUND, text_color_code, sizeof(text_color_code)) == 0) {
                 text_color_start = text_color_code;
             } else {
+                LOG_WARN("Using fallback ANSI color for FOREGROUND");
                 text_color_start = ANSI_FALLBACK_FOREGROUND;  // Default terminal color
             }
             break;
@@ -153,11 +160,13 @@ void tui_add_conversation_line(TUIState *tui, const char *prefix, const char *te
             if (get_colorscheme_color(COLORSCHEME_ERROR, prefix_color_code, sizeof(prefix_color_code)) == 0) {
                 prefix_color_start = prefix_color_code;
             } else {
+                LOG_WARN("Using fallback ANSI color for ERROR");
                 prefix_color_start = ANSI_FALLBACK_ERROR;  // Red fallback
             }
             if (get_colorscheme_color(COLORSCHEME_FOREGROUND, text_color_code, sizeof(text_color_code)) == 0) {
                 text_color_start = text_color_code;
             } else {
+                LOG_WARN("Using fallback ANSI color for FOREGROUND");
                 text_color_start = ANSI_FALLBACK_FOREGROUND;  // Default terminal color
             }
             break;
@@ -167,11 +176,13 @@ void tui_add_conversation_line(TUIState *tui, const char *prefix, const char *te
             if (get_colorscheme_color(COLORSCHEME_STATUS, prefix_color_code, sizeof(prefix_color_code)) == 0) {
                 prefix_color_start = prefix_color_code;
             } else {
+                LOG_WARN("Using fallback ANSI color for STATUS");
                 prefix_color_start = ANSI_FALLBACK_STATUS;  // Cyan fallback
             }
             if (get_colorscheme_color(COLORSCHEME_FOREGROUND, text_color_code, sizeof(text_color_code)) == 0) {
                 text_color_start = text_color_code;
             } else {
+                LOG_WARN("Using fallback ANSI color for FOREGROUND");
                 text_color_start = ANSI_FALLBACK_FOREGROUND;  // Default terminal color
             }
             break;
@@ -181,11 +192,13 @@ void tui_add_conversation_line(TUIState *tui, const char *prefix, const char *te
             if (get_colorscheme_color(COLORSCHEME_USER, prefix_color_code, sizeof(prefix_color_code)) == 0) {
                 prefix_color_start = prefix_color_code;
             } else {
+                LOG_WARN("Using fallback ANSI color for USER (prompt)");
                 prefix_color_start = ANSI_FALLBACK_USER;  // Green fallback
             }
             if (get_colorscheme_color(COLORSCHEME_FOREGROUND, text_color_code, sizeof(text_color_code)) == 0) {
                 text_color_start = text_color_code;
             } else {
+                LOG_WARN("Using fallback ANSI color for FOREGROUND");
                 text_color_start = ANSI_FALLBACK_FOREGROUND;  // Default terminal color
             }
             break;
@@ -247,6 +260,7 @@ char* tui_read_input(TUIState *tui, const char *prompt) {
     if (get_colorscheme_color(COLORSCHEME_USER, prompt_color_code, sizeof(prompt_color_code)) == 0) {
         prompt_color_start = prompt_color_code;
     } else {
+        LOG_WARN("Using fallback ANSI color for USER (input prompt)");
         prompt_color_start = ANSI_FALLBACK_USER;  // Green fallback from centralized system
     }
 
@@ -280,6 +294,7 @@ void tui_clear_conversation(TUIState *tui) {
     if (get_colorscheme_color(COLORSCHEME_STATUS, status_color_code, sizeof(status_color_code)) == 0) {
         status_color_start = status_color_code;
     } else {
+        LOG_WARN("Using fallback ANSI color for STATUS (clear conversation)");
         status_color_start = ANSI_FALLBACK_STATUS;  // Cyan fallback from centralized system
     }
 
@@ -287,6 +302,7 @@ void tui_clear_conversation(TUIState *tui) {
     if (get_colorscheme_color(COLORSCHEME_FOREGROUND, text_color_code, sizeof(text_color_code)) == 0) {
         text_color_start = text_color_code;
     } else {
+        LOG_WARN("Using fallback ANSI color for FOREGROUND");
         text_color_start = ANSI_FALLBACK_FOREGROUND;  // Default terminal color
     }
 
@@ -318,6 +334,7 @@ void tui_show_startup_banner(TUIState *tui, const char *version, const char *mod
     if (get_colorscheme_color(COLORSCHEME_ASSISTANT, mascot_color_code, sizeof(mascot_color_code)) == 0) {
         mascot_color_start = mascot_color_code;
     } else {
+        LOG_WARN("Using fallback ANSI color for ASSISTANT (startup banner)");
         mascot_color_start = ANSI_FALLBACK_BOLD_CYAN;  // Bold cyan - more visible on dark backgrounds
     }
 
@@ -325,6 +342,7 @@ void tui_show_startup_banner(TUIState *tui, const char *version, const char *mod
     if (get_colorscheme_color(COLORSCHEME_FOREGROUND, text_color_code, sizeof(text_color_code)) == 0) {
         text_color_start = text_color_code;
     } else {
+        LOG_WARN("Using fallback ANSI color for FOREGROUND");
         text_color_start = ANSI_FALLBACK_FOREGROUND;  // Default terminal color
     }
 
