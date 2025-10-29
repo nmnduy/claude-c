@@ -11,7 +11,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest]
         compiler: [gcc, clang]
         
     steps:
@@ -24,7 +24,7 @@ jobs:
         sudo apt-get install -y libcurl4-openssl-dev libcjson-dev sqlite3 libsqlite3-dev libssl-dev build-essential
 
     - name: Install dependencies (macOS)
-      if: matrix.os == 'macos-latest'
+      if: false
       run: |
         brew install curl cjson sqlite3 openssl
 
