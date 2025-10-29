@@ -251,7 +251,7 @@ char* tui_read_input(TUIState *tui, const char *prompt) {
     }
 
     // Use lineedit for input handling - simple and works with terminal scrolling
-    LineEditor editor;
+    LineEditor editor = {0};  // Zero-initialize to prevent double-free of garbage pointers
     lineedit_init(&editor, NULL, NULL);  // No completion for now
 
     // Get prompt color from colorscheme or use centralized fallback green
