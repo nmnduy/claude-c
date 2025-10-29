@@ -3,7 +3,7 @@
 
 - [ ] plan mode
 - [ ] remove ANTHROPIC_MODEL env var usage. its confusing
-- [ ] colorize the diff using the colorscheme we got
+- [x] colorize the diff using the colorscheme we got
 - [x] tmux paste doesn't get handled correctly in the input
 - [ ] object files in same dir?
 - [ ] receive user input
