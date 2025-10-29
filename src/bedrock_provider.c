@@ -5,154 +5,331 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include "bedrock_provider.h"
+#include "claude_internal.h"
 #include "logger.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
+#include <curl/curl.h>
+
+// ============================================================================
+// CURL Helpers
+// ============================================================================
+
+typedef struct {
+    char *output;
+    size_t size;
+} MemoryBuffer;
+
+static size_t write_callback(void *contents, size_t size, size_t nmemb, void *userp) {
+    size_t realsize = size * nmemb;
+    MemoryBuffer *mem = (MemoryBuffer *)userp;
+
+    char *ptr = realloc(mem->output, mem->size + realsize + 1);
+    if (!ptr) {
+        LOG_ERROR("Not enough memory (realloc returned NULL)");
+        return 0;
+    }
+
+    mem->output = ptr;
+    memcpy(&(mem->output[mem->size]), contents, realsize);
+    mem->size += realsize;
+    mem->output[mem->size] = 0;
+
+    return realsize;
+}
+
+// ============================================================================
+// Request Building (from ConversationState)
+// ============================================================================
+
+// Forward declaration - this will be implemented in claude.c and exposed via claude_internal.h
+// For now, we declare it here as extern
+extern char* build_request_json_from_state(ConversationState *state);
 
 // ============================================================================
 // Bedrock Provider Implementation
 // ============================================================================
 
 /**
- * Build request URL for Bedrock provider
- * Bedrock endpoint already includes the full path with /invoke
+ * Helper: Execute a single HTTP request with current credentials
+ * Returns: ApiCallResult (caller must free fields)
  */
-static char* bedrock_build_url(Provider *self, const char *base_url) {
-    (void)base_url;  // Not used for Bedrock (we use config->endpoint)
+static ApiCallResult bedrock_execute_request(BedrockConfig *config, const char *bedrock_json) {
+    ApiCallResult result = {0};
 
-    BedrockConfig *config = (BedrockConfig*)self->config;
-
-    if (!config || !config->endpoint) {
-        LOG_ERROR("Bedrock provider: endpoint is not configured");
-        return NULL;
-    }
-
-    // Return a copy of the pre-configured endpoint
-    // (Already includes the full path like https://bedrock-runtime.us-west-2.amazonaws.com/model/MODEL_ID/invoke)
-    char *url = strdup(config->endpoint);
-    if (!url) {
-        LOG_ERROR("Bedrock provider: failed to duplicate endpoint URL");
-        return NULL;
-    }
-
-    LOG_DEBUG("Bedrock provider: built URL: %s", url);
-    return url;
-}
-
-/**
- * Setup headers with AWS SigV4 signing
- */
-static struct curl_slist* bedrock_setup_headers(
-    Provider *self,
-    struct curl_slist *headers,
-    const char *method,
-    const char *url,
-    const char *payload
-) {
-    BedrockConfig *config = (BedrockConfig*)self->config;
-
-    if (!config || !config->creds) {
-        LOG_ERROR("Bedrock provider: credentials are not configured");
-        return NULL;
-    }
-
-    LOG_DEBUG("Bedrock provider: signing request with AWS SigV4...");
-
-    // Use the existing bedrock_sign_request function from aws_bedrock.c
-    headers = bedrock_sign_request(
-        headers,
-        method,
-        url,
-        payload,
-        config->creds,
-        config->region,
-        AWS_BEDROCK_SERVICE
+    // Sign request with SigV4 using current credentials
+    struct curl_slist *headers = bedrock_sign_request(
+        NULL, "POST", config->endpoint, bedrock_json,
+        config->creds, config->region, AWS_BEDROCK_SERVICE
     );
 
     if (!headers) {
-        LOG_ERROR("Bedrock provider: failed to sign request");
-        return NULL;
+        result.error_message = strdup("Failed to sign request with AWS SigV4");
+        result.is_retryable = 0;
+        return result;
     }
 
-    LOG_DEBUG("Bedrock provider: request signed successfully");
-    return headers;
+    // Execute HTTP request
+    CURL *curl = curl_easy_init();
+    if (!curl) {
+        result.error_message = strdup("Failed to initialize CURL");
+        result.is_retryable = 0;
+        curl_slist_free_all(headers);
+        return result;
+    }
+
+    MemoryBuffer response = {NULL, 0};
+
+    curl_easy_setopt(curl, CURLOPT_URL, config->endpoint);
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, bedrock_json);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
+
+    struct timespec start, end;
+    clock_gettime(CLOCK_MONOTONIC, &start);
+    CURLcode res = curl_easy_perform(curl);
+    clock_gettime(CLOCK_MONOTONIC, &end);
+
+    result.duration_ms = (end.tv_sec - start.tv_sec) * 1000 +
+                         (end.tv_nsec - start.tv_nsec) / 1000000;
+
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &result.http_status);
+    curl_slist_free_all(headers);
+    curl_easy_cleanup(curl);
+
+    // Handle CURL errors
+    if (res != CURLE_OK) {
+        result.error_message = strdup(curl_easy_strerror(res));
+        result.is_retryable = (res == CURLE_COULDNT_CONNECT ||
+                               res == CURLE_OPERATION_TIMEDOUT ||
+                               res == CURLE_RECV_ERROR ||
+                               res == CURLE_SEND_ERROR);
+        free(response.output);
+        return result;
+    }
+
+    result.raw_response = response.output;
+
+    // Check HTTP status
+    if (result.http_status >= 200 && result.http_status < 300) {
+        // Success - parse response
+        result.response = bedrock_convert_response(response.output);
+        if (!result.response) {
+            result.error_message = strdup("Failed to parse Bedrock response");
+            result.is_retryable = 0;
+        }
+        return result;
+    }
+
+    // HTTP error
+    result.is_retryable = (result.http_status == 429 ||
+                           result.http_status == 408 ||
+                           result.http_status >= 500);
+
+    // Extract error message from response if JSON
+    cJSON *error_json = cJSON_Parse(response.output);
+    if (error_json) {
+        cJSON *message = cJSON_GetObjectItem(error_json, "message");
+        if (message && cJSON_IsString(message)) {
+            result.error_message = strdup(message->valuestring);
+        }
+        cJSON_Delete(error_json);
+    }
+
+    if (!result.error_message) {
+        char buf[256];
+        snprintf(buf, sizeof(buf), "HTTP %ld", result.http_status);
+        result.error_message = strdup(buf);
+    }
+
+    return result;
 }
 
 /**
- * Format request from OpenAI format to Bedrock/Anthropic format
+ * Bedrock provider's call_api - handles AWS authentication with smart rotation detection
  */
-static char* bedrock_format_request(Provider *self, const char *openai_json) {
-    (void)self;  // Not needed for conversion
-
-    if (!openai_json) {
-        LOG_ERROR("Bedrock provider: input JSON is NULL");
-        return NULL;
-    }
-
-    LOG_DEBUG("Bedrock provider: converting OpenAI format to Bedrock/Anthropic format...");
-
-    // Use the existing bedrock_convert_request function from aws_bedrock.c
-    char *bedrock_json = bedrock_convert_request(openai_json);
-    if (!bedrock_json) {
-        LOG_ERROR("Bedrock provider: failed to convert request format");
-        return NULL;
-    }
-
-    LOG_DEBUG("Bedrock provider: request converted (size: %zu bytes)", strlen(bedrock_json));
-    return bedrock_json;
-}
-
-/**
- * Parse response from Bedrock/Anthropic format to OpenAI format
- */
-static cJSON* bedrock_parse_response(Provider *self, const char *response_body) {
-    (void)self;  // Not needed for conversion
-
-    if (!response_body) {
-        LOG_ERROR("Bedrock provider: response body is NULL");
-        return NULL;
-    }
-
-    LOG_DEBUG("Bedrock provider: converting Bedrock/Anthropic response to OpenAI format...");
-
-    // Use the existing bedrock_convert_response function from aws_bedrock.c
-    cJSON *openai_response = bedrock_convert_response(response_body);
-    if (!openai_response) {
-        LOG_ERROR("Bedrock provider: failed to convert response format");
-        return NULL;
-    }
-
-    LOG_DEBUG("Bedrock provider: response converted successfully");
-    return openai_response;
-}
-
-/**
- * Handle authentication errors and attempt credential refresh
- */
-static int bedrock_provider_handle_auth_error(Provider *self, long http_status, const char *error_message, const char *response_body) {
+static ApiCallResult bedrock_call_api(Provider *self, ConversationState *state) {
+    ApiCallResult result = {0};
     BedrockConfig *config = (BedrockConfig*)self->config;
 
-    if (!config) {
-        LOG_ERROR("Bedrock provider: config is NULL in auth error handler");
-        return 0;
+    if (!config || !config->creds) {
+        result.error_message = strdup("Bedrock config or credentials not initialized");
+        result.is_retryable = 0;
+        return result;
     }
 
-    LOG_WARN("Bedrock provider: authentication error (HTTP %ld): %s",
-             http_status, error_message ? error_message : "(no message)");
-
-    // Use the existing bedrock_handle_auth_error function from aws_bedrock.c
-    // This will attempt to refresh credentials if it's an auth error
-    int refreshed = bedrock_handle_auth_error(config, http_status, error_message, response_body);
-
-    if (refreshed) {
-        LOG_INFO("Bedrock provider: credentials refreshed successfully, retry recommended");
-    } else {
-        LOG_WARN("Bedrock provider: could not refresh credentials or not an auth error");
+    // === STEP 1: Save initial token state (for external rotation detection) ===
+    char *saved_access_key = NULL;
+    if (config->creds->access_key_id) {
+        saved_access_key = strdup(config->creds->access_key_id);
+        LOG_DEBUG("Saved current access key ID for rotation detection: %.10s...", saved_access_key);
     }
 
-    return refreshed;
+    const char *profile = config->creds->profile ? config->creds->profile : "default";
+
+    // === Build request (do this once, reuse for retries) ===
+    char *openai_json = build_request_json_from_state(state);
+    if (!openai_json) {
+        result.error_message = strdup("Failed to build request JSON");
+        result.is_retryable = 0;
+        free(saved_access_key);
+        return result;
+    }
+
+    char *bedrock_json = bedrock_convert_request(openai_json);
+    free(openai_json);
+
+    if (!bedrock_json) {
+        result.error_message = strdup("Failed to convert request to Bedrock format");
+        result.is_retryable = 0;
+        free(saved_access_key);
+        return result;
+    }
+
+    // === STEP 2: First API call attempt ===
+    LOG_DEBUG("Executing first API call attempt...");
+    result = bedrock_execute_request(config, bedrock_json);
+
+    // Success on first try
+    if (result.response) {
+        LOG_INFO("API call succeeded on first attempt");
+        free(saved_access_key);
+        free(bedrock_json);
+        return result;
+    }
+
+    // === STEP 3: Auth error? Check for external credential rotation ===
+    if (result.http_status == 401 || result.http_status == 403 || result.http_status == 400) {
+        LOG_WARN("Authentication error (HTTP %ld): %s", result.http_status, result.error_message);
+        LOG_DEBUG("=== CHECKING FOR EXTERNAL CREDENTIAL ROTATION ===");
+
+        // Try loading fresh credentials from profile
+        AWSCredentials *fresh_creds = bedrock_load_credentials(profile, config->region);
+
+        if (fresh_creds) {
+            LOG_DEBUG("Loaded fresh credentials from profile");
+
+            // === STEP 4: Compare tokens - was it rotated externally? ===
+            int externally_rotated = 0;
+            if (saved_access_key && fresh_creds->access_key_id) {
+                externally_rotated = (strcmp(saved_access_key, fresh_creds->access_key_id) != 0);
+                LOG_DEBUG("Token comparison: saved=%.10s, fresh=%.10s, rotated=%s",
+                         saved_access_key, fresh_creds->access_key_id,
+                         externally_rotated ? "YES" : "NO");
+            }
+
+            if (externally_rotated) {
+                // === STEP 4a: External rotation detected - use new credentials ===
+                LOG_INFO("✓ Detected externally rotated credentials (another process updated tokens)");
+                printf("\nDetected new AWS credentials from external source. Using updated credentials...\n");
+
+                // Update config with externally rotated credentials
+                bedrock_creds_free(config->creds);
+                config->creds = fresh_creds;
+                free(saved_access_key);
+                saved_access_key = strdup(fresh_creds->access_key_id);
+                result.auth_refreshed = 1;
+
+                // Free previous error result
+                free(result.raw_response);
+                free(result.error_message);
+
+                // === STEP 5: Retry with externally rotated credentials ===
+                LOG_DEBUG("Retrying API call with externally rotated credentials...");
+                result = bedrock_execute_request(config, bedrock_json);
+
+                if (result.response) {
+                    LOG_INFO("API call succeeded after using externally rotated credentials");
+                    free(saved_access_key);
+                    free(bedrock_json);
+                    return result;
+                }
+
+                LOG_WARN("API call still failed after external rotation: %s", result.error_message);
+            } else {
+                // === STEP 4b: No external rotation - force auth token rotation ===
+                LOG_INFO("✗ Credentials unchanged, forcing authentication token rotation...");
+                bedrock_creds_free(fresh_creds);
+
+                // Call rotation command (aws sso login)
+                LOG_DEBUG("Calling bedrock_authenticate to rotate credentials...");
+                if (bedrock_authenticate(profile) == 0) {
+                    LOG_INFO("Authentication successful, reloading credentials...");
+
+                    // Reload credentials after successful authentication
+                    AWSCredentials *new_creds = bedrock_load_credentials(profile, config->region);
+                    if (new_creds) {
+                        bedrock_creds_free(config->creds);
+                        config->creds = new_creds;
+                        free(saved_access_key);
+                        saved_access_key = strdup(new_creds->access_key_id);
+                        result.auth_refreshed = 1;
+
+                        // Free previous error result
+                        free(result.raw_response);
+                        free(result.error_message);
+
+                        // === STEP 5: Retry with rotated credentials ===
+                        LOG_DEBUG("Retrying API call with rotated credentials...");
+                        result = bedrock_execute_request(config, bedrock_json);
+
+                        if (result.response) {
+                            LOG_INFO("API call succeeded after credential rotation");
+                            free(saved_access_key);
+                            free(bedrock_json);
+                            return result;
+                        }
+
+                        LOG_WARN("API call still failed after rotation: %s", result.error_message);
+                    } else {
+                        LOG_ERROR("Failed to reload credentials after authentication");
+                    }
+                } else {
+                    LOG_ERROR("Authentication command failed");
+                }
+            }
+        } else {
+            LOG_ERROR("Failed to load fresh credentials from profile");
+        }
+
+        // === STEP 6: Still auth error? One final rotation attempt ===
+        if ((result.http_status == 401 || result.http_status == 403 || result.http_status == 400) &&
+            result.auth_refreshed) {
+            LOG_WARN("Auth error persists after rotation, attempting one final rotation...");
+
+            if (bedrock_authenticate(profile) == 0) {
+                AWSCredentials *final_creds = bedrock_load_credentials(profile, config->region);
+                if (final_creds) {
+                    bedrock_creds_free(config->creds);
+                    config->creds = final_creds;
+
+                    // Free previous error result
+                    free(result.raw_response);
+                    free(result.error_message);
+
+                    // === STEP 7: Final retry ===
+                    LOG_DEBUG("Final API call attempt with re-rotated credentials...");
+                    result = bedrock_execute_request(config, bedrock_json);
+
+                    if (result.response) {
+                        LOG_INFO("API call succeeded on final retry");
+                    } else {
+                        LOG_ERROR("API call failed even after final credential rotation");
+                    }
+                }
+            }
+        }
+    }
+
+    // Cleanup
+    free(saved_access_key);
+    free(bedrock_json);
+
+    return result;
 }
 
 /**
@@ -203,11 +380,7 @@ Provider* bedrock_provider_create(const char *model) {
     // Set up provider interface
     provider->name = "Bedrock";
     provider->config = config;
-    provider->build_request_url = bedrock_build_url;
-    provider->setup_headers = bedrock_setup_headers;
-    provider->format_request = bedrock_format_request;
-    provider->parse_response = bedrock_parse_response;
-    provider->handle_auth_error = bedrock_provider_handle_auth_error;
+    provider->call_api = bedrock_call_api;
     provider->cleanup = bedrock_cleanup;
 
     LOG_INFO("Bedrock provider created successfully (region: %s, model: %s)",

@@ -17,13 +17,24 @@ struct Provider;
 struct ConversationState;
 
 /**
+ * Result from a single API call attempt
+ * Used by provider->call_api() to communicate success/error state to retry logic
+ */
+typedef struct {
+    cJSON *response;         // Parsed response in OpenAI format (NULL on error, caller must delete)
+    char *raw_response;      // Raw response body (for logging, caller must free)
+    long http_status;        // HTTP status code (0 if network error before response)
+    char *error_message;     // Error message if call failed (caller must free)
+    long duration_ms;        // Request duration in milliseconds
+    int is_retryable;        // 1 if error can be retried, 0 otherwise
+    int auth_refreshed;      // 1 if provider refreshed credentials (AWS only)
+} ApiCallResult;
+
+/**
  * Provider interface - abstraction for API providers
  *
- * Each provider implements these function pointers to handle:
- * - URL construction
- * - Authentication (headers, signing)
- * - Request/response format conversion
- * - Provider-specific error handling (e.g., credential refresh)
+ * Each provider implements call_api() to handle a single authenticated request.
+ * The generic retry logic wraps this to handle transient failures.
  */
 typedef struct Provider {
     // Provider metadata
@@ -31,67 +42,21 @@ typedef struct Provider {
     void *config;               // Provider-specific configuration (opaque pointer)
 
     /**
-     * Build the full API endpoint URL
+     * Execute a single API call attempt (no retries)
+     *
+     * Provider-specific implementation that handles:
+     * - Credential validation/refresh (AWS: check/refresh credentials before signing)
+     * - Request formatting (OpenAI: pass-through, Bedrock: convert to Anthropic format)
+     * - Authentication (OpenAI: Bearer token header, AWS: SigV4 request signing)
+     * - HTTP execution (single attempt using libcurl)
+     * - Response parsing (Bedrock: convert from Anthropic to OpenAI format)
      *
      * @param self - Provider instance
-     * @param base_url - Base URL from configuration (may be provider-specific)
-     * @return Newly allocated URL string (caller must free), or NULL on error
+     * @param state - Conversation state with messages, model, etc.
+     * @return ApiCallResult with response (on success) or error details (on failure)
+     *         Caller must free result.response, result.raw_response, and result.error_message
      */
-    char* (*build_request_url)(struct Provider *self, const char *base_url);
-
-    /**
-     * Setup HTTP headers for authentication
-     *
-     * @param self - Provider instance
-     * @param headers - Existing CURL header list (may be NULL)
-     * @param method - HTTP method (e.g., "POST")
-     * @param url - Full request URL
-     * @param payload - Request body (for signing)
-     * @return Updated header list, or NULL on error
-     */
-    struct curl_slist* (*setup_headers)(
-        struct Provider *self,
-        struct curl_slist *headers,
-        const char *method,
-        const char *url,
-        const char *payload
-    );
-
-    /**
-     * Format request from internal format to provider-specific format
-     *
-     * @param self - Provider instance
-     * @param openai_json - Request in OpenAI format (internal representation)
-     * @return Newly allocated JSON string in provider format (caller must free), or NULL on error
-     *         For OpenAI provider, this is typically a no-op (returns copy of input)
-     *         For Bedrock, this converts OpenAI format to Anthropic Messages API format
-     */
-    char* (*format_request)(struct Provider *self, const char *openai_json);
-
-    /**
-     * Parse provider response into standard format
-     *
-     * @param self - Provider instance
-     * @param response_body - Raw response body from API
-     * @return cJSON object in OpenAI format (caller must delete), or NULL on error
-     *         For OpenAI provider, this is typically direct parsing
-     *         For Bedrock, this converts Anthropic format back to OpenAI format
-     */
-    cJSON* (*parse_response)(struct Provider *self, const char *response_body);
-
-    /**
-     * Handle authentication errors and attempt recovery
-     *
-     * This is called when an API request fails with an auth-related error.
-     * The provider can attempt to refresh credentials, re-authenticate, etc.
-     *
-     * @param self - Provider instance (config may be updated with new credentials)
-     * @param http_status - HTTP status code from failed request
-     * @param error_message - Error message from API response
-     * @param response_body - Full response body from API (for detailed error analysis)
-     * @return 1 if credentials were refreshed (caller should retry), 0 otherwise
-     */
-    int (*handle_auth_error)(struct Provider *self, long http_status, const char *error_message, const char *response_body);
+    ApiCallResult (*call_api)(struct Provider *self, struct ConversationState *state);
 
     /**
      * Cleanup provider resources
