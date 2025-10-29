@@ -52,6 +52,7 @@ TEST_TIMING_TARGET = $(BUILD_DIR)/test_tool_timing
 TEST_PASTE_TARGET = $(BUILD_DIR)/test_paste
 TEST_RETRY_JITTER_TARGET = $(BUILD_DIR)/test_retry_jitter
 TEST_OPENAI_FORMAT_TARGET = $(BUILD_DIR)/test_openai_format
+TEST_FORMWORK_TARGET = $(BUILD_DIR)/test_formwork
 QUERY_TOOL = $(BUILD_DIR)/query_logs
 SRC = src/claude.c
 LOGGER_SRC = src/logger.c
@@ -87,9 +88,12 @@ TEST_TODO_WRITE_SRC = tests/test_todo_write.c
 TEST_PASTE_SRC = tests/test_paste.c
 TEST_RETRY_JITTER_SRC = tests/test_retry_jitter.c
 TEST_OPENAI_FORMAT_SRC = tests/test_openai_format.c
+TEST_FORMWORK_SRC = tests/test_formwork.c
 QUERY_TOOL_SRC = tools/query_logs.c
+FORMWORK_SRC = src/formwork.c
+FORMWORK_OBJ = $(BUILD_DIR)/formwork.o
 
-.PHONY: all clean check-deps install test test-edit test-input test-read test-lineedit test-todo test-todo-write test-paste test-retry-jitter test-openai-format query-tool debug analyze sanitize-ub sanitize-all sanitize-leak valgrind memscan version show-version update-version bump-patch build
+.PHONY: all clean check-deps install test test-edit test-input test-read test-lineedit test-todo test-todo-write test-paste test-retry-jitter test-openai-format test-formwork query-tool debug analyze sanitize-ub sanitize-all sanitize-leak valgrind memscan version show-version update-version bump-patch build
 
 all: check-deps $(TARGET)
 
@@ -99,7 +103,7 @@ debug: check-deps $(BUILD_DIR)/claude-c-debug
 
 query-tool: check-deps $(QUERY_TOOL)
 
-test: test-edit test-input test-read test-lineedit test-todo test-paste test-timing test-openai-format
+test: test-edit test-input test-read test-lineedit test-todo test-paste test-timing test-openai-format test-formwork
 
 test-edit: check-deps $(TEST_EDIT_TARGET)
 	@echo ""
@@ -160,6 +164,12 @@ test-openai-format: check-deps $(TEST_OPENAI_FORMAT_TARGET)
 	@echo "Running OpenAI message format validation tests..."
 	@echo ""
 	@./$(TEST_OPENAI_FORMAT_TARGET)
+
+test-formwork: check-deps $(TEST_FORMWORK_TARGET)
+	@echo ""
+	@echo "Running FormWork library tests..."
+	@echo ""
+	@./$(TEST_FORMWORK_TARGET)
 
 $(TARGET): $(SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(LINEEDIT_OBJ) $(COMMANDS_OBJ) $(COMPLETION_OBJ) $(TUI_OBJ) $(TODO_OBJ) $(AWS_BEDROCK_OBJ) $(PROVIDER_OBJ) $(OPENAI_PROVIDER_OBJ) $(BEDROCK_PROVIDER_OBJ) $(VERSION_H)
 	@mkdir -p $(BUILD_DIR)
@@ -387,6 +397,10 @@ $(BEDROCK_PROVIDER_OBJ): $(BEDROCK_PROVIDER_SRC) src/bedrock_provider.h src/prov
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c -o $(BEDROCK_PROVIDER_OBJ) $(BEDROCK_PROVIDER_SRC)
 
+$(FORMWORK_OBJ): $(FORMWORK_SRC) src/formwork.h
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c -o $(FORMWORK_OBJ) $(FORMWORK_SRC)
+
 # Query tool - utility to inspect API call logs
 $(QUERY_TOOL): $(QUERY_TOOL_SRC) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ)
 	@mkdir -p $(BUILD_DIR)
@@ -510,6 +524,15 @@ $(TEST_OPENAI_FORMAT_TARGET): $(TEST_OPENAI_FORMAT_SRC)
 	@$(CC) $(CFLAGS) -o $(TEST_OPENAI_FORMAT_TARGET) $(TEST_OPENAI_FORMAT_SRC) $(LDFLAGS)
 	@echo ""
 	@echo "✓ OpenAI format test build successful!"
+	@echo ""
+
+# Test target for FormWork library
+$(TEST_FORMWORK_TARGET): $(TEST_FORMWORK_SRC) $(FORMWORK_OBJ)
+	@mkdir -p $(BUILD_DIR)
+	@echo "Compiling FormWork test suite..."
+	@$(CC) $(CFLAGS) -o $(TEST_FORMWORK_TARGET) $(TEST_FORMWORK_SRC) $(FORMWORK_OBJ) $(LDFLAGS)
+	@echo ""
+	@echo "✓ FormWork test build successful!"
 	@echo ""
 
 install: $(TARGET)
