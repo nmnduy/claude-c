@@ -11,27 +11,31 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest]
+        os: [ubuntu-latest, macos-latest]
         compiler: [gcc, clang]
         
     steps:
     - uses: actions/checkout@v4
 
     - name: Install dependencies (Ubuntu)
-      if: matrix.os == 'ubuntu-latest'
+      if: ${{ matrix.os == 'ubuntu-latest' }}
       run: |
         sudo apt-get update
         sudo apt-get install -y libcurl4-openssl-dev libcjson-dev sqlite3 libsqlite3-dev libssl-dev build-essential
 
     - name: Install dependencies (macOS)
-      if: false
+      if: ${{ matrix.os == 'macos-latest' }}
       run: |
-        brew install curl cjson sqlite3 openssl
+        brew install curl cjson sqlite3 openssl pkg-config
 
     - name: Build with ${{ matrix.compiler }}
       run: |
         make clean
-        make CC=${{ matrix.compiler }}
+        if [ "${{ matrix.compiler }}" = "clang" ]; then
+          make clang
+        else
+          make
+        fi
         
     - name: Run tests
       run: make test
@@ -39,7 +43,8 @@ jobs:
     - name: Test installation
       run: |
         make clean
-        make install DESTDIR=/tmp/claude-c-install
+        make install INSTALL_PREFIX=/tmp/claude-c-install
+        /tmp/claude-c-install/bin/claude-c --version
         
     - name: Build with sanitizers
       run: |
