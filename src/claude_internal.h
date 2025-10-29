@@ -190,6 +190,9 @@ int add_directory(ConversationState *state, const char *path);
  */
 void clear_conversation(ConversationState *state);
 
+// Free all messages and their contents (including system message). Use at program shutdown.
+void conversation_free(ConversationState *state);
+
 /**
  * Build system prompt with environment context
  * Returns: Newly allocated string (caller must free), or NULL on error
