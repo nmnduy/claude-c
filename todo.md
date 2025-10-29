@@ -1,4 +1,3 @@
-- [ ] fix release.yaml
 - [x] why so many linse between [Assistant] and everything else?
 
 - [ ] plan mode
@@ -17,6 +16,7 @@
 - [x] pasting still fucks up the terminal
 - [x] add retries to falied API calls
 - [ ] implement instruction queue. so user can keep typing
+- [ ] run memory tools
 
 - [x]
 ```sh
