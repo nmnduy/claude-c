@@ -583,6 +583,12 @@ install: $(TARGET)
 	@echo "Installing claude-c to $(INSTALL_PREFIX)/bin..."
 	@mkdir -p $(INSTALL_PREFIX)/bin
 	@cp $(TARGET) $(INSTALL_PREFIX)/bin/claude-c
+ifeq ($(UNAME_S),Darwin)
+ifndef GITHUB_ACTIONS
+	@echo "Signing binary for macOS..."
+	@codesign --force --deep --sign - $(INSTALL_PREFIX)/bin/claude-c 2>/dev/null || echo "Warning: Code signing failed (non-fatal)"
+endif
+endif
 	@echo "✓ Installation complete! Run 'claude-c' from anywhere."
 	@echo ""
 	@echo "Note: Make sure $(INSTALL_PREFIX)/bin is in your PATH:"
