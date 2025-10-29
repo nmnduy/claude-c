@@ -137,21 +137,21 @@ static void print_assistant(const char *text) {
     char text_color_code[32];
     const char *role_color_start;
     const char *text_color_start;
-    
+
     // Get accent color for role name
     if (get_colorscheme_color(COLORSCHEME_ASSISTANT, role_color_code, sizeof(role_color_code)) == 0) {
         role_color_start = role_color_code;
     } else {
         role_color_start = ANSI_FALLBACK_ASSISTANT;
     }
-    
+
     // Get foreground color for main text
     if (get_colorscheme_color(COLORSCHEME_FOREGROUND, text_color_code, sizeof(text_color_code)) == 0) {
         text_color_start = text_color_code;
     } else {
         text_color_start = ANSI_FALLBACK_FOREGROUND;
     }
-    
+
     printf("%s[Assistant]%s %s%s%s\n", role_color_start, ANSI_RESET, text_color_start, text, ANSI_RESET);
     fflush(stdout);
 }
@@ -162,21 +162,21 @@ static void print_tool(const char *tool_name, const char *details) {
     char text_color_code[32];
     const char *tool_color_start;
     const char *text_color_start;
-    
+
     // Get accent color for tool indicator
     if (get_colorscheme_color(COLORSCHEME_TOOL, tool_color_code, sizeof(tool_color_code)) == 0) {
         tool_color_start = tool_color_code;
     } else {
         tool_color_start = ANSI_FALLBACK_TOOL;
     }
-    
+
     // Get foreground color for details
     if (get_colorscheme_color(COLORSCHEME_FOREGROUND, text_color_code, sizeof(text_color_code)) == 0) {
         text_color_start = text_color_code;
     } else {
         text_color_start = ANSI_FALLBACK_FOREGROUND;
     }
-    
+
     printf("%s[Tool: %s]%s", tool_color_start, tool_name, ANSI_RESET);
     if (details && strlen(details) > 0) {
         printf(" %s%s%s", text_color_start, details, ANSI_RESET);
@@ -190,10 +190,10 @@ static char* get_tool_details(const char *tool_name, cJSON *arguments) {
     if (!arguments || !cJSON_IsObject(arguments)) {
         return NULL;
     }
-    
+
     static char details[256]; // static buffer for thread safety
     details[0] = '\0';
-    
+
     if (strcmp(tool_name, "Bash") == 0) {
         cJSON *command = cJSON_GetObjectItem(arguments, "command");
         if (cJSON_IsString(command)) {
@@ -210,15 +210,15 @@ static char* get_tool_details(const char *tool_name, cJSON *arguments) {
         cJSON *file_path = cJSON_GetObjectItem(arguments, "file_path");
         cJSON *start_line = cJSON_GetObjectItem(arguments, "start_line");
         cJSON *end_line = cJSON_GetObjectItem(arguments, "end_line");
-        
+
         if (cJSON_IsString(file_path)) {
             const char *path = file_path->valuestring;
             // Extract just the filename from the path
             const char *filename = strrchr(path, '/');
             filename = filename ? filename + 1 : path;
-            
+
             if (cJSON_IsNumber(start_line) && cJSON_IsNumber(end_line)) {
-                snprintf(details, sizeof(details), "%s:%d-%d", filename, 
+                snprintf(details, sizeof(details), "%s:%d-%d", filename,
                         start_line->valueint, end_line->valueint);
             } else if (cJSON_IsNumber(start_line)) {
                 snprintf(details, sizeof(details), "%s:%d", filename, start_line->valueint);
@@ -240,13 +240,13 @@ static char* get_tool_details(const char *tool_name, cJSON *arguments) {
     } else if (strcmp(tool_name, "Edit") == 0) {
         cJSON *file_path = cJSON_GetObjectItem(arguments, "file_path");
         cJSON *use_regex = cJSON_GetObjectItem(arguments, "use_regex");
-        
+
         if (cJSON_IsString(file_path)) {
             const char *path = file_path->valuestring;
             // Extract just the filename from the path
             const char *filename = strrchr(path, '/');
             filename = filename ? filename + 1 : path;
-            
+
             const char *op_type = cJSON_IsTrue(use_regex) ? "(regex)" : "(string)";
             snprintf(details, sizeof(details), "%s %s", filename, op_type);
         }
@@ -259,11 +259,11 @@ static char* get_tool_details(const char *tool_name, cJSON *arguments) {
     } else if (strcmp(tool_name, "Grep") == 0) {
         cJSON *pattern = cJSON_GetObjectItem(arguments, "pattern");
         cJSON *path = cJSON_GetObjectItem(arguments, "path");
-        
+
         if (cJSON_IsString(pattern)) {
-            if (cJSON_IsString(path) && strlen(path->valuestring) > 0 && 
+            if (cJSON_IsString(path) && strlen(path->valuestring) > 0 &&
                 strcmp(path->valuestring, ".") != 0) {
-                snprintf(details, sizeof(details), "\"%s\" in %s", 
+                snprintf(details, sizeof(details), "\"%s\" in %s",
                         pattern->valuestring, path->valuestring);
             } else {
                 snprintf(details, sizeof(details), "\"%s\"", pattern->valuestring);
@@ -276,7 +276,7 @@ static char* get_tool_details(const char *tool_name, cJSON *arguments) {
             snprintf(details, sizeof(details), "%d task%s", count, count == 1 ? "" : "s");
         }
     }
-    
+
     return strlen(details) > 0 ? details : NULL;
 }
 
@@ -409,18 +409,18 @@ STATIC int write_file(const char *path, const char *content) {
     // Create parent directories if they don't exist
     char *path_copy = strdup(path);
     if (!path_copy) return -1;
-    
+
     // Extract directory path
     char *dir_path = dirname(path_copy);
-    
+
     // Create directory recursively (ignore errors if directory already exists)
     char mkdir_cmd[PATH_MAX];
     snprintf(mkdir_cmd, sizeof(mkdir_cmd), "mkdir -p '%s' 2>/dev/null", dir_path);
     int mkdir_result = system(mkdir_cmd);
     (void)mkdir_result; // Suppress unused result warning
-    
+
     free(path_copy);
-    
+
     // Now try to open/create the file
     FILE *f = fopen(path, "wb");
     if (!f) return -1;
@@ -541,6 +541,69 @@ int add_directory(ConversationState *state, const char *path) {
 }
 
 // ============================================================================
+// Diff Functionality
+// ============================================================================
+
+// Show unified diff between original content and current file
+// Returns 0 on success, -1 on error
+static int show_diff(const char *file_path, const char *original_content) {
+    // Create temporary file for original content
+    char temp_path[PATH_MAX];
+    snprintf(temp_path, sizeof(temp_path), "%s.claude_diff.XXXXXX", file_path);
+
+    int fd = mkstemp(temp_path);
+    if (fd == -1) {
+        LOG_ERROR("Failed to create temporary file for diff");
+        return -1;
+    }
+
+    // Write original content to temp file
+    ssize_t content_len = strlen(original_content);
+    ssize_t written = write(fd, original_content, (size_t)content_len);
+    close(fd);
+
+    if (written != content_len) {
+        LOG_ERROR("Failed to write original content to temp file");
+        unlink(temp_path);
+        return -1;
+    }
+
+    // Run diff command to show changes
+    char diff_cmd[PATH_MAX * 2];
+    snprintf(diff_cmd, sizeof(diff_cmd), "diff -u \"%s\" \"%s\"", temp_path, file_path);
+
+    FILE *pipe = popen(diff_cmd, "r");
+    if (!pipe) {
+        LOG_ERROR("Failed to run diff command");
+        unlink(temp_path);
+        return -1;
+    }
+
+    // Read and display diff output
+    printf("\n--- Changes made to %s ---\n", file_path);
+    char line[1024];
+    int has_diff = 0;
+
+    while (fgets(line, sizeof(line), pipe)) {
+        printf("%s", line);
+        has_diff = 1;
+    }
+
+    int result = pclose(pipe);
+    unlink(temp_path);
+
+    if (!has_diff) {
+        printf("(No changes - files are identical)\n");
+    } else if (result == 0) {
+        // diff exit code 0 means no differences found
+        printf("(No differences found)\n");
+    }
+
+    printf("--- End of diff ---\n\n");
+    return 0;
+}
+
+// ============================================================================
 // Tool Implementations
 // ============================================================================
 
@@ -606,10 +669,10 @@ STATIC cJSON* tool_read(cJSON *params, ConversationState *state) {
     // Get optional line range parameters
     const cJSON *start_line_json = cJSON_GetObjectItem(params, "start_line");
     const cJSON *end_line_json = cJSON_GetObjectItem(params, "end_line");
-    
+
     int start_line = -1;  // -1 means no limit
     int end_line = -1;    // -1 means no limit
-    
+
     if (start_line_json && cJSON_IsNumber(start_line_json)) {
         start_line = start_line_json->valueint;
         if (start_line < 1) {
@@ -618,7 +681,7 @@ STATIC cJSON* tool_read(cJSON *params, ConversationState *state) {
             return error;
         }
     }
-    
+
     if (end_line_json && cJSON_IsNumber(end_line_json)) {
         end_line = end_line_json->valueint;
         if (end_line < 1) {
@@ -627,7 +690,7 @@ STATIC cJSON* tool_read(cJSON *params, ConversationState *state) {
             return error;
         }
     }
-    
+
     // Validate line range
     if (start_line > 0 && end_line > 0 && start_line > end_line) {
         cJSON *error = cJSON_CreateObject();
@@ -656,7 +719,7 @@ STATIC cJSON* tool_read(cJSON *params, ConversationState *state) {
     // If line range is specified, extract only those lines
     char *filtered_content = content;
     int total_lines = 0;
-    
+
     if (start_line > 0 || end_line > 0) {
         // Count total lines and build filtered content
         char *result_buffer = NULL;
@@ -664,17 +727,17 @@ STATIC cJSON* tool_read(cJSON *params, ConversationState *state) {
         int current_line = 1;
         char *line_start = content;
         char *pos = content;
-        
+
         while (*pos) {
             if (*pos == '\n') {
                 // Found end of line
                 int line_len = (int)(pos - line_start + 1);  // Include the newline
-                
+
                 // Check if this line should be included
                 int include = 1;
                 if (start_line > 0 && current_line < start_line) include = 0;
                 if (end_line > 0 && current_line > end_line) include = 0;
-                
+
                 if (include) {
                     // Add this line to result
                     char *new_buffer = realloc(result_buffer, result_size + (size_t)line_len + 1);
@@ -690,10 +753,10 @@ STATIC cJSON* tool_read(cJSON *params, ConversationState *state) {
                     result_size += (size_t)line_len;
                     result_buffer[result_size] = '\0';
                 }
-                
+
                 current_line++;
                 line_start = pos + 1;
-                
+
                 // Stop if we've reached end_line
                 if (end_line > 0 && current_line > end_line) {
                     break;
@@ -701,7 +764,7 @@ STATIC cJSON* tool_read(cJSON *params, ConversationState *state) {
             }
             pos++;
         }
-        
+
         // Handle last line (if file doesn't end with newline)
         if (*line_start && (end_line < 0 || current_line <= end_line) &&
             (start_line < 0 || current_line >= start_line)) {
@@ -720,13 +783,13 @@ STATIC cJSON* tool_read(cJSON *params, ConversationState *state) {
             result_buffer[result_size] = '\0';
             current_line++;
         }
-        
+
         total_lines = current_line - 1;
-        
+
         if (!result_buffer) {
             result_buffer = strdup("");
         }
-        
+
         free(content);
         filtered_content = result_buffer;
     } else {
@@ -743,12 +806,12 @@ STATIC cJSON* tool_read(cJSON *params, ConversationState *state) {
     cJSON *result = cJSON_CreateObject();
     cJSON_AddStringToObject(result, "content", filtered_content);
     cJSON_AddNumberToObject(result, "total_lines", total_lines);
-    
+
     if (start_line > 0 || end_line > 0) {
         cJSON_AddNumberToObject(result, "start_line", start_line > 0 ? start_line : 1);
         cJSON_AddNumberToObject(result, "end_line", end_line > 0 ? end_line : total_lines);
     }
-    
+
     free(filtered_content);
 
     return result;
@@ -983,6 +1046,16 @@ STATIC cJSON* tool_edit(cJSON *params, ConversationState *state) {
         return error;
     }
 
+    // Save original content for diff comparison
+    char *original_content = strdup(content);
+    if (!original_content) {
+        free(content);
+        free(resolved_path);
+        cJSON *error = cJSON_CreateObject();
+        cJSON_AddStringToObject(error, "error", "Failed to allocate memory for diff");
+        return error;
+    }
+
     const char *old_str = old_json->valuestring;
     const char *new_str = new_json->valuestring;
     char *new_content = NULL;
@@ -1017,6 +1090,7 @@ STATIC cJSON* tool_edit(cJSON *params, ConversationState *state) {
 
     if (!new_content) {
         free(content);
+        free(original_content);
         free(resolved_path);
         cJSON *error = cJSON_CreateObject();
         if (error_msg) {
@@ -1033,9 +1107,15 @@ STATIC cJSON* tool_edit(cJSON *params, ConversationState *state) {
 
     int ret = write_file(resolved_path, new_content);
 
+    // Show diff if edit was successful
+    if (ret == 0) {
+        show_diff(resolved_path, original_content);
+    }
+
     free(content);
     free(new_content);
     free(resolved_path);
+    free(original_content);
 
     if (ret != 0) {
         cJSON *error = cJSON_CreateObject();
@@ -1328,7 +1408,7 @@ static cJSON* get_tool_definitions(int enable_caching) {
     cJSON_AddStringToObject(read, "type", "function");
     cJSON *read_func = cJSON_CreateObject();
     cJSON_AddStringToObject(read_func, "name", "Read");
-    cJSON_AddStringToObject(read_func, "description", 
+    cJSON_AddStringToObject(read_func, "description",
         "Reads a file from the filesystem with optional line range support");
     cJSON *read_params = cJSON_CreateObject();
     cJSON_AddStringToObject(read_params, "type", "object");
@@ -1339,12 +1419,12 @@ static cJSON* get_tool_definitions(int enable_caching) {
     cJSON_AddItemToObject(read_props, "file_path", read_path);
     cJSON *read_start = cJSON_CreateObject();
     cJSON_AddStringToObject(read_start, "type", "integer");
-    cJSON_AddStringToObject(read_start, "description", 
+    cJSON_AddStringToObject(read_start, "description",
         "Optional: Starting line number (1-indexed, inclusive)");
     cJSON_AddItemToObject(read_props, "start_line", read_start);
     cJSON *read_end = cJSON_CreateObject();
     cJSON_AddStringToObject(read_end, "type", "integer");
-    cJSON_AddStringToObject(read_end, "description", 
+    cJSON_AddStringToObject(read_end, "description",
         "Optional: Ending line number (1-indexed, inclusive)");
     cJSON_AddItemToObject(read_props, "end_line", read_end);
     cJSON_AddItemToObject(read_params, "properties", read_props);
@@ -2873,13 +2953,13 @@ static void process_response(ConversationState *state, cJSON *response, TUIState
             } else {
                 input = cJSON_CreateObject();
             }
-            
+
             char *tool_details = get_tool_details(name->valuestring, input);
-            
+
             if (tui) {
                 char prefix_with_tool[128];
                 snprintf(prefix_with_tool, sizeof(prefix_with_tool), "[Tool: %s]", name->valuestring);
-                
+
                 // Pass NULL for text when there are no details to avoid extra space
                 tui_add_conversation_line(tui, prefix_with_tool, tool_details, COLOR_PAIR_TOOL);
             } else {

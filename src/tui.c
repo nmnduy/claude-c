@@ -105,7 +105,7 @@ void tui_add_conversation_line(TUIState *tui, const char *prefix, const char *te
             }
             prefix_color_start = text_color_start;  // Same color for prefix
             break;
-            
+
         case COLOR_PAIR_USER:
             // User role name in accent color, text in foreground
             if (get_colorscheme_color(COLORSCHEME_USER, prefix_color_code, sizeof(prefix_color_code)) == 0) {
@@ -119,7 +119,7 @@ void tui_add_conversation_line(TUIState *tui, const char *prefix, const char *te
                 text_color_start = ANSI_FALLBACK_FOREGROUND;  // Default terminal color
             }
             break;
-            
+
         case COLOR_PAIR_ASSISTANT:
             // Assistant role name in accent color, text in foreground
             if (get_colorscheme_color(COLORSCHEME_ASSISTANT, prefix_color_code, sizeof(prefix_color_code)) == 0) {
@@ -133,7 +133,7 @@ void tui_add_conversation_line(TUIState *tui, const char *prefix, const char *te
                 text_color_start = ANSI_FALLBACK_FOREGROUND;  // Default terminal color
             }
             break;
-            
+
         case COLOR_PAIR_TOOL:
             // Tool indicator in accent color, text in foreground
             if (get_colorscheme_color(COLORSCHEME_TOOL, prefix_color_code, sizeof(prefix_color_code)) == 0) {
@@ -147,7 +147,7 @@ void tui_add_conversation_line(TUIState *tui, const char *prefix, const char *te
                 text_color_start = ANSI_FALLBACK_FOREGROUND;  // Default terminal color
             }
             break;
-            
+
         case COLOR_PAIR_ERROR:
             // Error indicator in accent color, text in foreground
             if (get_colorscheme_color(COLORSCHEME_ERROR, prefix_color_code, sizeof(prefix_color_code)) == 0) {
@@ -161,7 +161,7 @@ void tui_add_conversation_line(TUIState *tui, const char *prefix, const char *te
                 text_color_start = ANSI_FALLBACK_FOREGROUND;  // Default terminal color
             }
             break;
-            
+
         case COLOR_PAIR_STATUS:
             // Status indicator in accent color, text in foreground
             if (get_colorscheme_color(COLORSCHEME_STATUS, prefix_color_code, sizeof(prefix_color_code)) == 0) {
@@ -175,7 +175,7 @@ void tui_add_conversation_line(TUIState *tui, const char *prefix, const char *te
                 text_color_start = ANSI_FALLBACK_FOREGROUND;  // Default terminal color
             }
             break;
-            
+
         case COLOR_PAIR_PROMPT:
             // Input prompt in accent color, text in foreground
             if (get_colorscheme_color(COLORSCHEME_USER, prefix_color_code, sizeof(prefix_color_code)) == 0) {
@@ -189,7 +189,7 @@ void tui_add_conversation_line(TUIState *tui, const char *prefix, const char *te
                 text_color_start = ANSI_FALLBACK_FOREGROUND;  // Default terminal color
             }
             break;
-            
+
         default:
             // No coloring
             prefix_color_start = "";
@@ -276,13 +276,13 @@ void tui_clear_conversation(TUIState *tui) {
     char text_color_code[32];
     const char *status_color_start;
     const char *text_color_start;
-    
+
     if (get_colorscheme_color(COLORSCHEME_STATUS, status_color_code, sizeof(status_color_code)) == 0) {
         status_color_start = status_color_code;
     } else {
         status_color_start = ANSI_FALLBACK_STATUS;  // Cyan fallback from centralized system
     }
-    
+
     // Get foreground color for message text
     if (get_colorscheme_color(COLORSCHEME_FOREGROUND, text_color_code, sizeof(text_color_code)) == 0) {
         text_color_start = text_color_code;
@@ -290,7 +290,7 @@ void tui_clear_conversation(TUIState *tui) {
         text_color_start = ANSI_FALLBACK_FOREGROUND;  // Default terminal color
     }
 
-    printf("%s[System]%s %sConversation history cleared (kept in terminal scrollback)%s\n", 
+    printf("%s[System]%s %sConversation history cleared (kept in terminal scrollback)%s\n",
            status_color_start, ANSI_RESET, text_color_start, ANSI_RESET);
     fflush(stdout);
 }
@@ -314,13 +314,13 @@ void tui_show_startup_banner(TUIState *tui, const char *version, const char *mod
     char text_color_code[32];
     const char *mascot_color_start;
     const char *text_color_start;
-    
+
     if (get_colorscheme_color(COLORSCHEME_ASSISTANT, mascot_color_code, sizeof(mascot_color_code)) == 0) {
         mascot_color_start = mascot_color_code;
     } else {
         mascot_color_start = ANSI_FALLBACK_BOLD_CYAN;  // Bold cyan - more visible on dark backgrounds
     }
-    
+
     // Get foreground color for text information
     if (get_colorscheme_color(COLORSCHEME_FOREGROUND, text_color_code, sizeof(text_color_code)) == 0) {
         text_color_start = text_color_code;
@@ -332,7 +332,7 @@ void tui_show_startup_banner(TUIState *tui, const char *version, const char *mod
     printf("%s", mascot_color_start);  // Use accent color for mascot
     printf(" ▐▛███▜▌");
     printf("%s   claude-c v%s\n", text_color_start, version);
-    
+
     printf("%s▝▜█████▛▘%s  %s\n", mascot_color_start, text_color_start, model);
     printf("%s  ▘▘ ▝▝%s    %s\n", mascot_color_start, text_color_start, working_dir);
     printf(ANSI_RESET "\n");  // Reset color and add blank line
