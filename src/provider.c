@@ -21,7 +21,9 @@
  */
 static int is_bedrock_enabled(void) {
     const char *use_bedrock = getenv("CLAUDE_CODE_USE_BEDROCK");
-    return (use_bedrock && strcmp(use_bedrock, "1") == 0);
+    return (use_bedrock && (strcmp(use_bedrock, "1") == 0 || 
+                           strcmp(use_bedrock, "true") == 0 || 
+                           strcmp(use_bedrock, "TRUE") == 0));
 }
 
 /**
