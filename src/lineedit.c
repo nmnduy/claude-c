@@ -569,7 +569,7 @@ static int buffer_insert_char(LineEditor *ed, const unsigned char *utf8_char, in
 
     // Make space for the new character(s)
     memmove(&ed->buffer[ed->cursor + char_bytes], &ed->buffer[ed->cursor],
-            ed->length - ed->cursor + 1);
+            (size_t)(ed->length - ed->cursor + 1));
 
     // Copy the character bytes
     for (int i = 0; i < char_bytes; i++) {
@@ -594,7 +594,7 @@ static int buffer_delete_char(LineEditor *ed) {
     // Delete the character by moving subsequent text left
     memmove(&ed->buffer[ed->cursor],
            &ed->buffer[ed->cursor + char_len],
-           ed->length - ed->cursor - char_len + 1);
+           (size_t)(ed->length - ed->cursor - char_len + 1));
 
     ed->length -= char_len;
     return char_len;
@@ -610,7 +610,7 @@ static int buffer_backspace(LineEditor *ed) {
     // For simplicity, delete one byte at a time
     // (proper UTF-8 would require scanning backwards)
     memmove(&ed->buffer[ed->cursor - 1], &ed->buffer[ed->cursor],
-            ed->length - ed->cursor + 1);
+            (size_t)(ed->length - ed->cursor + 1));
     ed->length--;
     ed->cursor--;
     return 1;
@@ -643,7 +643,7 @@ static int buffer_delete_word_backward(LineEditor *ed) {
     int delete_count = ed->cursor - word_start;
     if (delete_count > 0) {
         memmove(&ed->buffer[word_start], &ed->buffer[ed->cursor],
-                ed->length - ed->cursor + 1);
+                (size_t)(ed->length - ed->cursor + 1));
         ed->length -= delete_count;
         ed->cursor = word_start;
     }
@@ -659,7 +659,7 @@ static int buffer_delete_range(LineEditor *ed, int start, int end) {
     }
 
     int bytes_deleted = end - start;
-    memmove(&ed->buffer[start], &ed->buffer[end], ed->length - end + 1);
+    memmove(&ed->buffer[start], &ed->buffer[end], (size_t)(ed->length - end + 1));
     ed->length -= bytes_deleted;
 
     // Adjust cursor if needed
@@ -746,8 +746,8 @@ static int handle_paste_complete(LineEditor *ed, PasteState *paste_state,
         }
         // Copy sanitized content
         memcpy(&ed->buffer[ed->cursor], sanitized, sanitized_len);
-        ed->cursor += sanitized_len;
-        ed->length += sanitized_len;
+        ed->cursor += (int)sanitized_len;
+        ed->length += (int)sanitized_len;
         ed->buffer[ed->length] = '\0';
         // Cleanup
         free(sanitized);
@@ -1126,7 +1126,7 @@ char* lineedit_readline(LineEditor *ed, const char *prompt) {
         } else if (c == 21) {
             // Ctrl+U: kill to beginning of line
             if (ed->cursor > 0) {
-                memmove(ed->buffer, &ed->buffer[ed->cursor], ed->length - ed->cursor + 1);
+                memmove(ed->buffer, &ed->buffer[ed->cursor], (size_t)(ed->length - ed->cursor + 1));
                 ed->length -= ed->cursor;
                 ed->cursor = 0;
                 redraw_input_line(prompt, ed->buffer, ed->cursor);
@@ -1245,9 +1245,9 @@ char* lineedit_readline(LineEditor *ed, const char *prompt) {
                         ed->buffer_capacity = needed;
                     }
                     // Move tail
-                    memmove(ed->buffer + start + optlen, ed->buffer + ed->cursor, tail_len + 1);
+                    memmove(ed->buffer + start + optlen, ed->buffer + ed->cursor, (size_t)(tail_len + 1));
                     // Copy completion
-                    memcpy(ed->buffer + start, opt, optlen);
+                    memcpy(ed->buffer + start, opt, (size_t)optlen);
                     ed->cursor = start + optlen;
                     ed->length = start + optlen + tail_len;
                     completion_free(res);
