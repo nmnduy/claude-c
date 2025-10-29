@@ -52,6 +52,7 @@ TEST_TIMING_TARGET = $(BUILD_DIR)/test_tool_timing
 TEST_PASTE_TARGET = $(BUILD_DIR)/test_paste
 TEST_RETRY_JITTER_TARGET = $(BUILD_DIR)/test_retry_jitter
 TEST_OPENAI_FORMAT_TARGET = $(BUILD_DIR)/test_openai_format
+TEST_WRITE_DIFF_INTEGRATION_TARGET = $(BUILD_DIR)/test_write_diff_integration
 QUERY_TOOL = $(BUILD_DIR)/query_logs
 SRC = src/claude.c
 LOGGER_SRC = src/logger.c
@@ -91,9 +92,10 @@ TEST_TODO_WRITE_SRC = tests/test_todo_write.c
 TEST_PASTE_SRC = tests/test_paste.c
 TEST_RETRY_JITTER_SRC = tests/test_retry_jitter.c
 TEST_OPENAI_FORMAT_SRC = tests/test_openai_format.c
+TEST_WRITE_DIFF_INTEGRATION_SRC = tests/test_write_diff_integration.c
 QUERY_TOOL_SRC = tools/query_logs.c
 
-.PHONY: all clean check-deps install test test-edit test-input test-read test-lineedit test-todo test-todo-write test-paste test-retry-jitter test-openai-format query-tool debug analyze sanitize-ub sanitize-all sanitize-leak valgrind memscan version show-version update-version bump-patch build
+.PHONY: all clean check-deps install test test-edit test-input test-read test-lineedit test-todo test-todo-write test-paste test-retry-jitter test-openai-format test-write-diff-integration query-tool debug analyze sanitize-ub sanitize-all sanitize-leak valgrind memscan version show-version update-version bump-patch build
 
 all: check-deps $(TARGET)
 
@@ -103,7 +105,7 @@ debug: check-deps $(BUILD_DIR)/claude-c-debug
 
 query-tool: check-deps $(QUERY_TOOL)
 
-test: test-edit test-input test-read test-lineedit test-todo test-paste test-timing test-openai-format
+test: test-edit test-input test-read test-lineedit test-todo test-paste test-timing test-openai-format test-write-diff-integration
 
 test-edit: check-deps $(TEST_EDIT_TARGET)
 	@echo ""
@@ -164,6 +166,12 @@ test-openai-format: check-deps $(TEST_OPENAI_FORMAT_TARGET)
 	@echo "Running OpenAI message format validation tests..."
 	@echo ""
 	@./$(TEST_OPENAI_FORMAT_TARGET)
+
+test-write-diff-integration: check-deps $(TEST_WRITE_DIFF_INTEGRATION_TARGET)
+	@echo ""
+	@echo "Running Write tool diff integration tests..."
+	@echo ""
+	@./$(TEST_WRITE_DIFF_INTEGRATION_TARGET)
 
 $(TARGET): $(SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(LINEEDIT_OBJ) $(COMMANDS_OBJ) $(COMPLETION_OBJ) $(TUI_OBJ) $(TODO_OBJ) $(AWS_BEDROCK_OBJ) $(PROVIDER_OBJ) $(OPENAI_PROVIDER_OBJ) $(OPENAI_MESSAGES_OBJ) $(BEDROCK_PROVIDER_OBJ) $(BUILTIN_THEMES_OBJ) $(VERSION_H)
 	@mkdir -p $(BUILD_DIR)
@@ -525,6 +533,19 @@ $(TEST_OPENAI_FORMAT_TARGET): $(TEST_OPENAI_FORMAT_SRC)
 	@$(CC) $(CFLAGS) -o $(TEST_OPENAI_FORMAT_TARGET) $(TEST_OPENAI_FORMAT_SRC) $(LDFLAGS)
 	@echo ""
 	@echo "✓ OpenAI format test build successful!"
+	@echo ""
+
+# Test target for Write tool diff integration
+$(TEST_WRITE_DIFF_INTEGRATION_TARGET): $(SRC) $(TEST_WRITE_DIFF_INTEGRATION_SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(TODO_OBJ) $(LINEEDIT_OBJ)
+	@mkdir -p $(BUILD_DIR)
+	@echo "Compiling claude.c for write diff testing..."
+	@$(CC) $(CFLAGS) -DTEST_BUILD -c -o $(BUILD_DIR)/claude_write_diff_test.o $(SRC)
+	@echo "Compiling Write tool diff integration test suite..."
+	@$(CC) $(CFLAGS) -c -o $(BUILD_DIR)/test_write_diff_integration.o $(TEST_WRITE_DIFF_INTEGRATION_SRC)
+	@echo "Linking test executable..."
+	@$(CC) -o $(TEST_WRITE_DIFF_INTEGRATION_TARGET) $(BUILD_DIR)/claude_write_diff_test.o $(BUILD_DIR)/test_write_diff_integration.o $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(TODO_OBJ) $(LINEEDIT_OBJ) $(LDFLAGS)
+	@echo ""
+	@echo "✓ Write tool diff integration test build successful!"
 	@echo ""
 
 install: $(TARGET)
