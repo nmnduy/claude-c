@@ -2034,10 +2034,10 @@ static cJSON* call_api(ConversationState *state) {
                 continue; // Retry the request
             }
 
-            // Check if this is an authentication error (403/400)
+            // Check if this is an authentication error (401/403/400)
             // Let the provider handle it (e.g., credential refresh for AWS)
             if (retry_count < MAX_RETRIES && state->provider &&
-                (http_status == 403 || http_status == 400)) {
+                (http_status == 401 || http_status == 403 || http_status == 400)) {
 
                 // Try to handle auth error using provider
                 if (state->provider->handle_auth_error(state->provider, http_status, error_msg)) {
@@ -3278,11 +3278,17 @@ int main(int argc, char *argv[]) {
         printf("  %s --version     Show version information\n\n", argv[0]);
         printf("Environment Variables:\n");
         printf("  API Configuration:\n");
-        printf("    OPENAI_API_KEY       Required: Your OpenAI API key\n");
+        printf("    OPENAI_API_KEY       Required: Your OpenAI API key (not needed for Bedrock)\n");
         printf("    OPENAI_API_BASE      Optional: API base URL (default: %s)\n", API_BASE_URL);
         printf("    OPENAI_MODEL         Optional: Model name (default: %s)\n", DEFAULT_MODEL);
         printf("    ANTHROPIC_MODEL      Alternative: Model name (fallback if OPENAI_MODEL not set)\n");
         printf("    DISABLE_PROMPT_CACHING  Optional: Set to 1 to disable prompt caching\n\n");
+        printf("  AWS Bedrock Configuration:\n");
+        printf("    CLAUDE_CODE_USE_BEDROCK  Set to 1 to use AWS Bedrock instead of OpenAI\n");
+        printf("    ANTHROPIC_MODEL         Required for Bedrock: Claude model ID\n");
+        printf("                            Examples: anthropic.claude-3-sonnet-20240229-v1:0\n");
+        printf("                                      us.anthropic.claude-sonnet-4-5-20250929-v1:0\n");
+        printf("    AWS credentials        Required: Configure via AWS CLI or environment\n\n");
         printf("  Logging and Persistence:\n");
         printf("    CLAUDE_C_LOG_PATH    Optional: Full path to log file\n");
         printf("    CLAUDE_C_LOG_DIR     Optional: Directory for logs (uses claude.log filename)\n");

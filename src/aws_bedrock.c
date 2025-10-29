@@ -585,8 +585,8 @@ int bedrock_handle_auth_error(BedrockConfig *config, long http_status, const cha
         return 0;
     }
 
-    // Check if this is a 400 or 403 error that might indicate expired AWS credentials
-    if (http_status != 400 && http_status != 403) {
+    // Check if this is a 400, 401, or 403 error that might indicate expired AWS credentials
+    if (http_status != 400 && http_status != 401 && http_status != 403) {
         return 0;
     }
 
@@ -597,7 +597,11 @@ int bedrock_handle_auth_error(BedrockConfig *config, long http_status, const cha
         strstr(error_message, "InvalidClientTokenId") ||
         strstr(error_message, "AccessDenied") ||
         strstr(error_message, "TokenExpired") ||
-        strstr(error_message, "SignatureDoesNotMatch")) {
+        strstr(error_message, "SignatureDoesNotMatch") ||
+        strstr(error_message, "No auth credentials found") ||
+        strstr(error_message, "credentials") ||
+        strstr(error_message, "unauthorized") ||
+        strstr(error_message, "authentication")) {
         is_auth_error = 1;
     }
 
