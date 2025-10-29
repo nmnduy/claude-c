@@ -37,6 +37,16 @@
 // Headers/accents - Bold Cyan (for emphasis)
 #define ANSI_FALLBACK_HEADER "\033[1;36m"
 
+// Diff-specific colors
+// Added lines (green)
+#define ANSI_FALLBACK_DIFF_ADD "\033[32m"
+// Removed lines (red)
+#define ANSI_FALLBACK_DIFF_REMOVE "\033[31m"
+// Diff metadata/headers (cyan)
+#define ANSI_FALLBACK_DIFF_HEADER "\033[36m"
+// Line numbers and context markers (dim)
+#define ANSI_FALLBACK_DIFF_CONTEXT "\033[2m"
+
 // Additional colors for specific use cases
 #define ANSI_FALLBACK_GREEN "\033[32m"
 #define ANSI_FALLBACK_YELLOW "\033[33m"
@@ -77,6 +87,14 @@ static inline const char* get_fallback_color(int element_type) {
             return ANSI_FALLBACK_STATUS;
         case 6: // HEADER
             return ANSI_FALLBACK_HEADER;
+        case 7: // DIFF_ADD
+            return ANSI_FALLBACK_DIFF_ADD;
+        case 8: // DIFF_REMOVE
+            return ANSI_FALLBACK_DIFF_REMOVE;
+        case 9: // DIFF_HEADER
+            return ANSI_FALLBACK_DIFF_HEADER;
+        case 10: // DIFF_CONTEXT
+            return ANSI_FALLBACK_DIFF_CONTEXT;
         default:
             return "";
     }
@@ -90,5 +108,9 @@ static inline const char* get_fallback_color(int element_type) {
 #define FALLBACK_ERROR 4
 #define FALLBACK_STATUS 5
 #define FALLBACK_HEADER 6
+#define FALLBACK_DIFF_ADD 7
+#define FALLBACK_DIFF_REMOVE 8
+#define FALLBACK_DIFF_HEADER 9
+#define FALLBACK_DIFF_CONTEXT 10
 
 #endif // FALLBACK_COLORS_H

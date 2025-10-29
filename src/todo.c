@@ -4,6 +4,9 @@
 
 #include "todo.h"
 #include "fallback_colors.h"
+#define COLORSCHEME_EXTERN
+#include "colorscheme.h"
+#include "logger.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -141,13 +144,36 @@ void todo_render(const TodoList *list) {
         return;  // No todos to display
     }
 
-    // ANSI colors
-    const char *green = ANSI_FALLBACK_GREEN;
-    const char *yellow = ANSI_FALLBACK_YELLOW;
-    const char *cyan = ANSI_FALLBACK_CYAN;
+    // ANSI colors - try to get from colorscheme, fall back to ANSI defaults
+    char green_buf[32], yellow_buf[32], cyan_buf[32];
+    const char *green, *yellow, *cyan;
     const char *dim = ANSI_FALLBACK_DIM;
     const char *reset = ANSI_RESET;
     const char *bold = ANSI_FALLBACK_BOLD;
+    
+    // Green (for completed tasks) - maps to USER color
+    if (get_colorscheme_color(COLORSCHEME_USER, green_buf, sizeof(green_buf)) == 0) {
+        green = green_buf;
+    } else {
+        LOG_WARN("Using fallback ANSI color for USER (todo green)");
+        green = ANSI_FALLBACK_GREEN;
+    }
+    
+    // Yellow (for in-progress tasks) - maps to TOOL/STATUS color
+    if (get_colorscheme_color(COLORSCHEME_TOOL, yellow_buf, sizeof(yellow_buf)) == 0) {
+        yellow = yellow_buf;
+    } else {
+        LOG_WARN("Using fallback ANSI color for TOOL (todo yellow)");
+        yellow = ANSI_FALLBACK_YELLOW;
+    }
+    
+    // Cyan (for header) - maps to STATUS color
+    if (get_colorscheme_color(COLORSCHEME_STATUS, cyan_buf, sizeof(cyan_buf)) == 0) {
+        cyan = cyan_buf;
+    } else {
+        LOG_WARN("Using fallback ANSI color for STATUS (todo cyan)");
+        cyan = ANSI_FALLBACK_CYAN;
+    }
 
     // Print header
     printf("\n%s%s━━━ Tasks ━━━%s\n", bold, cyan, reset);
