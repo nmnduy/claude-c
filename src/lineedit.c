@@ -869,15 +869,39 @@ char* lineedit_readline(LineEditor *ed, const char *prompt) {
     int running = 1;
     while (running) {
         unsigned char c;
-        if (read_key(ed, &c) != 1) {
-            // Error or EOF - cleanup handled by restore_terminal()
-            restore_terminal();
-            free(saved_input);
-            paste_state_free(paste_state);
-            return NULL;
+        
+        // If in paste mode (timing-based), check if paste is complete
+        if (paste_state->in_paste && paste_state->buffer_size > 0) {
+            // Check if more data is available with a short timeout
+            int ret = read_key_with_timeout(&c, PASTE_TIME_BURST_MS);
+            if (ret <= 0) {
+                // No more data - paste is complete
+                paste_state->in_paste = 0;
+                if (paste_state->buffer_size > 0) {
+                    handle_paste_complete(ed, paste_state, prompt);
+                    paste_state_reset(paste_state);
+                }
+                continue;
+            }
+            // More data available - continue with normal processing below
+        } else {
+            // Normal read (blocking)
+            if (read_key(ed, &c) != 1) {
+                // Error or EOF - cleanup handled by restore_terminal()
+                restore_terminal();
+                free(saved_input);
+                paste_state_free(paste_state);
+                return NULL;
+            }
         }
 
         if (c == 27) {  // ESC sequence
+            // If in timing-based paste mode, buffer the ESC and continue
+            if (paste_state->in_paste) {
+                paste_buffer_add_char(paste_state, (char)c);
+                continue;
+            }
+
             unsigned char seq[2];
 
             // Read next byte with timeout to distinguish standalone ESC from escape sequences
@@ -1085,11 +1109,21 @@ char* lineedit_readline(LineEditor *ed, const char *prompt) {
             }
         } else if (c == '\r') {
             // Enter key (ASCII 13): Submit input
-            printf("\n");
-            running = 0;
+            if (paste_state->in_paste) {
+                // In paste mode, buffer the carriage return (will be sanitized later)
+                paste_buffer_add_char(paste_state, (char)c);
+            } else {
+                // Normal mode: submit input
+                printf("\n");
+                running = 0;
+            }
         } else if (c == '\t') {
-            // Tab completion
-            if (ed->completer) {
+            // Tab handling
+            if (paste_state->in_paste) {
+                // In paste mode, buffer the tab
+                paste_buffer_add_char(paste_state, (char)c);
+            } else if (ed->completer) {
+                // Normal mode: tab completion
                 CompletionResult *res = ed->completer(ed->buffer, ed->cursor, ed->completer_ctx);
                 if (!res || res->count == 0) {
                     // No completions, beep
@@ -1134,6 +1168,16 @@ char* lineedit_readline(LineEditor *ed, const char *prompt) {
             }
         } else if (c >= 32) {
             // Printable character (ASCII or UTF-8)
+
+            // Always check for rapid input timing (tmux paste, Ctrl+Shift+V, etc.)
+            // This updates the timing state even if not yet in paste mode
+            int paste_detected = detect_paste_by_timing(paste_state);
+            
+            if (!paste_state->in_paste && paste_detected) {
+                // Fast input detected - enter paste mode
+                paste_state->in_paste = 1;
+                paste_state->buffer_size = 0;
+            }
 
             // If in paste mode, buffer character instead of inserting
             if (paste_state->in_paste) {
