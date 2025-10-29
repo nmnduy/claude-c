@@ -2653,7 +2653,13 @@ static void process_response(ConversationState *state, ApiResponse *response, TU
             }
 
             // Use parameters directly (already parsed by provider)
-            cJSON *input = tool->parameters ? tool->parameters : cJSON_CreateObject();
+            // Duplicate parameters for thread to own and delete
+            cJSON *input;
+            if (tool->parameters) {
+                input = cJSON_Duplicate(tool->parameters, /*recurse*/1);
+            } else {
+                input = cJSON_CreateObject();
+            }
 
             char *tool_details = get_tool_details(tool->name, input);
 
