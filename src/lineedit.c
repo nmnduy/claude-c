@@ -689,51 +689,38 @@ static int handle_paste_complete(LineEditor *ed, PasteState *paste_state,
     };
     size_t sanitized_len = paste_sanitize(sanitized, paste_len, &opts);
 
-    // Skipping large paste confirmation as terminal handles this
-    if (0) {
-        // Clear screen first to avoid display corruption
-        // (the line editor's display will be disrupted by our prompts)
-        printf("\r\033[J");  // Clear from cursor down
-        fflush(stdout);
-
-        printf("\n\033[33m⚠️  Large paste detected (%zu bytes)\033[0m\n", sanitized_len);
-
-        // Show preview
-        char *preview = paste_get_preview(sanitized, sanitized_len, 200);
-        if (preview) {
-            printf("Preview:\n\033[90m%s\033[0m\n", preview);
-            free(preview);
+    // Count lines in pasted content
+    size_t line_count = 0;
+    for (size_t i = 0; i < sanitized_len; i++) {
+        if (sanitized[i] == '\n') {
+            line_count++;
         }
-
-        printf("\nPress \033[32m[y]\033[0m to accept paste: ");
-        fflush(stdout);
-
-        // Read choice using read() instead of getchar() to work with raw mode
-        unsigned char choice_buf;
-        ssize_t ret = read(STDIN_FILENO, &choice_buf, 1);
-        if (ret <= 0) {
-            free(sanitized);
-            return 0;
-        }
-        char choice = (char)choice_buf;
-
-        if (choice != 'y' && choice != 'Y') {
-            printf("\n\033[33mPaste cancelled.\033[0m\n");
-            free(sanitized);
-            // Give user time to see the message
-            usleep(500000);  // 500ms
-            // Use force_reset=1 because display was disrupted by prompts
-            redraw_input_line_internal(prompt, ed->buffer, ed->cursor, 1);
-            return 0;
-        }
-
-        printf("\n\033[32mPaste accepted.\033[0m\n");
-        // Give user time to see the message
-        usleep(300000);  // 300ms
+    }
+    // If content doesn't end with newline, there's one more line
+    if (sanitized_len > 0 && sanitized[sanitized_len - 1] != '\n') {
+        line_count++;
     }
 
-    // Check if paste will fit in buffer (with room for existing content)
-    size_t needed = (size_t)ed->length + sanitized_len + 1;
+    // Create placeholder text
+    char placeholder[128];
+    int placeholder_len;
+    if (line_count > 1) {
+        placeholder_len = snprintf(placeholder, sizeof(placeholder),
+                                   "[pasted %zu lines, %zu chars]",
+                                   line_count, sanitized_len);
+    } else {
+        placeholder_len = snprintf(placeholder, sizeof(placeholder),
+                                   "[pasted %zu chars]", sanitized_len);
+    }
+
+    // Store the actual paste content for later submission
+    free(ed->paste_content);  // Free any previous paste content
+    ed->paste_content = sanitized;  // Transfer ownership
+    ed->paste_content_len = sanitized_len;
+    ed->paste_placeholder_start = ed->cursor;
+
+    // Check if placeholder will fit in buffer
+    size_t needed = (size_t)ed->length + (size_t)placeholder_len + 1;
     if (needed > ed->buffer_capacity) {
         // Expand buffer
         size_t new_capacity = ed->buffer_capacity;
@@ -742,34 +729,30 @@ static int handle_paste_complete(LineEditor *ed, PasteState *paste_state,
         }
         char *new_buffer = realloc(ed->buffer, new_capacity);
         if (!new_buffer) {
-            fprintf(stderr, "\nError: Failed to expand buffer for paste\n");
-            free(sanitized);
+            fprintf(stderr, "\nError: Failed to expand buffer for placeholder\n");
             return 0;
         }
         ed->buffer = new_buffer;
         ed->buffer_capacity = new_capacity;
     }
 
-    // Insert pasted content at cursor position
+    // Insert placeholder at cursor position
     if (ed->cursor < ed->length) {
         // Make room by shifting existing content
-        memmove(&ed->buffer[(size_t)ed->cursor + sanitized_len],
+        memmove(&ed->buffer[(size_t)ed->cursor + (size_t)placeholder_len],
                 &ed->buffer[ed->cursor],
                 (size_t)(ed->length - ed->cursor + 1));
     }
 
-    // Copy sanitized paste into buffer
-    memcpy(&ed->buffer[ed->cursor], sanitized, sanitized_len);
-    ed->cursor += (int)sanitized_len;
-    ed->length += (int)sanitized_len;
+    // Copy placeholder into buffer
+    memcpy(&ed->buffer[ed->cursor], placeholder, (size_t)placeholder_len);
+    ed->cursor += placeholder_len;
+    ed->length += placeholder_len;
     ed->buffer[ed->length] = '\0';
+    ed->paste_placeholder_len = placeholder_len;
 
-    free(sanitized);
-
-    // Redraw line with pasted content
-    // Use force_reset=1 if we showed the large paste warning (display was disrupted)
-    int was_large = (sanitized_len > PASTE_WARN_THRESHOLD);
-    redraw_input_line_internal(prompt, ed->buffer, ed->cursor, was_large ? 1 : 0);
+    // Redraw line with placeholder
+    redraw_input_line_internal(prompt, ed->buffer, ed->cursor, 0);
 
     return 1;
 }
@@ -795,6 +778,11 @@ void lineedit_init(LineEditor *ed, CompletionFn completer, void *ctx) {
     ed->queue_head = 0;
     ed->queue_tail = 0;
     ed->queue_count = 0;
+    // Initialize paste tracking
+    ed->paste_content = NULL;
+    ed->paste_content_len = 0;
+    ed->paste_placeholder_start = 0;
+    ed->paste_placeholder_len = 0;
 }
 
 void lineedit_free(LineEditor *ed) {
@@ -804,6 +792,10 @@ void lineedit_free(LineEditor *ed) {
     ed->cursor = 0;
     ed->length = 0;
     history_free(&ed->history);
+    // Free paste tracking
+    free(ed->paste_content);
+    ed->paste_content = NULL;
+    ed->paste_content_len = 0;
 }
 
 void completion_free(CompletionResult *result) {
@@ -1114,6 +1106,57 @@ char* lineedit_readline(LineEditor *ed, const char *prompt) {
                 paste_buffer_add_char(paste_state, (char)c);
             } else {
                 // Normal mode: submit input
+                // If there's a paste placeholder, replace it with the actual content
+                if (ed->paste_content && ed->paste_content_len > 0) {
+                    // Calculate new buffer size needed
+                    size_t new_len = (size_t)ed->length - (size_t)ed->paste_placeholder_len + ed->paste_content_len;
+                    
+                    // Ensure buffer is large enough
+                    if (new_len + 1 > ed->buffer_capacity) {
+                        size_t new_capacity = ed->buffer_capacity;
+                        while (new_capacity < new_len + 1) {
+                            new_capacity *= 2;
+                        }
+                        char *new_buffer = realloc(ed->buffer, new_capacity);
+                        if (!new_buffer) {
+                            fprintf(stderr, "\nError: Failed to expand buffer for paste submission\n");
+                            printf("\n");
+                            running = 0;
+                            continue;
+                        }
+                        ed->buffer = new_buffer;
+                        ed->buffer_capacity = new_capacity;
+                    }
+                    
+                    // Calculate positions
+                    size_t placeholder_start = (size_t)ed->paste_placeholder_start;
+                    int placeholder_end = ed->paste_placeholder_start + ed->paste_placeholder_len;
+                    int tail_len = ed->length - placeholder_end;
+                    
+                    // Move tail if necessary
+                    if (tail_len > 0) {
+                        memmove(&ed->buffer[placeholder_start + ed->paste_content_len],
+                                &ed->buffer[placeholder_end],
+                                (size_t)tail_len);
+                    }
+                    
+                    // Replace placeholder with actual content
+                    memcpy(&ed->buffer[placeholder_start],
+                           ed->paste_content,
+                           ed->paste_content_len);
+                    
+                    // Update length
+                    ed->length = (int)new_len;
+                    ed->buffer[ed->length] = '\0';
+                    
+                    // Clear paste tracking
+                    free(ed->paste_content);
+                    ed->paste_content = NULL;
+                    ed->paste_content_len = 0;
+                    ed->paste_placeholder_start = 0;
+                    ed->paste_placeholder_len = 0;
+                }
+                
                 printf("\n");
                 running = 0;
             }

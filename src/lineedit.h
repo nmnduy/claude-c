@@ -63,6 +63,11 @@ typedef struct LineEditor {
     int queue_head;          // Read position
     int queue_tail;          // Write position
     int queue_count;         // Number of bytes in queue
+    // Paste content tracking
+    char *paste_content;     // Actual pasted content (kept separate from visible buffer)
+    size_t paste_content_len; // Length of pasted content
+    int paste_placeholder_start; // Start position of placeholder in buffer
+    int paste_placeholder_len;   // Length of placeholder in buffer
 } LineEditor;
 
 // ============================================================================
