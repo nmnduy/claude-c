@@ -1798,19 +1798,32 @@ static cJSON* call_api_with_retries(ConversationState *state) {
         return NULL;
     }
 
-    int retry_count = 0;
+    int attempt_num = 1;
     int backoff_ms = INITIAL_BACKOFF_MS;
-    int total_wait_ms = 0;
 
-    struct timespec call_start, call_end;
+    struct timespec call_start, call_end, retry_start;
     clock_gettime(CLOCK_MONOTONIC, &call_start);
+    retry_start = call_start;
 
     LOG_DEBUG("Starting API call (provider: %s, model: %s)",
               state->provider->name, state->model);
 
-    while (retry_count <= MAX_RETRIES) {
+    while (1) {
+        // Check if we've exceeded max retry duration
+        struct timespec now;
+        clock_gettime(CLOCK_MONOTONIC, &now);
+        long elapsed_ms = (now.tv_sec - retry_start.tv_sec) * 1000 +
+                         (now.tv_nsec - retry_start.tv_nsec) / 1000000;
+        
+        if (attempt_num > 1 && elapsed_ms >= MAX_RETRY_DURATION_MS) {
+            LOG_ERROR("Maximum retry duration (%d ms) exceeded after %d attempts",
+                     MAX_RETRY_DURATION_MS, attempt_num - 1);
+            print_error("Maximum retry duration exceeded");
+            return NULL;
+        }
+
         // Call provider's single-attempt API call
-        LOG_DEBUG("API call attempt %d/%d", retry_count + 1, MAX_RETRIES + 1);
+        LOG_DEBUG("API call attempt %d (elapsed: %ld ms)", attempt_num, elapsed_ms);
         ApiCallResult result = state->provider->call_api(state->provider, state);
 
         // Success case
@@ -1819,8 +1832,8 @@ static cJSON* call_api_with_retries(ConversationState *state) {
             long total_ms = (call_end.tv_sec - call_start.tv_sec) * 1000 +
                            (call_end.tv_nsec - call_start.tv_nsec) / 1000000;
 
-            LOG_INFO("API call succeeded (duration: %ld ms, provider duration: %ld ms, retries: %d, auth_refreshed: %s)",
-                     total_ms, result.duration_ms, retry_count,
+            LOG_INFO("API call succeeded (duration: %ld ms, provider duration: %ld ms, attempts: %d, auth_refreshed: %s)",
+                     total_ms, result.duration_ms, attempt_num,
                      result.auth_refreshed ? "yes" : "no");
 
             // Log success to persistence
@@ -1863,8 +1876,8 @@ static cJSON* call_api_with_retries(ConversationState *state) {
         }
 
         // Error case - check if retryable
-        LOG_WARN("API call failed (attempt %d/%d): %s (HTTP %ld, retryable: %s)",
-                 retry_count + 1, MAX_RETRIES + 1,
+        LOG_WARN("API call failed (attempt %d): %s (HTTP %ld, retryable: %s)",
+                 attempt_num,
                  result.error_message ? result.error_message : "(unknown)",
                  result.http_status,
                  result.is_retryable ? "yes" : "no");
@@ -1887,8 +1900,8 @@ static cJSON* call_api_with_retries(ConversationState *state) {
         }
 
         // Check if we should retry
-        if (!result.is_retryable || retry_count >= MAX_RETRIES) {
-            // Non-retryable error or max retries exhausted
+        if (!result.is_retryable) {
+            // Non-retryable error
             char error_msg[512];
             snprintf(error_msg, sizeof(error_msg),
                     "API call failed: %s (HTTP %ld)",
@@ -1905,12 +1918,17 @@ static cJSON* call_api_with_retries(ConversationState *state) {
         int jitter = rand() % (backoff_ms / 4);
         int delay_ms = backoff_ms - jitter;
 
-        // Check if this retry would exceed total wait time limit
-        if (total_wait_ms + delay_ms > MAX_TOTAL_WAIT_MS) {
-            delay_ms = MAX_TOTAL_WAIT_MS - total_wait_ms;
+        // Check if this delay would exceed max retry duration
+        clock_gettime(CLOCK_MONOTONIC, &now);
+        elapsed_ms = (now.tv_sec - retry_start.tv_sec) * 1000 +
+                    (now.tv_nsec - retry_start.tv_nsec) / 1000000;
+        long remaining_ms = MAX_RETRY_DURATION_MS - elapsed_ms;
+        
+        if (delay_ms > remaining_ms) {
+            delay_ms = (int)remaining_ms;
             if (delay_ms <= 0) {
-                LOG_ERROR("Maximum total wait time (%d ms) exceeded", MAX_TOTAL_WAIT_MS);
-                print_error("Maximum retry wait time exceeded");
+                LOG_ERROR("Maximum retry duration (%d ms) exceeded", MAX_RETRY_DURATION_MS);
+                print_error("Maximum retry duration exceeded");
                 free(result.raw_response);
                 free(result.error_message);
                 return NULL;
@@ -1923,15 +1941,15 @@ static cJSON* call_api_with_retries(ConversationState *state) {
                                 (result.http_status == 408) ? "Request timeout" :
                                 (result.http_status >= 500) ? "Server error" : "Error";
         snprintf(retry_msg, sizeof(retry_msg),
-                "%s - retrying in %d ms... (attempt %d/%d)",
-                error_type, delay_ms, retry_count + 2, MAX_RETRIES + 1);
+                "%s - retrying in %d ms... (attempt %d)",
+                error_type, delay_ms, attempt_num + 1);
         print_error(retry_msg);
 
-        LOG_INFO("Retrying after %d ms (total wait: %d ms)", delay_ms, total_wait_ms + delay_ms);
+        LOG_INFO("Retrying after %d ms (elapsed: %ld ms, remaining: %ld ms)",
+                delay_ms, elapsed_ms, remaining_ms);
 
         // Sleep and retry
         usleep((useconds_t)(delay_ms * 1000));
-        total_wait_ms += delay_ms;
         backoff_ms = (int)(backoff_ms * BACKOFF_MULTIPLIER);
         if (backoff_ms > MAX_BACKOFF_MS) {
             backoff_ms = MAX_BACKOFF_MS;
@@ -1939,12 +1957,8 @@ static cJSON* call_api_with_retries(ConversationState *state) {
 
         free(result.raw_response);
         free(result.error_message);
-        retry_count++;
+        attempt_num++;
     }
-
-    // Should never reach here
-    LOG_ERROR("API call failed after %d retries", MAX_RETRIES);
-    return NULL;
 }
 
 /**
