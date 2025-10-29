@@ -371,6 +371,7 @@ cJSON* tool_read(cJSON *params, ConversationState *state);
 cJSON* tool_write(cJSON *params, ConversationState *state);
 cJSON* tool_edit(cJSON *params, ConversationState *state);
 cJSON* tool_todo_write(cJSON *params, ConversationState *state);
+static cJSON* tool_sleep(cJSON *params, ConversationState *state);
 #else
 #define STATIC static
 #endif
@@ -1375,6 +1376,35 @@ STATIC cJSON* tool_todo_write(cJSON *params, ConversationState *state) {
     return result;
 }
 
+
+// ============================================================================
+// Sleep Tool Implementation
+// ============================================================================
+
+/**
+ * tool_sleep - pauses execution for specified duration
+ * params: { "duration": integer (seconds) }
+ */
+STATIC cJSON* tool_sleep(cJSON *params, ConversationState *state) {
+    (void)state;
+    cJSON *duration_json = cJSON_GetObjectItem(params, "duration");
+    if (!duration_json || !cJSON_IsNumber(duration_json)) {
+        cJSON *error = cJSON_CreateObject();
+        cJSON_AddStringToObject(error, "error", "Missing or invalid 'duration' parameter (must be number of seconds)");
+        return error;
+    }
+    int duration = duration_json->valueint;
+    if (duration < 0) duration = 0;
+    struct timespec req = { .tv_sec = duration, .tv_nsec = 0 };
+    // Sleep for the duration (seconds)
+    nanosleep(&req, NULL);
+    // Return success result
+    cJSON *result = cJSON_CreateObject();
+    cJSON_AddStringToObject(result, "status", "success");
+    cJSON_AddNumberToObject(result, "duration", duration);
+    return result;
+}
+
 // ============================================================================
 // Tool Registry
 // ============================================================================
@@ -1385,6 +1415,7 @@ typedef struct {
 } Tool;
 
 static Tool tools[] = {
+    {"Sleep", tool_sleep},
     {"Bash", tool_bash},
     {"Read", tool_read},
     {"Write", tool_write},
@@ -1448,6 +1479,29 @@ void add_cache_control(cJSON *obj);
 
 cJSON* get_tool_definitions(int enable_caching) {
     cJSON *tool_array = cJSON_CreateArray();
+    // Sleep tool
+    cJSON *sleep_tool = cJSON_CreateObject();
+    cJSON_AddStringToObject(sleep_tool, "type", "function");
+    cJSON *sleep_func = cJSON_CreateObject();
+    cJSON_AddStringToObject(sleep_func, "name", "Sleep");
+    cJSON_AddStringToObject(sleep_func, "description", "Pauses execution for specified duration (seconds)");
+    cJSON *sleep_params = cJSON_CreateObject();
+    cJSON_AddStringToObject(sleep_params, "type", "object");
+    cJSON *sleep_props = cJSON_CreateObject();
+    cJSON *duration_prop = cJSON_CreateObject();
+    cJSON_AddStringToObject(duration_prop, "type", "integer");
+    cJSON_AddStringToObject(duration_prop, "description", "Duration to sleep in seconds");
+    cJSON_AddItemToObject(sleep_props, "duration", duration_prop);
+    cJSON_AddItemToObject(sleep_params, "properties", sleep_props);
+    cJSON *sleep_req = cJSON_CreateArray();
+    cJSON_AddItemToArray(sleep_req, cJSON_CreateString("duration"));
+    cJSON_AddItemToObject(sleep_params, "required", sleep_req);
+    cJSON_AddItemToObject(sleep_func, "parameters", sleep_params);
+    cJSON_AddItemToObject(sleep_tool, "function", sleep_func);
+    if (enable_caching) {
+        add_cache_control(sleep_tool);
+    }
+    cJSON_AddItemToArray(tool_array, sleep_tool);
 
     // Bash tool
     cJSON *bash = cJSON_CreateObject();
