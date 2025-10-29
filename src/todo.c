@@ -183,6 +183,9 @@ void todo_render(const TodoList *list) {
         const TodoItem *item = &list->items[i];
 
         switch (item->status) {
+            default:
+                LOG_WARN("Unknown TODO status: %d", (int)item->status);
+                break;
             case TODO_COMPLETED:
                 printf("%s✓ %s%s\n", green, item->content, reset);
                 break;
