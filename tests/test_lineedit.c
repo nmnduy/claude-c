@@ -94,7 +94,7 @@ static void assert_position(const char *test_name,
     tests_run++;
 
     int cursor_line, cursor_col, total_lines;
-    calculate_cursor_position(buffer, strlen(buffer), cursor_pos, prompt_len, term_width,
+    calculate_cursor_position(buffer, (int)strlen(buffer), cursor_pos, prompt_len, term_width,
                              &cursor_line, &cursor_col, &total_lines);
 
     int matches = (cursor_line == expected_line &&
@@ -118,7 +118,7 @@ static void assert_position(const char *test_name,
 // Test Cases
 // ============================================================================
 
-static void test_simple_no_wrapping() {
+static void test_simple_no_wrapping(void) {
     printf("\n%s[Test: Simple Input - No Wrapping]%s\n", COLOR_CYAN, COLOR_RESET);
 
     // Prompt: "> " (2 chars), buffer: "hello", term width: 80
@@ -140,7 +140,7 @@ static void test_simple_no_wrapping() {
                    0, 7, 0);  // Line 0, col 2+5=7
 }
 
-static void test_wrapping_at_edge() {
+static void test_wrapping_at_edge(void) {
     printf("\n%s[Test: Wrapping at Terminal Edge]%s\n", COLOR_CYAN, COLOR_RESET);
 
     // Prompt: "> " (2 chars), term width: 20
@@ -161,7 +161,7 @@ static void test_wrapping_at_edge() {
                    0, 20, 0);  // Line 0, col 2+18=20 (but displayed as col 20)
 }
 
-static void test_wrapping_one_overflow() {
+static void test_wrapping_one_overflow(void) {
     printf("\n%s[Test: Wrapping - One Character Overflow]%s\n", COLOR_CYAN, COLOR_RESET);
 
     // Prompt: "> " (2 chars), term width: 20
@@ -186,7 +186,7 @@ static void test_wrapping_one_overflow() {
                    1, 1, 1);  // Line 1, col 1
 }
 
-static void test_wrapping_multiple_lines() {
+static void test_wrapping_multiple_lines(void) {
     printf("\n%s[Test: Wrapping - Multiple Lines]%s\n", COLOR_CYAN, COLOR_RESET);
 
     // Prompt: "> " (2 chars), term width: 10
@@ -225,7 +225,7 @@ static void test_wrapping_multiple_lines() {
                    2, 2, 2);  // Line 2, col 2
 }
 
-static void test_manual_newlines() {
+static void test_manual_newlines(void) {
     printf("\n%s[Test: Manual Newlines]%s\n", COLOR_CYAN, COLOR_RESET);
 
     // Prompt: "> " (2 chars), term width: 80
@@ -249,7 +249,7 @@ static void test_manual_newlines() {
                    1, 5, 1);  // Line 1, col 5
 }
 
-static void test_manual_newlines_with_wrapping() {
+static void test_manual_newlines_with_wrapping(void) {
     printf("\n%s[Test: Manual Newlines + Wrapping]%s\n", COLOR_CYAN, COLOR_RESET);
 
     // Prompt: "> " (2 chars), term width: 10
@@ -291,7 +291,7 @@ static void test_manual_newlines_with_wrapping() {
                    2, 1, 2);  // Line 2, col 1
 }
 
-static void test_edge_cases() {
+static void test_edge_cases(void) {
     printf("\n%s[Test: Edge Cases]%s\n", COLOR_CYAN, COLOR_RESET);
 
     // Zero width terminal (fallback should handle)
@@ -329,7 +329,7 @@ static void test_edge_cases() {
                    1, 1, 1);  // Line 1, col 1
 }
 
-static void test_cursor_at_boundaries() {
+static void test_cursor_at_boundaries(void) {
     printf("\n%s[Test: Cursor at Wrap Boundaries]%s\n", COLOR_CYAN, COLOR_RESET);
 
     // Test cursor exactly at wrap boundary
@@ -355,7 +355,7 @@ static void test_cursor_at_boundaries() {
 // UTF-8 Tests
 // ============================================================================
 
-static void test_utf8_char_length() {
+static void test_utf8_char_length(void) {
     printf("\n%s[Test: UTF-8 Character Length Detection]%s\n", COLOR_CYAN, COLOR_RESET);
 
     // ASCII (1 byte)
@@ -380,7 +380,7 @@ static void test_utf8_char_length() {
     assert_equals("Continuation byte (0xBF)", 1, utf8_char_length(0xBF));
 }
 
-static void test_utf8_continuation() {
+static void test_utf8_continuation(void) {
     printf("\n%s[Test: UTF-8 Continuation Byte Detection]%s\n", COLOR_CYAN, COLOR_RESET);
 
     // Valid continuation bytes (10xxxxxx pattern)
@@ -399,7 +399,7 @@ static void test_utf8_continuation() {
 // History Tests
 // ============================================================================
 
-static void test_history_basic() {
+static void test_history_basic(void) {
     printf("\n%s[Test: History Basic Operations]%s\n", COLOR_CYAN, COLOR_RESET);
 
     LineEditor ed;
@@ -410,7 +410,7 @@ static void test_history_basic() {
     assert_equals("History position is -1", -1, ed.history.position);
 
     // Manually add entries (simulating what lineedit_readline does)
-    char *entries[] = {"first command", "second command", "third command"};
+    const char *entries[] = {"first command", "second command", "third command"};
     for (int i = 0; i < 3; i++) {
         if (ed.history.count >= ed.history.capacity) {
             free(ed.history.entries[0]);
@@ -433,7 +433,7 @@ static void test_history_basic() {
     lineedit_free(&ed);
 }
 
-static void test_history_capacity() {
+static void test_history_capacity(void) {
     printf("\n%s[Test: History Capacity Limit]%s\n", COLOR_CYAN, COLOR_RESET);
 
     LineEditor ed;
@@ -469,14 +469,14 @@ static void test_history_capacity() {
     lineedit_free(&ed);
 }
 
-static void test_history_navigation() {
+static void test_history_navigation(void) {
     printf("\n%s[Test: History Navigation State]%s\n", COLOR_CYAN, COLOR_RESET);
 
     LineEditor ed;
     lineedit_init(&ed, NULL, NULL);
 
     // Add some entries
-    char *entries[] = {"cmd1", "cmd2", "cmd3"};
+    const char *entries[] = {"cmd1", "cmd2", "cmd3"};
     for (int i = 0; i < 3; i++) {
         ed.history.entries[ed.history.count] = strdup(entries[i]);
         ed.history.count++;
@@ -509,7 +509,7 @@ static void test_history_navigation() {
 // Word Boundary Tests
 // ============================================================================
 
-static void test_word_boundary_detection() {
+static void test_word_boundary_detection(void) {
     printf("\n%s[Test: Word Boundary Detection]%s\n", COLOR_CYAN, COLOR_RESET);
 
     // Characters that are NOT word boundaries (part of words)
@@ -549,7 +549,7 @@ static void test_word_boundary_detection() {
     assert_true("Backtick is boundary", is_word_boundary('`'));
 }
 
-static void test_move_backward_word() {
+static void test_move_backward_word(void) {
     printf("\n%s[Test: Move Backward by Word]%s\n", COLOR_CYAN, COLOR_RESET);
 
     // Test with simple word boundaries
@@ -586,7 +586,7 @@ static void test_move_backward_word() {
     assert_equals("Leading spaces", 3, move_backward_word("   hello", 6));
 }
 
-static void test_move_forward_word() {
+static void test_move_forward_word(void) {
     printf("\n%s[Test: Move Forward by Word]%s\n", COLOR_CYAN, COLOR_RESET);
 
     // Test with simple word boundaries
@@ -627,7 +627,7 @@ static void test_move_forward_word() {
 // Visible String Length Tests (ANSI escape sequence handling)
 // ============================================================================
 
-static void test_visible_strlen_basic() {
+static void test_visible_strlen_basic(void) {
     printf("\n%s[Test: Visible String Length - Basic]%s\n", COLOR_CYAN, COLOR_RESET);
 
     // Empty and simple strings
@@ -643,7 +643,7 @@ static void test_visible_strlen_basic() {
     assert_equals("Mixed ASCII", 13, visible_strlen("Hello, World!"));
 }
 
-static void test_visible_strlen_ansi_sequences() {
+static void test_visible_strlen_ansi_sequences(void) {
     printf("\n%s[Test: Visible String Length - ANSI Sequences]%s\n", COLOR_CYAN, COLOR_RESET);
 
     // Basic ANSI escape sequences
@@ -674,7 +674,7 @@ static void test_visible_strlen_ansi_sequences() {
     assert_equals("No terminator", 0, visible_strlen("\033[31"));
 }
 
-static void test_visible_strlen_edge_cases() {
+static void test_visible_strlen_edge_cases(void) {
     printf("\n%s[Test: Visible String Length - Edge Cases]%s\n", COLOR_CYAN, COLOR_RESET);
 
     // Nested and overlapping sequences
@@ -702,7 +702,7 @@ static void test_visible_strlen_edge_cases() {
 // Input Queue Tests
 // ============================================================================
 
-static void test_input_queue_basic() {
+static void test_input_queue_basic(void) {
     printf("\n%s[Test: Input Queue Basic Operations]%s\n", COLOR_CYAN, COLOR_RESET);
 
     LineEditor ed;
@@ -723,7 +723,7 @@ static void test_input_queue_basic() {
 // Ctrl+J Newline Tests
 // ============================================================================
 
-static void test_ctrl_j_newline_handling() {
+static void test_ctrl_j_newline_handling(void) {
     printf("\n%s[Test: Ctrl+J Newline Handling]%s\n", COLOR_CYAN, COLOR_RESET);
 
     // This test verifies that the terminal setup distinguishes Enter from Ctrl+J
