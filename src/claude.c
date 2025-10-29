@@ -2585,10 +2585,8 @@ void conversation_free(ConversationState *state) {
     }
     state->count = 0;
 
-    // Clear todo list structure
-    if (state->todo_list) {
-        todo_free(state->todo_list);
-    }
+    // Note: todo_list is freed separately in main cleanup
+    // Do not call todo_free() here to avoid double-free
 }
 
 static void process_response(ConversationState *state, ApiResponse *response, TUIState *tui) {
