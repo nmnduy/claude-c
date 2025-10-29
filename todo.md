@@ -7,6 +7,7 @@
 - [ ] tmux paste doesn't get handled correctly in the input
 - [ ] object files in same dir?
 - [ ] receive user input
+- [ ] write tool should also show diff
 - [x] print todo list after creating it or when updating the TODO list
 - [ ] {"message":"Too many tokens, please wait before trying again."}. if api responded with this then handle appropriately
 - [ ] thinking vs non thinking
