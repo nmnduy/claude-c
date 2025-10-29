@@ -4,8 +4,8 @@
 
 #define _POSIX_C_SOURCE 200809L
 
+#include "claude_internal.h"  // Must be first to get ApiResponse definition
 #include "bedrock_provider.h"
-#include "claude_internal.h"
 #include "logger.h"
 
 #include <stdio.h>
@@ -116,12 +116,111 @@ static ApiCallResult bedrock_execute_request(BedrockConfig *config, const char *
 
     // Check HTTP status
     if (result.http_status >= 200 && result.http_status < 300) {
-        // Success - parse response
-        result.response = bedrock_convert_response(response.output);
-        if (!result.response) {
+        // Success - convert Bedrock response to OpenAI format
+        cJSON *openai_json = bedrock_convert_response(response.output);
+        if (!openai_json) {
             result.error_message = strdup("Failed to parse Bedrock response");
             result.is_retryable = 0;
+            return result;
         }
+
+        // Now extract vendor-agnostic response data (same as OpenAI provider)
+        ApiResponse *api_response = calloc(1, sizeof(ApiResponse));
+        if (!api_response) {
+            result.error_message = strdup("Failed to allocate ApiResponse");
+            result.is_retryable = 0;
+            cJSON_Delete(openai_json);
+            return result;
+        }
+
+        // Keep raw response for history
+        api_response->raw_response = openai_json;
+
+        // Extract message from OpenAI response format
+        cJSON *choices = cJSON_GetObjectItem(openai_json, "choices");
+        if (!choices || !cJSON_IsArray(choices) || cJSON_GetArraySize(choices) == 0) {
+            result.error_message = strdup("Invalid response format: no choices");
+            result.is_retryable = 0;
+            api_response_free(api_response);
+            return result;
+        }
+
+        cJSON *choice = cJSON_GetArrayItem(choices, 0);
+        cJSON *message = cJSON_GetObjectItem(choice, "message");
+        if (!message) {
+            result.error_message = strdup("Invalid response format: no message");
+            result.is_retryable = 0;
+            api_response_free(api_response);
+            return result;
+        }
+
+        // Extract text content
+        cJSON *content = cJSON_GetObjectItem(message, "content");
+        if (content && cJSON_IsString(content) && content->valuestring) {
+            api_response->message.text = strdup(content->valuestring);
+        } else {
+            api_response->message.text = NULL;
+        }
+
+        // Extract tool calls (same as OpenAI provider)
+        cJSON *tool_calls = cJSON_GetObjectItem(message, "tool_calls");
+        if (tool_calls && cJSON_IsArray(tool_calls)) {
+            int raw_tool_count = cJSON_GetArraySize(tool_calls);
+
+            // First pass: count valid tool calls
+            int valid_count = 0;
+            for (int i = 0; i < raw_tool_count; i++) {
+                cJSON *tool_call = cJSON_GetArrayItem(tool_calls, i);
+                cJSON *function = cJSON_GetObjectItem(tool_call, "function");
+                if (function) {
+                    valid_count++;
+                }
+            }
+
+            if (valid_count > 0) {
+                api_response->tools = calloc((size_t)valid_count, sizeof(ToolCall));
+                if (!api_response->tools) {
+                    result.error_message = strdup("Failed to allocate tool calls");
+                    result.is_retryable = 0;
+                    api_response_free(api_response);
+                    return result;
+                }
+
+                // Second pass: extract valid tool calls
+                int tool_idx = 0;
+                for (int i = 0; i < raw_tool_count; i++) {
+                    cJSON *tool_call = cJSON_GetArrayItem(tool_calls, i);
+                    cJSON *id = cJSON_GetObjectItem(tool_call, "id");
+                    cJSON *function = cJSON_GetObjectItem(tool_call, "function");
+
+                    if (!function) {
+                        LOG_WARN("Skipping malformed tool_call at index %d (missing 'function' field)", i);
+                        continue;
+                    }
+
+                    cJSON *name = cJSON_GetObjectItem(function, "name");
+                    cJSON *arguments = cJSON_GetObjectItem(function, "arguments");
+
+                    // Copy tool call data
+                    api_response->tools[tool_idx].id =
+                        (id && cJSON_IsString(id)) ? strdup(id->valuestring) : NULL;
+                    api_response->tools[tool_idx].name =
+                        (name && cJSON_IsString(name)) ? strdup(name->valuestring) : NULL;
+
+                    // Parse arguments string to cJSON
+                    if (arguments && cJSON_IsString(arguments)) {
+                        api_response->tools[tool_idx].parameters = cJSON_Parse(arguments->valuestring);
+                    } else {
+                        api_response->tools[tool_idx].parameters = NULL;
+                    }
+
+                    tool_idx++;
+                }
+                api_response->tool_count = valid_count;
+            }
+        }
+
+        result.response = api_response;
         return result;
     }
 

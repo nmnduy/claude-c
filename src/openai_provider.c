@@ -4,8 +4,8 @@
 
 #define _POSIX_C_SOURCE 200809L
 
+#include "claude_internal.h"  // Must be first to get ApiResponse definition
 #include "openai_provider.h"
-#include "claude_internal.h"
 #include "logger.h"
 
 #include <stdio.h>
@@ -45,11 +45,18 @@ static size_t write_callback(void *contents, size_t size, size_t nmemb, void *us
 }
 
 // ============================================================================
-// Request Building (from ConversationState)
+// Request Building (using new message format)
 // ============================================================================
 
-// Forward declaration - this will be implemented in claude.c and exposed via claude_internal.h
-extern char* build_request_json_from_state(ConversationState *state);
+#include "openai_messages.h"
+
+// Helper to check if prompt caching is enabled
+static int is_prompt_caching_enabled(void) {
+    const char *disable_env = getenv("DISABLE_PROMPT_CACHING");
+    return !(disable_env && (strcmp(disable_env, "1") == 0 ||
+                             strcmp(disable_env, "true") == 0 ||
+                             strcmp(disable_env, "TRUE") == 0));
+}
 
 // ============================================================================
 // OpenAI Provider Implementation
@@ -69,10 +76,20 @@ static ApiCallResult openai_call_api(Provider *self, ConversationState *state) {
         return result;
     }
 
-    // Build request JSON from conversation state
-    char *openai_json = build_request_json_from_state(state);
-    if (!openai_json) {
+    // Build request JSON using OpenAI message format
+    int enable_caching = is_prompt_caching_enabled();
+    cJSON *request = build_openai_request(state, enable_caching);
+    if (!request) {
         result.error_message = strdup("Failed to build request JSON");
+        result.is_retryable = 0;
+        return result;
+    }
+
+    char *openai_json = cJSON_PrintUnformatted(request);
+    cJSON_Delete(request);
+
+    if (!openai_json) {
+        result.error_message = strdup("Failed to serialize request JSON");
         result.is_retryable = 0;
         return result;
     }
@@ -147,44 +164,110 @@ static ApiCallResult openai_call_api(Provider *self, ConversationState *state) {
     // Check HTTP status
     if (result.http_status >= 200 && result.http_status < 300) {
         // Success - parse response (already in OpenAI format)
-        result.response = cJSON_Parse(response.output);
-        if (!result.response) {
+        cJSON *raw_json = cJSON_Parse(response.output);
+        if (!raw_json) {
             result.error_message = strdup("Failed to parse JSON response");
             result.is_retryable = 0;
             return result;
         }
 
-        // Validate and sanitize tool_calls in the response
-        // OpenAI format requires tool_calls to have a 'function' object
-        cJSON *choices = cJSON_GetObjectItem(result.response, "choices");
-        if (choices && cJSON_IsArray(choices)) {
-            int choice_count = cJSON_GetArraySize(choices);
-            for (int i = 0; i < choice_count; i++) {
-                cJSON *choice = cJSON_GetArrayItem(choices, i);
-                cJSON *message = cJSON_GetObjectItem(choice, "message");
-                if (message) {
-                    cJSON *tool_calls = cJSON_GetObjectItem(message, "tool_calls");
-                    if (tool_calls && cJSON_IsArray(tool_calls)) {
-                        int tool_count = cJSON_GetArraySize(tool_calls);
-                        // Check each tool_call for required 'function' field
-                        for (int j = tool_count - 1; j >= 0; j--) {
-                            cJSON *tool_call = cJSON_GetArrayItem(tool_calls, j);
-                            cJSON *function = cJSON_GetObjectItem(tool_call, "function");
-                            if (!function) {
-                                // Remove malformed tool_call from array
-                                LOG_WARN("Removing malformed tool_call at index %d (missing 'function' field)", j);
-                                cJSON_DeleteItemFromArray(tool_calls, j);
-                            }
-                        }
-                        // If all tool_calls were removed, delete the tool_calls array
-                        if (cJSON_GetArraySize(tool_calls) == 0) {
-                            cJSON_DeleteItemFromObject(message, "tool_calls");
-                        }
-                    }
+        // Extract vendor-agnostic response data
+        ApiResponse *api_response = calloc(1, sizeof(ApiResponse));
+        if (!api_response) {
+            result.error_message = strdup("Failed to allocate ApiResponse");
+            result.is_retryable = 0;
+            cJSON_Delete(raw_json);
+            return result;
+        }
+
+        // Keep raw response for history
+        api_response->raw_response = raw_json;
+
+        // Extract message from OpenAI response format
+        cJSON *choices = cJSON_GetObjectItem(raw_json, "choices");
+        if (!choices || !cJSON_IsArray(choices) || cJSON_GetArraySize(choices) == 0) {
+            result.error_message = strdup("Invalid response format: no choices");
+            result.is_retryable = 0;
+            api_response_free(api_response);
+            return result;
+        }
+
+        cJSON *choice = cJSON_GetArrayItem(choices, 0);
+        cJSON *message = cJSON_GetObjectItem(choice, "message");
+        if (!message) {
+            result.error_message = strdup("Invalid response format: no message");
+            result.is_retryable = 0;
+            api_response_free(api_response);
+            return result;
+        }
+
+        // Extract text content
+        cJSON *content = cJSON_GetObjectItem(message, "content");
+        if (content && cJSON_IsString(content) && content->valuestring) {
+            api_response->message.text = strdup(content->valuestring);
+        } else {
+            api_response->message.text = NULL;
+        }
+
+        // Extract and validate tool calls
+        cJSON *tool_calls = cJSON_GetObjectItem(message, "tool_calls");
+        if (tool_calls && cJSON_IsArray(tool_calls)) {
+            int raw_tool_count = cJSON_GetArraySize(tool_calls);
+
+            // First pass: count valid tool calls
+            int valid_count = 0;
+            for (int i = 0; i < raw_tool_count; i++) {
+                cJSON *tool_call = cJSON_GetArrayItem(tool_calls, i);
+                cJSON *function = cJSON_GetObjectItem(tool_call, "function");
+                if (function) {
+                    valid_count++;
                 }
+            }
+
+            if (valid_count > 0) {
+                api_response->tools = calloc((size_t)valid_count, sizeof(ToolCall));
+                if (!api_response->tools) {
+                    result.error_message = strdup("Failed to allocate tool calls");
+                    result.is_retryable = 0;
+                    api_response_free(api_response);
+                    return result;
+                }
+
+                // Second pass: extract valid tool calls
+                int tool_idx = 0;
+                for (int i = 0; i < raw_tool_count; i++) {
+                    cJSON *tool_call = cJSON_GetArrayItem(tool_calls, i);
+                    cJSON *id = cJSON_GetObjectItem(tool_call, "id");
+                    cJSON *function = cJSON_GetObjectItem(tool_call, "function");
+
+                    if (!function) {
+                        LOG_WARN("Skipping malformed tool_call at index %d (missing 'function' field)", i);
+                        continue;
+                    }
+
+                    cJSON *name = cJSON_GetObjectItem(function, "name");
+                    cJSON *arguments = cJSON_GetObjectItem(function, "arguments");
+
+                    // Copy tool call data
+                    api_response->tools[tool_idx].id =
+                        (id && cJSON_IsString(id)) ? strdup(id->valuestring) : NULL;
+                    api_response->tools[tool_idx].name =
+                        (name && cJSON_IsString(name)) ? strdup(name->valuestring) : NULL;
+
+                    // Parse arguments string to cJSON
+                    if (arguments && cJSON_IsString(arguments)) {
+                        api_response->tools[tool_idx].parameters = cJSON_Parse(arguments->valuestring);
+                    } else {
+                        api_response->tools[tool_idx].parameters = NULL;
+                    }
+
+                    tool_idx++;
+                }
+                api_response->tool_count = valid_count;
             }
         }
 
+        result.response = api_response;
         return result;
     }
 
