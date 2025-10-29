@@ -509,7 +509,7 @@ int bedrock_validate_credentials(AWSCredentials *creds, const char *profile) {
 
     if (output) {
         // Check if output contains error messages
-        if (strstr(output, "ExpiredToken") || 
+        if (strstr(output, "ExpiredToken") ||
             strstr(output, "InvalidToken") ||
             strstr(output, "InvalidClientTokenId") ||
             strstr(output, "AccessDenied")) {

@@ -192,10 +192,10 @@ typedef struct {
 int module_init(ModuleConfig *config) {
     Module *module = malloc(sizeof(Module));
     if (!module) return -1;
-    
+
     module->config = config;
     module->state = MODULE_READY;
-    
+
     return 0;
 }
 ```
@@ -204,10 +204,10 @@ int module_init(ModuleConfig *config) {
 ```c
 void module_cleanup(Module *module) {
     if (!module) return;
-    
+
     if (module->data) free(module->data);
     if (module->buffer) free(module->buffer);
-    
+
     free(module);
 }
 ```
@@ -218,13 +218,13 @@ int module_operation(Module *module, const char *input) {
     if (!module || !input) {
         return -1;  // Invalid arguments
     }
-    
+
     if (module->state != MODULE_READY) {
         return -2;  // Module not ready
     }
-    
+
     // ... operation logic ...
-    
+
     return 0;  // Success
 }
 ```

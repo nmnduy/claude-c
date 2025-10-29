@@ -1,9 +1,9 @@
 /**
  * paste_handler.h
- * 
+ *
  * Bracketed paste mode support for detecting and safely handling
  * large pastes in terminal applications.
- * 
+ *
  * Modern terminals support bracketed paste mode (xterm, iTerm2, kitty, etc.)
  * which wraps pasted content in escape sequences:
  *   - Paste start: ESC[200~
@@ -60,19 +60,19 @@ typedef struct {
 static inline PasteState* paste_state_init(void) {
     PasteState *state = calloc(1, sizeof(PasteState));
     if (!state) return NULL;
-    
+
     state->buffer_capacity = PASTE_BUFFER_SIZE;
     state->buffer = malloc(state->buffer_capacity);
     if (!state->buffer) {
         free(state);
         return NULL;
     }
-    
+
     state->in_paste = 0;
     state->buffer_size = 0;
     state->chars_in_burst = 0;
     gettimeofday(&state->last_char_time, NULL);
-    
+
     return state;
 }
 
@@ -118,13 +118,13 @@ static inline void disable_bracketed_paste(void) {
  */
 static inline int detect_paste_by_timing(PasteState *state) {
     if (!state) return 0;
-    
+
     struct timeval now;
     gettimeofday(&now, NULL);
-    
+
     long elapsed_ms = (now.tv_sec - state->last_char_time.tv_sec) * 1000 +
                       (now.tv_usec - state->last_char_time.tv_usec) / 1000;
-    
+
     if (elapsed_ms < PASTE_TIME_BURST_MS) {
         state->chars_in_burst++;
         if (state->chars_in_burst >= PASTE_BURST_CHARS) {
@@ -133,7 +133,7 @@ static inline int detect_paste_by_timing(PasteState *state) {
     } else {
         state->chars_in_burst = 1; // Reset burst counter
     }
-    
+
     state->last_char_time = now;
     return 0;
 }
@@ -144,12 +144,12 @@ static inline int detect_paste_by_timing(PasteState *state) {
  */
 static inline int paste_buffer_add_char(PasteState *state, char c) {
     if (!state) return -1;
-    
+
     if (state->buffer_size >= state->buffer_capacity - 1) {
         // Buffer full
         return -1;
     }
-    
+
     state->buffer[state->buffer_size++] = c;
     return 0;
 }
@@ -160,7 +160,7 @@ static inline int paste_buffer_add_char(PasteState *state, char c) {
  */
 static inline size_t paste_sanitize(char *buffer, size_t len, PasteSanitizeOptions *opts) {
     if (!buffer || len == 0) return 0;
-    
+
     // Default options
     PasteSanitizeOptions default_opts = {
         .remove_control_chars = 1,
@@ -169,20 +169,20 @@ static inline size_t paste_sanitize(char *buffer, size_t len, PasteSanitizeOptio
         .collapse_multiple_newlines = 1
     };
     if (!opts) opts = &default_opts;
-    
+
     size_t read_pos = 0, write_pos = 0;
     int newline_count = 0;
-    
+
     // Skip leading whitespace if trimming
     if (opts->trim_whitespace) {
         while (read_pos < len && isspace((unsigned char)buffer[read_pos])) {
             read_pos++;
         }
     }
-    
+
     while (read_pos < len) {
         char c = buffer[read_pos++];
-        
+
         // Normalize \r\n to \n
         if (opts->normalize_newlines && c == '\r') {
             if (read_pos < len && buffer[read_pos] == '\n') {
@@ -190,7 +190,7 @@ static inline size_t paste_sanitize(char *buffer, size_t len, PasteSanitizeOptio
             }
             c = '\n';
         }
-        
+
         // Handle newlines
         if (c == '\n') {
             newline_count++;
@@ -210,14 +210,14 @@ static inline size_t paste_sanitize(char *buffer, size_t len, PasteSanitizeOptio
         }
         // Else: skip control character
     }
-    
+
     // Trim trailing whitespace
     if (opts->trim_whitespace) {
         while (write_pos > 0 && isspace((unsigned char)buffer[write_pos - 1])) {
             write_pos--;
         }
     }
-    
+
     buffer[write_pos] = '\0';
     return write_pos;
 }
@@ -227,19 +227,19 @@ static inline size_t paste_sanitize(char *buffer, size_t len, PasteSanitizeOptio
  */
 static inline char* paste_get_preview(const char *content, size_t len, size_t preview_len) {
     if (!content || len == 0) return NULL;
-    
+
     size_t actual_len = (len < preview_len) ? len : preview_len;
     char *preview = malloc(actual_len + 4); // +4 for "..."
     if (!preview) return NULL;
-    
+
     strncpy(preview, content, actual_len);
-    
+
     if (len > preview_len) {
         strcpy(preview + actual_len, "...");
     } else {
         preview[actual_len] = '\0';
     }
-    
+
     return preview;
 }
 
@@ -278,7 +278,7 @@ static inline int check_paste_end_sequence(const char *buffer, size_t len) {
  */
 static inline int paste_process_char(PasteState *state, char c) {
     if (!state) return 0;
-    
+
     // Not in paste - check for start sequence
     if (!state->in_paste) {
         if (c == '\033') {
@@ -287,11 +287,11 @@ static inline int paste_process_char(PasteState *state, char c) {
             paste_buffer_add_char(state, c);
             return 2; // Buffering potential sequence
         }
-        
+
         // Check if buffer contains paste start sequence
         if (state->buffer_size > 0) {
             paste_buffer_add_char(state, c);
-            
+
             int consumed = check_paste_start_sequence(state->buffer, state->buffer_size);
             if (consumed > 0) {
                 // Paste started! Clear the escape sequence from buffer
@@ -299,25 +299,25 @@ static inline int paste_process_char(PasteState *state, char c) {
                 state->in_paste = 1;
                 return 1;
             }
-            
+
             // Not a paste sequence - might be other escape sequence
             // If buffer has incomplete sequence, keep buffering
             if (state->buffer_size < 6 && state->buffer[0] == '\033') {
                 return 2; // Keep buffering
             }
-            
+
             // Not a paste sequence at all, reset
             paste_state_reset(state);
         }
-        
+
         return 0; // Normal character
     }
-    
+
     // In paste - buffer characters and check for end sequence
     if (paste_buffer_add_char(state, c) < 0) {
         return -1; // Buffer overflow
     }
-    
+
     // Check for paste end sequence (last 6 chars)
     if (state->buffer_size >= 6) {
         const char *tail = state->buffer + state->buffer_size - 6;
@@ -330,7 +330,7 @@ static inline int paste_process_char(PasteState *state, char c) {
             return 3; // Paste complete
         }
     }
-    
+
     return 2; // Paste in progress
 }
 
