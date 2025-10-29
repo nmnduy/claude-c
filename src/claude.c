@@ -2312,8 +2312,6 @@ char* build_system_prompt(ConversationState *state) {
 static void add_system_message(ConversationState *state, const char *text) {
     if (state->count >= MAX_MESSAGES) {
         LOG_ERROR("Maximum message count reached");
-        // Free results to avoid leak when message isn't recorded
-        free_internal_contents(results, count);
         return;
     }
 
@@ -2590,37 +2588,6 @@ void conversation_free(ConversationState *state) {
     // Clear todo list structure
     if (state->todo_list) {
         todo_free(state->todo_list);
-    }
-}
-    // Keep the system message (first message)
-    int system_msg_count = 0;
-
-    if (state->count > 0 && state->messages[0].role == MSG_SYSTEM) {
-        // System message remains intact
-        system_msg_count = 1;
-    }
-
-    // Free all other message content
-    for (int i = system_msg_count; i < state->count; i++) {
-        for (int j = 0; j < state->messages[i].content_count; j++) {
-            InternalContent *cb = &state->messages[i].contents[j];
-            free(cb->text);
-            free(cb->tool_id);
-            free(cb->tool_name);
-            if (cb->tool_params) cJSON_Delete(cb->tool_params);
-            if (cb->tool_output) cJSON_Delete(cb->tool_output);
-        }
-        free(state->messages[i].contents);
-    }
-
-    // Reset message count (keeping system message)
-    state->count = system_msg_count;
-
-    // Clear todo list
-    if (state->todo_list) {
-        todo_free(state->todo_list);
-        todo_init(state->todo_list);
-        LOG_DEBUG("Todo list cleared and reinitialized");
     }
 }
 
