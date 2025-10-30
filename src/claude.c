@@ -428,7 +428,7 @@ static char* resolve_path(const char *path, const char *working_dir) {
     if (!resolved) return NULL;
 
     if (path[0] == '/') {
-        strncpy(resolved, path, PATH_MAX);
+        snprintf(resolved, PATH_MAX, "%s", path);
     } else {
         snprintf(resolved, PATH_MAX, "%s/%s", working_dir, path);
     }
@@ -1475,7 +1475,7 @@ static cJSON* execute_tool(const char *tool_name, cJSON *input, ConversationStat
 // ============================================================================
 
 // Forward declaration for cache_control helper
-void add_cache_control(cJSON *obj);
+
 
 cJSON* get_tool_definitions(int enable_caching) {
     cJSON *tool_array = cJSON_CreateArray();
