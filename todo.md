@@ -2,6 +2,7 @@
 
 - [ ] plan mode
 - [ ] remove ANTHROPIC_MODEL env var usage. its confusing
+- [ ] doesn't handle SIGHUP?
 - [x] colorize the diff using the colorscheme we got
 - [x] tmux paste doesn't get handled correctly in the input
 - [x] object files in same dir?
