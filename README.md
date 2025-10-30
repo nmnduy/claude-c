@@ -8,7 +8,7 @@ A lightweight, modular implementation of a coding agent that interacts with an O
 
 - **Modular architecture**: Clean separation into focused modules (~2000+ lines total)
 - **Core tools**: Bash, Read, Write, Edit, Glob, Grep with advanced features
-- **Anthropic API integration**: Full support for Claude's Messages API with tool use
+- **Vendor support**: OpenAI and AWS Bedrock
 - **Efficient**: Direct API calls with libcurl, minimal dependencies
 - **Portable**: Standard C11 with POSIX support
 - **Theme system**: Kitty-compatible terminal themes for visual customization
