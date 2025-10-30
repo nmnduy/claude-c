@@ -32,27 +32,27 @@ static const char *SPINNER_CIRCLE[] = {"◜","◠","◝","◞","◡","◟"};
 
 // Color accessors
 static inline const char* get_spinner_color_status(void) {
-    static char buf[32]; static int warned = 0;
+    static char buf[32]; static int w=0;
     if (get_colorscheme_color(COLORSCHEME_STATUS, buf, sizeof(buf))==0) return buf;
-    if (!warned) { LOG_WARN("Using fallback color for spinner (status)"); warned = 1; }
+    if (!w) { LOG_WARN("Using fallback color for spinner (status)"); w=1; }
     return ANSI_FALLBACK_YELLOW;
 }
 static inline const char* get_spinner_color_tool(void) {
-    static char buf[32]; static int warned = 0;
+    static char buf[32]; static int w=0;
     if (get_colorscheme_color(COLORSCHEME_TOOL, buf, sizeof(buf))==0) return buf;
-    if (!warned) { LOG_WARN("Using fallback color for spinner (tool)"); warned = 1; }
+    if (!w) { LOG_WARN("Using fallback color for spinner (tool)"); w=1; }
     return ANSI_FALLBACK_CYAN;
 }
 static inline const char* get_spinner_color_success(void) {
-    static char buf[32]; static int warned = 0;
+    static char buf[32]; static int w=0;
     if (get_colorscheme_color(COLORSCHEME_USER, buf, sizeof(buf))==0) return buf;
-    if (!warned) { LOG_WARN("Using fallback color for spinner (success)"); warned = 1; }
+    if (!w) { LOG_WARN("Using fallback color for spinner (success)"); w=1; }
     return ANSI_FALLBACK_GREEN;
 }
 static inline const char* get_spinner_color_error(void) {
-    static char buf[32]; static int warned = 0;
+    static char buf[32]; static int w=0;
     if (get_colorscheme_color(COLORSCHEME_ERROR, buf, sizeof(buf))==0) return buf;
-    if (!warned) { LOG_WARN("Using fallback color for spinner (error)"); warned = 1; }
+    if (!w) { LOG_WARN("Using fallback color for spinner (error)"); w=1; }
     return ANSI_FALLBACK_ERROR;
 }
 
@@ -73,14 +73,14 @@ static const spinner_variant_t SPINNER_VARIANTS[] = {
 static const int SPINNER_VARIANT_COUNT = (int)(sizeof(SPINNER_VARIANTS)/sizeof(*SPINNER_VARIANTS));
 
 // Global spinner variant: seeded once per app lifecycle
-static spinner_variant_t GLOBAL_SPINNER_VARIANT = { NULL, 0 };
+static spinner_variant_t GLOBAL_SPINNER_VARIANT = {NULL,0};
 static void init_global_spinner_variant(void) {
-    static int initialized = 0;
-    if (initialized) return;
+    static int init = 0;
+    if (init) return;
     srand((unsigned)time(NULL));
     int idx = rand() % SPINNER_VARIANT_COUNT;
     GLOBAL_SPINNER_VARIANT = SPINNER_VARIANTS[idx];
-    initialized = 1;
+    init = 1;
 }
 
 // Spinner object
@@ -116,8 +116,7 @@ static void *spinner_thread_func(void *arg) {
 // Start spinner; style fixed once per lifecycle
 static Spinner* spinner_start(const char *message, const char *color) {
     init_global_spinner_variant();
-    Spinner *s = malloc(sizeof(Spinner));
-    if (!s) return NULL;
+    Spinner *s = malloc(sizeof(Spinner)); if (!s) return NULL;
     s->message = strdup(message);
     s->color = color ? color : SPINNER_CYAN;
     s->running = 1;
@@ -144,13 +143,10 @@ static void spinner_stop(Spinner *s, const char *final_message, int success) {
     s->running = 0;
     pthread_mutex_unlock(&s->lock);
     pthread_join(s->thread, NULL);
-    // Clear line
     printf("\r\033[K");
     if (final_message) {
-        if (success)
-            printf("%s✓%s %s\n", SPINNER_GREEN, SPINNER_RESET, final_message);
-        else
-            printf("%s✗%s %s\n", get_spinner_color_error(), SPINNER_RESET, final_message);
+        if (success) printf("%s✓%s %s\n", SPINNER_GREEN, SPINNER_RESET, final_message);
+        else         printf("%s✗%s %s\n", get_spinner_color_error(), SPINNER_RESET, final_message);
     }
     fflush(stdout);
     pthread_mutex_destroy(&s->lock);
