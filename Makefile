@@ -56,6 +56,7 @@ TEST_OPENAI_FORMAT_TARGET = $(BUILD_DIR)/test_openai_format
 TEST_WRITE_DIFF_INTEGRATION_TARGET = $(BUILD_DIR)/test_write_diff_integration
 TEST_ROTATION_TARGET = $(BUILD_DIR)/test_rotation
 TEST_PATCH_PARSER_TARGET = $(BUILD_DIR)/test_patch_parser
+TEST_THREAD_CANCEL_TARGET = $(BUILD_DIR)/test_thread_cancel
 QUERY_TOOL = $(BUILD_DIR)/query_logs
 SRC = src/claude.c
 LOGGER_SRC = src/logger.c
@@ -100,9 +101,10 @@ TEST_OPENAI_FORMAT_SRC = tests/test_openai_format.c
 TEST_WRITE_DIFF_INTEGRATION_SRC = tests/test_write_diff_integration.c
 TEST_ROTATION_SRC = tests/test_rotation.c
 TEST_PATCH_PARSER_SRC = tests/test_patch_parser.c
+TEST_THREAD_CANCEL_SRC = tests/test_thread_cancel.c
 QUERY_TOOL_SRC = tools/query_logs.c
 
-.PHONY: all clean check-deps install test test-edit test-input test-read test-lineedit test-todo test-todo-write test-paste test-retry-jitter test-openai-format test-write-diff-integration test-rotation test-patch-parser query-tool debug analyze sanitize-ub sanitize-all sanitize-leak valgrind memscan version show-version update-version bump-patch build clang ci-test ci-gcc ci-clang ci-gcc-sanitize ci-clang-sanitize ci-all
+.PHONY: all clean check-deps install test test-edit test-input test-read test-lineedit test-todo test-todo-write test-paste test-retry-jitter test-openai-format test-write-diff-integration test-rotation test-patch-parser test-thread-cancel query-tool debug analyze sanitize-ub sanitize-all sanitize-leak valgrind memscan version show-version update-version bump-patch build clang ci-test ci-gcc ci-clang ci-gcc-sanitize ci-clang-sanitize ci-all
 
 all: check-deps $(TARGET)
 
@@ -114,7 +116,7 @@ debug: check-deps $(BUILD_DIR)/claude-c-debug
 
 query-tool: check-deps $(QUERY_TOOL)
 
-test: test-edit test-input test-read test-lineedit test-todo test-paste test-timing test-openai-format test-write-diff-integration test-rotation test-patch-parser
+test: test-edit test-input test-read test-lineedit test-todo test-paste test-timing test-openai-format test-write-diff-integration test-rotation test-patch-parser test-thread-cancel
 
 test-edit: check-deps $(TEST_EDIT_TARGET)
 	@echo ""
@@ -193,6 +195,12 @@ test-patch-parser: check-deps $(TEST_PATCH_PARSER_TARGET)
 	@echo "Running Patch Parser tests..."
 	@echo ""
 	@./$(TEST_PATCH_PARSER_TARGET)
+
+test-thread-cancel: check-deps $(TEST_THREAD_CANCEL_TARGET)
+	@echo ""
+	@echo "Running Thread Cancellation tests..."
+	@echo ""
+	@./$(TEST_THREAD_CANCEL_TARGET)
 
 $(TARGET): $(SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(LINEEDIT_OBJ) $(COMMANDS_OBJ) $(COMPLETION_OBJ) $(TUI_OBJ) $(TODO_OBJ) $(AWS_BEDROCK_OBJ) $(PROVIDER_OBJ) $(OPENAI_PROVIDER_OBJ) $(OPENAI_MESSAGES_OBJ) $(BEDROCK_PROVIDER_OBJ) $(BUILTIN_THEMES_OBJ) $(PATCH_PARSER_OBJ) $(VERSION_H)
 	@mkdir -p $(BUILD_DIR)
@@ -605,6 +613,15 @@ $(TEST_PATCH_PARSER_TARGET): $(SRC) $(TEST_PATCH_PARSER_SRC) $(LOGGER_OBJ) $(PER
 	@$(CC) -o $(TEST_PATCH_PARSER_TARGET) $(BUILD_DIR)/claude_patch_test.o $(BUILD_DIR)/test_patch_parser.o $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(TODO_OBJ) $(PATCH_PARSER_OBJ) $(LDFLAGS)
 	@echo ""
 	@echo "✓ Patch Parser test build successful!"
+	@echo ""
+
+# Test target for thread cancellation
+$(TEST_THREAD_CANCEL_TARGET): $(TEST_THREAD_CANCEL_SRC)
+	@mkdir -p $(BUILD_DIR)
+	@echo "Compiling Thread Cancellation test suite..."
+	@$(CC) $(CFLAGS) -o $(TEST_THREAD_CANCEL_TARGET) $(TEST_THREAD_CANCEL_SRC) -lpthread
+	@echo ""
+	@echo "✓ Thread Cancellation test build successful!"
 	@echo ""
 
 install: $(TARGET)

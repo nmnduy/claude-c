@@ -679,6 +679,9 @@ static cJSON* tool_bash(cJSON *params, ConversationState *state) {
     size_t total_size = 0;
 
     while (fgets(buffer, sizeof(buffer), pipe)) {
+        // Add cancellation point to allow thread cancellation during long reads
+        pthread_testcancel();
+
         size_t len = strlen(buffer);
         char *new_output = realloc(output, total_size + len + 1);
         if (!new_output) {
@@ -968,18 +971,49 @@ typedef struct {
     InternalContent *result_block;   // pointer to results array slot
 } ToolThreadArg;
 
+// Cleanup handler for tool thread cancellation
+static void tool_thread_cleanup(void *arg) {
+    ToolThreadArg *t = (ToolThreadArg *)arg;
+    // Free input JSON if not already freed
+    if (t->input) {
+        cJSON_Delete(t->input);
+        t->input = NULL;
+    }
+    // Mark result as cancelled
+    t->result_block->type = INTERNAL_TOOL_RESPONSE;
+    t->result_block->tool_id = t->tool_use_id;
+    t->result_block->tool_name = strdup(t->tool_name);
+    cJSON *error = cJSON_CreateObject();
+    cJSON_AddStringToObject(error, "error", "Tool execution cancelled by user");
+    t->result_block->tool_output = error;
+    t->result_block->is_error = 1;
+}
+
 static void *tool_thread_func(void *arg) {
     ToolThreadArg *t = (ToolThreadArg *)arg;
+
+    // Enable thread cancellation
+    pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL);
+    pthread_setcanceltype(PTHREAD_CANCEL_DEFERRED, NULL);
+
+    // Register cleanup handler
+    pthread_cleanup_push(tool_thread_cleanup, arg);
+
     // Execute the tool
     cJSON *res = execute_tool(t->tool_name, t->input, t->state);
     // Free input JSON
     cJSON_Delete(t->input);
+    t->input = NULL;  // Mark as freed for cleanup handler
     // Populate result block
     t->result_block->type = INTERNAL_TOOL_RESPONSE;
     t->result_block->tool_id = t->tool_use_id;
     t->result_block->tool_name = strdup(t->tool_name);  // Store tool name for error reporting
     t->result_block->tool_output = res;
     t->result_block->is_error = cJSON_HasObjectItem(res, "error");
+
+    // Pop cleanup handler (execute=0 means don't run it on normal exit)
+    pthread_cleanup_pop(0);
+
     return NULL;
 }
 
@@ -2843,16 +2877,19 @@ static void process_response(ConversationState *state, ApiResponse *response, TU
         // Now check for ESC while waiting for tools to complete
         while (!all_tools_done) {
             if (check_for_esc()) {
-                LOG_INFO("Tool execution interrupted by user (ESC pressed)");
+                LOG_INFO("Tool execution interrupted by user (ESC pressed) - cancelling threads");
                 interrupted = 1;
 
-                // Update status to show we're waiting for tools to finish
-                // Keep spinner active to provide continuous visual feedback
+                // Cancel all tool threads immediately
+                for (int i = 0; i < thread_count; i++) {
+                    pthread_cancel(threads[i]);
+                }
+
+                // Update status to show immediate termination
                 if (!tui) {
-                    // Update spinner message but keep it running
-                    spinner_update(tool_spinner, "Interrupted (ESC) - waiting for tools to finish...");
+                    spinner_update(tool_spinner, "Interrupted (ESC) - terminating tools...");
                 } else {
-                    tui_update_status(tui, "Interrupted (ESC) - waiting for tools to finish...");
+                    tui_update_status(tui, "Interrupted (ESC) - terminating tools...");
                 }
                 break;
             }
@@ -2860,7 +2897,7 @@ static void process_response(ConversationState *state, ApiResponse *response, TU
         }
 
         // Wait for monitor thread to complete (this ensures all tool threads are joined)
-        // The spinner continues running during this wait to provide visual feedback
+        // If interrupted, threads are cancelled; otherwise wait for normal completion
         pthread_join(monitor_thread, NULL);
 
         clock_gettime(CLOCK_MONOTONIC, &tool_end);
@@ -2872,10 +2909,10 @@ static void process_response(ConversationState *state, ApiResponse *response, TU
         if (interrupted) {
             if (!tui) {
                 if (tool_spinner) {
-                    spinner_stop(tool_spinner, "Interrupted by user (ESC) - tools completed", 0);
+                    spinner_stop(tool_spinner, "Interrupted by user (ESC) - tools terminated", 0);
                 }
             } else {
-                tui_update_status(tui, "Interrupted by user (ESC) - tools completed");
+                tui_update_status(tui, "Interrupted by user (ESC) - tools terminated");
             }
 
             free(threads);
