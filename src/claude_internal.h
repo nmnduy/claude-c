@@ -200,6 +200,12 @@ void conversation_free(ConversationState *state);
 char* build_system_prompt(ConversationState *state);
 
 /**
+ * Check for ESC key press without blocking
+ * Returns: 1 if ESC was pressed, 0 otherwise
+ */
+int check_for_esc(void);
+
+/**
  * Build request JSON from conversation state (in OpenAI format)
  * Used by providers to get the request body with messages, tools, and cache markers
  * Returns: Newly allocated JSON string (caller must free), or NULL on error
