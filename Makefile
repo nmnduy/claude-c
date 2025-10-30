@@ -98,7 +98,7 @@ TEST_WRITE_DIFF_INTEGRATION_SRC = tests/test_write_diff_integration.c
 TEST_ROTATION_SRC = tests/test_rotation.c
 QUERY_TOOL_SRC = tools/query_logs.c
 
-.PHONY: all clean check-deps install test test-edit test-input test-read test-lineedit test-todo test-todo-write test-paste test-retry-jitter test-openai-format test-write-diff-integration test-rotation query-tool debug analyze sanitize-ub sanitize-all sanitize-leak valgrind memscan version show-version update-version bump-patch build clang
+.PHONY: all clean check-deps install test test-edit test-input test-read test-lineedit test-todo test-todo-write test-paste test-retry-jitter test-openai-format test-write-diff-integration test-rotation query-tool debug analyze sanitize-ub sanitize-all sanitize-leak valgrind memscan version show-version update-version bump-patch build clang ci-test ci-gcc ci-clang ci-gcc-sanitize ci-clang-sanitize ci-all
 
 all: check-deps $(TARGET)
 
@@ -628,6 +628,14 @@ help:
 	@echo "  make install INSTALL_PREFIX=/opt - Install to /opt/bin (requires sudo)"
 	@echo "  make check-deps - Check if all dependencies are installed"
 	@echo ""
+	@echo "CI Testing (replicate GitHub Actions locally):"
+	@echo "  make ci-test        - Quick CI check (GCC + Clang with sanitizers)"
+	@echo "  make ci-all         - Full CI matrix (all compiler/sanitizer combos)"
+	@echo "  make ci-gcc         - Test with GCC only"
+	@echo "  make ci-clang       - Test with Clang only"
+	@echo "  make ci-gcc-sanitize - Test with GCC + sanitizers"
+	@echo "  make ci-clang-sanitize - Test with Clang + sanitizers"
+	@echo ""
 	@echo "Version Management:"
 	@echo "  make version        - Show current version"
 	@echo "  make show-version   - Show detailed version information"
@@ -725,3 +733,92 @@ bump-patch:
 	echo "  - Committed: $(VERSION_FILE) and $(VERSION_H)"; \
 	echo "  - Tagged: v$$NEW_VERSION"; \
 	echo "  - Pushed to remote"
+
+# CI-like testing targets - mirror what GitHub Actions does
+ci-gcc: check-deps
+	@echo "=========================================="
+	@echo "CI Test: Building with GCC"
+	@echo "=========================================="
+	@echo ""
+	@$(MAKE) clean
+	@CC=gcc $(MAKE) all
+	@CC=gcc $(MAKE) test
+	@echo ""
+	@echo "✓ GCC build and tests passed!"
+	@echo ""
+
+ci-clang: check-deps
+	@echo "=========================================="
+	@echo "CI Test: Building with Clang"
+	@echo "=========================================="
+	@echo ""
+	@$(MAKE) clean
+	@CC=clang $(MAKE) all
+	@CC=clang $(MAKE) test
+	@echo ""
+	@echo "✓ Clang build and tests passed!"
+	@echo ""
+
+ci-gcc-sanitize: check-deps
+	@echo "=========================================="
+	@echo "CI Test: Building with GCC + Sanitizers"
+	@echo "=========================================="
+	@echo ""
+	@$(MAKE) clean
+	@CC=gcc SANITIZERS=-fsanitize=address,undefined $(MAKE) all
+	@CC=gcc SANITIZERS=-fsanitize=address,undefined $(MAKE) test
+	@echo ""
+	@echo "✓ GCC + sanitizers build and tests passed!"
+	@echo ""
+
+ci-clang-sanitize: check-deps
+	@echo "=========================================="
+	@echo "CI Test: Building with Clang + Sanitizers"
+	@echo "=========================================="
+	@echo ""
+	@$(MAKE) clean
+	@CC=clang SANITIZERS=-fsanitize=address,undefined $(MAKE) all
+	@CC=clang SANITIZERS=-fsanitize=address,undefined $(MAKE) test
+	@echo ""
+	@echo "✓ Clang + sanitizers build and tests passed!"
+	@echo ""
+
+# Run all CI test combinations (what GitHub Actions does)
+ci-all: check-deps
+	@echo "=========================================="
+	@echo "Running Complete CI Test Matrix"
+	@echo "=========================================="
+	@echo ""
+	@echo "This will test all compiler+sanitizer combinations like GitHub Actions"
+	@echo ""
+	@$(MAKE) ci-gcc
+	@$(MAKE) ci-clang
+	@$(MAKE) ci-gcc-sanitize
+	@$(MAKE) ci-clang-sanitize
+	@echo ""
+	@echo "=========================================="
+	@echo "✓ ALL CI TESTS PASSED!"
+	@echo "=========================================="
+	@echo ""
+	@echo "Tested combinations:"
+	@echo "  ✓ GCC build + tests"
+	@echo "  ✓ Clang build + tests"
+	@echo "  ✓ GCC + sanitizers build + tests"
+	@echo "  ✓ Clang + sanitizers build + tests"
+	@echo ""
+	@echo "Your code should pass CI!"
+	@echo ""
+
+# Quick CI check - just the most important combinations
+ci-test: ci-gcc ci-clang-sanitize
+	@echo ""
+	@echo "=========================================="
+	@echo "✓ Quick CI Check Complete"
+	@echo "=========================================="
+	@echo ""
+	@echo "Tested:"
+	@echo "  ✓ GCC build + tests (default CI compiler)"
+	@echo "  ✓ Clang + sanitizers (catches most issues)"
+	@echo ""
+	@echo "For full CI coverage, run: make ci-all"
+	@echo ""
