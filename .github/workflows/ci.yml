@@ -13,45 +13,46 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
         compiler: [gcc, clang]
-        
     env:
       CC: ${{ matrix.compiler }}
 
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Install dependencies (Ubuntu)
-      if: ${{ matrix.os == 'ubuntu-latest' }}
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y libcurl4-openssl-dev libcjson-dev sqlite3 libsqlite3-dev libssl-dev build-essential
+      - name: Install dependencies (Ubuntu)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libcurl4-openssl-dev libcjson-dev sqlite3 libsqlite3-dev libssl-dev build-essential
 
-    - name: Install dependencies (macOS)
-      if: ${{ matrix.os == 'macos-latest' }}
-      run: |
-        brew install curl cjson sqlite3 openssl pkg-config
+      - name: Install dependencies (macOS)
+        if: matrix.os == 'macos-latest'
+        run: |
+          brew install curl cjson sqlite3 openssl pkg-config
 
-    - name: Build with ${{ matrix.compiler }} (CC=${{ env.CC }})
-      env:
-        CC: gcc
-      run: |
-        make clean
-        if [ "${{ matrix.compiler }}" = "clang" ]; then
-          make clang
-        else
-          make
-        fi
-        
-    - name: Run tests
-      run: make test
-      
-    - name: Test installation
-      run: |
-        make clean
-        make install INSTALL_PREFIX=/tmp/claude-c-install
-        /tmp/claude-c-install/bin/claude-c --version
-        
-    - name: Build with sanitizers
-      run: |
-        make clean
-        make SANITIZERS=-fsanitize=address,undefined
+      - name: Build with ${{ matrix.compiler }} (CC=${{ matrix.compiler }})
+        env:
+          CC: ${{ matrix.compiler }}
+        run: |
+          make clean
+          if [ "${CC}" = "clang" ]; then
+            make clang
+          else
+            make
+          fi
+
+      - name: Run tests
+        run: make test
+
+      - name: Test installation
+        run: |
+          make clean
+          make install INSTALL_PREFIX=/tmp/claude-c-install
+          /tmp/claude-c-install/bin/claude-c --version
+
+      - name: Build with sanitizers
+        env:
+          CC: ${{ matrix.compiler }}
+        run: |
+          make clean
+          make SANITIZERS=-fsanitize=address,undefined
