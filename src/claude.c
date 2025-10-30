@@ -2718,8 +2718,12 @@ static void process_response(ConversationState *state, ApiResponse *response, TU
 
         // Show spinner or status while waiting for tools to complete
         Spinner *tool_spinner = NULL;
-        // Update status to show tool execution progress
-        {
+        if (!tui) {
+            char spinner_msg[128];
+            snprintf(spinner_msg, sizeof(spinner_msg), "Running %d tool%s...",
+                     thread_count, thread_count > 1 ? "s" : "");
+            tool_spinner = spinner_start(spinner_msg, SPINNER_YELLOW);
+        } else {
             char status_msg[128];
             snprintf(status_msg, sizeof(status_msg), "Running %d tool%s...",
                      thread_count, thread_count > 1 ? "s" : "");
@@ -2766,8 +2770,13 @@ static void process_response(ConversationState *state, ApiResponse *response, TU
 
         // If interrupted, clean up and return
         if (interrupted) {
-            // Show interrupted status for TUI
-tui_update_status(tui, "Interrupted by user (ESC) - tools completed");
+            if (!tui) {
+                if (tool_spinner) {
+                    spinner_stop(tool_spinner, "Interrupted by user (ESC) - tools completed", 0);
+                }
+            } else {
+                tui_update_status(tui, "Interrupted by user (ESC) - tools completed");
+            }
 
             free(threads);
             free(args);
@@ -2942,7 +2951,7 @@ static void interactive_mode(ConversationState *state) {
     char status_msg[256];
     snprintf(status_msg, sizeof(status_msg), "Model: %s | Session: %s | Commands: /exit /quit /clear /add-dir /help | Ctrl+D to exit",
              state->model, state->session_id ? state->session_id : "none");
-    tui_update_status(tui, status_msg);
+    tui_update_status(&tui, status_msg);
 
     int running = 1;
 
