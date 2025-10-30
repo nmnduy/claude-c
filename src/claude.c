@@ -2981,20 +2981,6 @@ static void process_response(ConversationState *state, ApiResponse *response, TU
         // Add tool results and continue conversation
         add_tool_results(state, results, tool_count);
 
-        // Debug: Verify API URL is still valid after tool execution
-        LOG_DEBUG("After tool execution: api_url=%s", state->api_url ? state->api_url : "(NULL)");
-        if (!state->api_url || state->api_url[0] == '\0') {
-            LOG_ERROR("API URL corrupted after tool execution!");
-            const char *error_msg = "Internal error: API URL was corrupted during tool execution";
-            if (tui) {
-                tui_add_conversation_line(tui, "[Error]", error_msg, COLOR_PAIR_ERROR);
-            } else {
-                print_error(error_msg);
-            }
-            // results will be freed when conversation state is cleaned up
-            return;
-        }
-
         Spinner *followup_spinner = NULL;
         if (!tui) {
             followup_spinner = spinner_start("Processing tool results...", SPINNER_CYAN);
