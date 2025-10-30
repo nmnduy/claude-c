@@ -47,7 +47,7 @@ static size_t write_callback(void *contents, size_t size, size_t nmemb, void *us
 
 // Forward declaration - this will be implemented in claude.c and exposed via claude_internal.h
 // For now, we declare it here as extern
-extern char* build_request_json_from_state(ConversationState *state);
+
 
 // ============================================================================
 // Bedrock Provider Implementation
