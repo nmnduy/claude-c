@@ -35,6 +35,7 @@
 #include <signal.h>
 #include "colorscheme.h"
 #include "fallback_colors.h"
+#include "patch_parser.h"
 
 #ifdef TEST_BUILD
 // Disable unused function warnings for test builds since not all functions are used by tests
@@ -367,6 +368,7 @@ static int check_for_esc(void) {
 // Forward declarations for TEST_BUILD
 char* read_file(const char *path);
 int write_file(const char *path, const char *content);
+char* resolve_path(const char *path, const char *working_dir);
 cJSON* tool_read(cJSON *params, ConversationState *state);
 cJSON* tool_write(cJSON *params, ConversationState *state);
 cJSON* tool_edit(cJSON *params, ConversationState *state);
@@ -374,10 +376,14 @@ cJSON* tool_todo_write(cJSON *params, ConversationState *state);
 static cJSON* tool_sleep(cJSON *params, ConversationState *state);
 #else
 #define STATIC static
+// Forward declarations
+char* read_file(const char *path);
+int write_file(const char *path, const char *content);
+char* resolve_path(const char *path, const char *working_dir);
 #endif
 
 
-STATIC char* read_file(const char *path) {
+char* read_file(const char *path) {
     FILE *f = fopen(path, "rb");
     if (!f) return NULL;
 
@@ -396,7 +402,7 @@ STATIC char* read_file(const char *path) {
     return content;
 }
 
-STATIC int write_file(const char *path, const char *content) {
+int write_file(const char *path, const char *content) {
     // Create parent directories if they don't exist
     char *path_copy = strdup(path);
     if (!path_copy) return -1;
@@ -423,7 +429,7 @@ STATIC int write_file(const char *path, const char *content) {
     return (written == len) ? 0 : -1;
 }
 
-static char* resolve_path(const char *path, const char *working_dir) {
+char* resolve_path(const char *path, const char *working_dir) {
     char *resolved = malloc(PATH_MAX);
     if (!resolved) return NULL;
 
@@ -874,6 +880,26 @@ STATIC cJSON* tool_write(cJSON *params, ConversationState *state) {
         return error;
     }
 
+    // Check if content is in patch format
+    const char *content = content_json->valuestring;
+    if (is_patch_format(content)) {
+        LOG_INFO("Detected patch format in Write tool, parsing and applying...");
+
+        // Parse the patch
+        ParsedPatch *patch = parse_patch_format(content);
+        if (!patch) {
+            cJSON *error = cJSON_CreateObject();
+            cJSON_AddStringToObject(error, "error", "Failed to parse patch format");
+            return error;
+        }
+
+        // Apply the patch
+        cJSON *result = apply_patch(patch, state);
+        free_parsed_patch(patch);
+
+        return result;
+    }
+
     char *resolved_path = resolve_path(path_json->valuestring, state->working_dir);
     if (!resolved_path) {
         cJSON *error = cJSON_CreateObject();
@@ -1092,6 +1118,26 @@ STATIC cJSON* tool_edit(cJSON *params, ConversationState *state) {
         cJSON *error = cJSON_CreateObject();
         cJSON_AddStringToObject(error, "error", "Missing required parameters");
         return error;
+    }
+
+    // Check if new_string content is in patch format
+    const char *new_string_content = new_json->valuestring;
+    if (is_patch_format(new_string_content)) {
+        LOG_INFO("Detected patch format in Edit tool, parsing and applying...");
+
+        // Parse the patch
+        ParsedPatch *patch = parse_patch_format(new_string_content);
+        if (!patch) {
+            cJSON *error = cJSON_CreateObject();
+            cJSON_AddStringToObject(error, "error", "Failed to parse patch format");
+            return error;
+        }
+
+        // Apply the patch
+        cJSON *result = apply_patch(patch, state);
+        free_parsed_patch(patch);
+
+        return result;
     }
 
     int replace_all = replace_all_json && cJSON_IsBool(replace_all_json) ?
