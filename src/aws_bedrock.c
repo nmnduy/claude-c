@@ -154,6 +154,17 @@ static char* exec_command_impl(const char *command) {
     return output;
 }
 
+static char* (*exec_command)(const char *cmd) = exec_command_impl;
+static int (*system_fn)(const char *cmd) = system;
+
+void aws_bedrock_set_exec_command_fn(char* (*fn)(const char *cmd)) {
+    exec_command = fn ? fn : exec_command_impl;
+}
+
+void aws_bedrock_set_system_fn(int (*fn)(const char *cmd)) {
+    system_fn = fn ? fn : system;
+}
+
 // ============================================================================
 // Public API Implementation
 // ============================================================================
@@ -552,7 +563,7 @@ static AWSCredentials* bedrock_load_credentials_internal(const char *profile, co
         LOG_INFO("AWS_AUTH_COMMAND=%s", custom_auth_cmd);
         LOG_INFO("Running custom authentication command from AWS_AUTH_COMMAND");
         /* Execute the custom auth command */
-        int auth_result = system(custom_auth_cmd);
+        int auth_result = system_fn(custom_auth_cmd);
         if (auth_result == 0) {
             LOG_INFO("Custom authentication command succeeded, retrying credential load...");
             return bedrock_load_credentials_internal(profile, region, depth + 1);
@@ -703,7 +714,7 @@ int bedrock_authenticate(const char *profile) {
     }
 
     LOG_DEBUG("Executing authentication command...");
-    int result = system(command);
+    int result = system_fn(command);
 
     if (result == 0) {
         LOG_DEBUG("Authentication command completed with exit code 0");
