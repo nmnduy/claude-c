@@ -57,6 +57,7 @@ TEST_WRITE_DIFF_INTEGRATION_TARGET = $(BUILD_DIR)/test_write_diff_integration
 TEST_ROTATION_TARGET = $(BUILD_DIR)/test_rotation
 TEST_PATCH_PARSER_TARGET = $(BUILD_DIR)/test_patch_parser
 TEST_THREAD_CANCEL_TARGET = $(BUILD_DIR)/test_thread_cancel
+TEST_AWS_CRED_ROTATION_TARGET = $(BUILD_DIR)/test_aws_credential_rotation
 QUERY_TOOL = $(BUILD_DIR)/query_logs
 SRC = src/claude.c
 LOGGER_SRC = src/logger.c
@@ -102,9 +103,10 @@ TEST_WRITE_DIFF_INTEGRATION_SRC = tests/test_write_diff_integration.c
 TEST_ROTATION_SRC = tests/test_rotation.c
 TEST_PATCH_PARSER_SRC = tests/test_patch_parser.c
 TEST_THREAD_CANCEL_SRC = tests/test_thread_cancel.c
+TEST_AWS_CRED_ROTATION_SRC = tests/test_aws_credential_rotation.c
 QUERY_TOOL_SRC = tools/query_logs.c
 
-.PHONY: all clean check-deps install test test-edit test-input test-read test-lineedit test-todo test-todo-write test-paste test-retry-jitter test-openai-format test-write-diff-integration test-rotation test-patch-parser test-thread-cancel query-tool debug analyze sanitize-ub sanitize-all sanitize-leak valgrind memscan version show-version update-version bump-version bump-patch build clang ci-test ci-gcc ci-clang ci-gcc-sanitize ci-clang-sanitize ci-all
+.PHONY: all clean check-deps install test test-edit test-input test-read test-lineedit test-todo test-todo-write test-paste test-retry-jitter test-openai-format test-write-diff-integration test-rotation test-patch-parser test-thread-cancel test-aws-cred-rotation query-tool debug analyze sanitize-ub sanitize-all sanitize-leak valgrind memscan version show-version update-version bump-version bump-patch build clang ci-test ci-gcc ci-clang ci-gcc-sanitize ci-clang-sanitize ci-all
 
 all: check-deps $(TARGET)
 
@@ -116,7 +118,7 @@ debug: check-deps $(BUILD_DIR)/claude-c-debug
 
 query-tool: check-deps $(QUERY_TOOL)
 
-test: test-edit test-input test-read test-lineedit test-todo test-paste test-timing test-openai-format test-write-diff-integration test-rotation test-patch-parser test-thread-cancel
+test: test-edit test-input test-read test-lineedit test-todo test-paste test-timing test-openai-format test-write-diff-integration test-rotation test-patch-parser test-thread-cancel test-aws-cred-rotation
 
 test-edit: check-deps $(TEST_EDIT_TARGET)
 	@echo ""
@@ -201,6 +203,12 @@ test-thread-cancel: check-deps $(TEST_THREAD_CANCEL_TARGET)
 	@echo "Running Thread Cancellation tests..."
 	@echo ""
 	@./$(TEST_THREAD_CANCEL_TARGET)
+
+test-aws-cred-rotation: check-deps $(TEST_AWS_CRED_ROTATION_TARGET)
+	@echo ""
+	@echo "Running AWS Credential Rotation tests..."
+	@echo ""
+	@./$(TEST_AWS_CRED_ROTATION_TARGET)
 
 $(TARGET): $(SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(LINEEDIT_OBJ) $(COMMANDS_OBJ) $(COMPLETION_OBJ) $(TUI_OBJ) $(TODO_OBJ) $(AWS_BEDROCK_OBJ) $(PROVIDER_OBJ) $(OPENAI_PROVIDER_OBJ) $(OPENAI_MESSAGES_OBJ) $(BEDROCK_PROVIDER_OBJ) $(BUILTIN_THEMES_OBJ) $(PATCH_PARSER_OBJ) $(VERSION_H)
 	@mkdir -p $(BUILD_DIR)
@@ -622,6 +630,15 @@ $(TEST_THREAD_CANCEL_TARGET): $(TEST_THREAD_CANCEL_SRC)
 	@$(CC) $(CFLAGS) -o $(TEST_THREAD_CANCEL_TARGET) $(TEST_THREAD_CANCEL_SRC) -lpthread
 	@echo ""
 	@echo "✓ Thread Cancellation test build successful!"
+	@echo ""
+
+# Test target for AWS credential rotation with polling
+$(TEST_AWS_CRED_ROTATION_TARGET): $(TEST_AWS_CRED_ROTATION_SRC) $(AWS_BEDROCK_OBJ) $(LOGGER_OBJ)
+	@mkdir -p $(BUILD_DIR)
+	@echo "Compiling AWS Credential Rotation test suite..."
+	@$(CC) $(CFLAGS) -o $(TEST_AWS_CRED_ROTATION_TARGET) $(TEST_AWS_CRED_ROTATION_SRC) $(AWS_BEDROCK_OBJ) $(LOGGER_OBJ) $(LDFLAGS)
+	@echo ""
+	@echo "✓ AWS Credential Rotation test build successful!"
 	@echo ""
 
 install: $(TARGET)

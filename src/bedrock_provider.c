@@ -12,6 +12,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>  // for usleep
 #include <curl/curl.h>
 
 // ============================================================================
@@ -357,10 +358,40 @@ static ApiCallResult bedrock_call_api(Provider *self, ConversationState *state) 
                 // Call rotation command (aws sso login)
                 LOG_DEBUG("Calling bedrock_authenticate to rotate credentials...");
                 if (bedrock_authenticate(profile) == 0) {
-                    LOG_INFO("Authentication successful, reloading credentials...");
+                    LOG_INFO("Authentication successful, waiting for credential cache to update...");
 
-                    // Reload credentials after successful authentication
-                    AWSCredentials *new_creds = bedrock_load_credentials(profile, config->region);
+                    // Poll for new credentials (AWS SSO writes credentials asynchronously)
+                    // Try up to 10 times with 200ms intervals (max 2 seconds total)
+                    AWSCredentials *new_creds = NULL;
+                    int max_attempts = 10;
+                    int attempt = 0;
+
+                    for (attempt = 0; attempt < max_attempts; attempt++) {
+                        if (attempt > 0) {
+                            usleep(200000);  // 200ms between attempts
+                        }
+
+                        LOG_DEBUG("Polling for updated credentials (attempt %d/%d)...", attempt + 1, max_attempts);
+                        AWSCredentials *polled_creds = bedrock_load_credentials(profile, config->region);
+
+                        if (polled_creds && polled_creds->access_key_id) {
+                            // Check if credentials have changed
+                            if (saved_access_key && strcmp(saved_access_key, polled_creds->access_key_id) != 0) {
+                                LOG_INFO("✓ Detected new credentials after rotation (attempt %d)", attempt + 1);
+                                LOG_DEBUG("Old key: %.10s..., New key: %.10s...",
+                                         saved_access_key, polled_creds->access_key_id);
+                                new_creds = polled_creds;
+                                break;
+                            } else {
+                                LOG_DEBUG("✗ Credentials unchanged (attempt %d)", attempt + 1);
+                                bedrock_creds_free(polled_creds);
+                            }
+                        } else {
+                            LOG_DEBUG("✗ Failed to load credentials (attempt %d)", attempt + 1);
+                            if (polled_creds) bedrock_creds_free(polled_creds);
+                        }
+                    }
+
                     if (new_creds) {
                         bedrock_creds_free(config->creds);
                         config->creds = new_creds;
@@ -385,7 +416,7 @@ static ApiCallResult bedrock_call_api(Provider *self, ConversationState *state) 
 
                         LOG_WARN("API call still failed after rotation: %s", result.error_message);
                     } else {
-                        LOG_ERROR("Failed to reload credentials after authentication");
+                        LOG_ERROR("Failed to detect new credentials after authentication (timed out after %d attempts)", max_attempts);
                     }
                 } else {
                     LOG_ERROR("Authentication command failed");
@@ -401,7 +432,43 @@ static ApiCallResult bedrock_call_api(Provider *self, ConversationState *state) 
             LOG_WARN("Auth error persists after rotation, attempting one final rotation...");
 
             if (bedrock_authenticate(profile) == 0) {
-                AWSCredentials *final_creds = bedrock_load_credentials(profile, config->region);
+                LOG_INFO("Final authentication successful, polling for updated credentials...");
+
+                // Poll for new credentials with the same strategy
+                AWSCredentials *final_creds = NULL;
+                int max_attempts = 10;
+                int attempt = 0;
+                char *current_key = config->creds && config->creds->access_key_id ?
+                                   strdup(config->creds->access_key_id) : NULL;
+
+                for (attempt = 0; attempt < max_attempts; attempt++) {
+                    if (attempt > 0) {
+                        usleep(200000);  // 200ms between attempts
+                    }
+
+                    LOG_DEBUG("Polling for final credential update (attempt %d/%d)...", attempt + 1, max_attempts);
+                    AWSCredentials *polled_creds = bedrock_load_credentials(profile, config->region);
+
+                    if (polled_creds && polled_creds->access_key_id) {
+                        // Check if credentials have changed
+                        if (current_key && strcmp(current_key, polled_creds->access_key_id) != 0) {
+                            LOG_INFO("✓ Detected new credentials on final rotation (attempt %d)", attempt + 1);
+                            LOG_DEBUG("Old key: %.10s..., New key: %.10s...",
+                                     current_key, polled_creds->access_key_id);
+                            final_creds = polled_creds;
+                            break;
+                        } else {
+                            LOG_DEBUG("✗ Credentials unchanged on final rotation (attempt %d)", attempt + 1);
+                            bedrock_creds_free(polled_creds);
+                        }
+                    } else {
+                        LOG_DEBUG("✗ Failed to load credentials on final rotation (attempt %d)", attempt + 1);
+                        if (polled_creds) bedrock_creds_free(polled_creds);
+                    }
+                }
+
+                free(current_key);
+
                 if (final_creds) {
                     bedrock_creds_free(config->creds);
                     config->creds = final_creds;
@@ -419,6 +486,8 @@ static ApiCallResult bedrock_call_api(Provider *self, ConversationState *state) 
                     } else {
                         LOG_ERROR("API call failed even after final credential rotation");
                     }
+                } else {
+                    LOG_ERROR("Failed to detect new credentials on final rotation (timed out after %d attempts)", max_attempts);
                 }
             }
         }
