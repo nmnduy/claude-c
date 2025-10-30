@@ -604,7 +604,7 @@ static int show_diff(const char *file_path, const char *original_content) {
     }
 
     // Read and display colorized diff output
-    printf("\n%s--- Changes made to %s ---%s\n", header_color_start, file_path, ANSI_RESET);
+    
     char line[1024];
     int has_diff = 0;
 
@@ -640,7 +640,7 @@ static int show_diff(const char *file_path, const char *original_content) {
         printf("(No differences found)\n");
     }
 
-    printf("%s--- End of diff ---%s\n\n", header_color_start, ANSI_RESET);
+    
     return 0;
 }
 
