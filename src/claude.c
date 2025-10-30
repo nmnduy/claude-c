@@ -3285,7 +3285,8 @@ int main(int argc, char *argv[]) {
 
 #ifndef TEST_BUILD
     // Initialize provider (OpenAI or Bedrock based on environment)
-    ProviderInitResult provider_result = provider_init(model, state.api_key);
+    ProviderInitResult provider_result;
+    provider_init(model, state.api_key, &provider_result);
     if (!provider_result.provider) {
         LOG_ERROR("Failed to initialize provider: %s",
                   provider_result.error_message ? provider_result.error_message : "unknown error");

@@ -45,25 +45,11 @@ typedef struct Provider {
 
     /**
      * Execute a single API call attempt (no retries)
-     *
-     * Provider-specific implementation that handles:
-     * - Credential validation/refresh (AWS: check/refresh credentials before signing)
-     * - Request formatting (OpenAI: pass-through, Bedrock: convert to Anthropic format)
-     * - Authentication (OpenAI: Bearer token header, AWS: SigV4 request signing)
-     * - HTTP execution (single attempt using libcurl)
-     * - Response parsing (Bedrock: convert from Anthropic to OpenAI format)
-     *
-     * @param self - Provider instance
-     * @param state - Conversation state with messages, model, etc.
-     * @return ApiCallResult with response (on success) or error details (on failure)
-     *         Caller must free result.response, result.raw_response, and result.error_message
      */
     ApiCallResult (*call_api)(struct Provider *self, struct ConversationState *state);
 
     /**
      * Cleanup provider resources
-     *
-     * @param self - Provider instance to cleanup (will be freed)
      */
     void (*cleanup)(struct Provider *self);
 
@@ -87,9 +73,10 @@ typedef struct {
  *
  * @param model - Model name (e.g., "claude-sonnet-4-20250514")
  * @param api_key - API key (for OpenAI provider, may be NULL for Bedrock)
- * @return ProviderInitResult with provider and base URL, or error details
- *         Caller must free provider with provider->cleanup() and free api_url
+ * @param[out] result - Pointer to ProviderInitResult to populate
+ *         On success: result->provider and result->api_url are set (caller owns both)
+ *         On failure: result->error_message is set (caller must free)
  */
-ProviderInitResult provider_init(const char *model, const char *api_key);
+void provider_init(const char *model, const char *api_key, ProviderInitResult *result);
 
 #endif // PROVIDER_H
