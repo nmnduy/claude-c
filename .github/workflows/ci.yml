@@ -30,29 +30,34 @@ jobs:
         run: |
           brew install curl cjson sqlite3 openssl pkg-config
 
-      - name: Build with ${{ matrix.compiler }} (CC=${{ matrix.compiler }})
+      - name: Build with ${{ matrix.compiler }}
         env:
           CC: ${{ matrix.compiler }}
         run: |
           make clean
-          if [ "${CC}" = "clang" ]; then
-            make clang
-          else
-            make
-          fi
+          make all
 
-      - name: Run tests
+      - name: Run tests with ${{ matrix.compiler }}
+        env:
+          CC: ${{ matrix.compiler }}
         run: make test
 
       - name: Test installation
+        env:
+          CC: ${{ matrix.compiler }}
         run: |
           make clean
           make install INSTALL_PREFIX=/tmp/claude-c-install
           /tmp/claude-c-install/bin/claude-c --version
 
-      - name: Build with sanitizers
+      - name: Build with sanitizers (${{ matrix.compiler }})
         env:
           CC: ${{ matrix.compiler }}
         run: |
           make clean
-          make SANITIZERS=-fsanitize=address,undefined
+          make SANITIZERS=-fsanitize=address,undefined all
+
+      - name: Run tests with sanitizers (${{ matrix.compiler }})
+        env:
+          CC: ${{ matrix.compiler }}
+        run: make SANITIZERS=-fsanitize=address,undefined test
