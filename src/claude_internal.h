@@ -216,6 +216,10 @@ void api_response_free(ApiResponse *response);
  * enable_caching: whether to add cache_control markers
  * Returns: cJSON array of tool definitions (caller must free)
  */
+// Add cache_control marker to a content block
+void add_cache_control(cJSON *obj);
+
+// Get tool definitions for the API request
 cJSON* get_tool_definitions(int enable_caching);
 
 #endif // CLAUDE_INTERNAL_H

@@ -6,14 +6,11 @@
 
 #include "openai_messages.h"
 #include "logger.h"
+#include "claude_internal.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-// Forward declare functions from claude.c
-extern void add_cache_control(cJSON *block);
-extern cJSON* get_tool_definitions(int enable_caching);
 
 /**
  * Build OpenAI request JSON from internal message format
