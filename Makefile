@@ -104,7 +104,7 @@ TEST_PATCH_PARSER_SRC = tests/test_patch_parser.c
 TEST_THREAD_CANCEL_SRC = tests/test_thread_cancel.c
 QUERY_TOOL_SRC = tools/query_logs.c
 
-.PHONY: all clean check-deps install test test-edit test-input test-read test-lineedit test-todo test-todo-write test-paste test-retry-jitter test-openai-format test-write-diff-integration test-rotation test-patch-parser test-thread-cancel query-tool debug analyze sanitize-ub sanitize-all sanitize-leak valgrind memscan version show-version update-version bump-patch build clang ci-test ci-gcc ci-clang ci-gcc-sanitize ci-clang-sanitize ci-all
+.PHONY: all clean check-deps install test test-edit test-input test-read test-lineedit test-todo test-todo-write test-paste test-retry-jitter test-openai-format test-write-diff-integration test-rotation test-patch-parser test-thread-cancel query-tool debug analyze sanitize-ub sanitize-all sanitize-leak valgrind memscan version show-version update-version bump-version bump-patch build clang ci-test ci-gcc ci-clang ci-gcc-sanitize ci-clang-sanitize ci-all
 
 all: check-deps $(TARGET)
 
@@ -684,7 +684,7 @@ help:
 	@echo "Version Management:"
 	@echo "  make version        - Show current version"
 	@echo "  make show-version   - Show detailed version information"
-	@echo "  make bump-patch     - Increment patch version (e.g., 0.0.2 → 0.0.3)"
+	@echo "  make bump-patch     - Increment patch version and update README (e.g., 0.0.2 → 0.0.3)"
 	@echo "  make update-version VERSION=1.0.0 - Set specific version number"
 	@echo ""
 	@echo "Memory Bug Scanning:"
@@ -763,8 +763,13 @@ bump-patch:
 	rm -f $(VERSION_H); \
 	$(MAKE) $(VERSION_H); \
 	echo ""; \
+	echo "Updating README.md with new version..."; \
+	sed -i.bak 's/git clone --branch v[0-9]*\.[0-9]*\.[0-9]*/git clone --branch v'"$$NEW_VERSION"'/g' README.md; \
+	rm -f README.md.bak; \
+	echo "✓ Updated README.md with v$$NEW_VERSION"; \
+	echo ""; \
 	echo "Staging version files..."; \
-	git add $(VERSION_FILE) $(VERSION_H); \
+	git add $(VERSION_FILE) $(VERSION_H) README.md; \
 	git commit -m "chore: bump version to $$NEW_VERSION"; \
 	echo ""; \
 	echo "Creating git tag v$$NEW_VERSION..."; \
@@ -776,6 +781,7 @@ bump-patch:
 	echo ""; \
 	echo "✓ Version $$NEW_VERSION released successfully!"; \
 	echo "  - Committed: $(VERSION_FILE) and $(VERSION_H)"; \
+	echo "  - Updated: README.md with new version"; \
 	echo "  - Tagged: v$$NEW_VERSION"; \
 	echo "  - Pushed to remote"
 
