@@ -57,7 +57,7 @@ typedef struct {
 /**
  * Initialize paste state
  */
-static inline PasteState* paste_state_init(void) {
+static PasteState* paste_state_init(void) {
     PasteState *state = calloc(1, sizeof(PasteState));
     if (!state) return NULL;
 
@@ -79,7 +79,7 @@ static inline PasteState* paste_state_init(void) {
 /**
  * Free paste state
  */
-static inline void paste_state_free(PasteState *state) {
+static void paste_state_free(PasteState *state) {
     if (!state) return;
     free(state->buffer);
     free(state);
@@ -88,7 +88,7 @@ static inline void paste_state_free(PasteState *state) {
 /**
  * Reset paste buffer
  */
-static inline void paste_state_reset(PasteState *state) {
+static void paste_state_reset(PasteState *state) {
     if (!state) return;
     state->buffer_size = 0;
     state->in_paste = 0;
@@ -99,7 +99,8 @@ static inline void paste_state_reset(PasteState *state) {
 /**
  * Enable bracketed paste mode in terminal
  */
-static inline void enable_bracketed_paste(void) {
+__attribute__((unused))
+static void enable_bracketed_paste(void) {
     printf(ENABLE_BRACKETED_PASTE);
     fflush(stdout);
 }
@@ -107,7 +108,8 @@ static inline void enable_bracketed_paste(void) {
 /**
  * Disable bracketed paste mode in terminal
  */
-static inline void disable_bracketed_paste(void) {
+__attribute__((unused))
+static void disable_bracketed_paste(void) {
     printf(DISABLE_BRACKETED_PASTE);
     fflush(stdout);
 }
@@ -116,7 +118,8 @@ static inline void disable_bracketed_paste(void) {
  * Detect paste by timing (fallback for terminals without bracketed paste)
  * Returns 1 if rapid input burst detected (likely paste)
  */
-static inline int detect_paste_by_timing(PasteState *state) {
+__attribute__((unused))
+static int detect_paste_by_timing(PasteState *state) {
     if (!state) return 0;
 
     struct timeval now;
@@ -142,7 +145,7 @@ static inline int detect_paste_by_timing(PasteState *state) {
  * Add character to paste buffer
  * Returns 0 on success, -1 on buffer overflow
  */
-static inline int paste_buffer_add_char(PasteState *state, char c) {
+static int paste_buffer_add_char(PasteState *state, char c) {
     if (!state) return -1;
 
     if (state->buffer_size >= state->buffer_capacity - 1) {
@@ -158,7 +161,7 @@ static inline int paste_buffer_add_char(PasteState *state, char c) {
  * Sanitize pasted content
  * Modifies buffer in-place, returns new length
  */
-static inline size_t paste_sanitize(char *buffer, size_t len, PasteSanitizeOptions *opts) {
+static size_t paste_sanitize(char *buffer, size_t len, PasteSanitizeOptions *opts) {
     if (!buffer || len == 0) return 0;
 
     // Default options
@@ -225,7 +228,7 @@ static inline size_t paste_sanitize(char *buffer, size_t len, PasteSanitizeOptio
 /**
  * Get preview of pasted content (first N chars)
  */
-static inline char* paste_get_preview(const char *content, size_t len, size_t preview_len) {
+static char* paste_get_preview(const char *content, size_t len, size_t preview_len) {
     if (!content || len == 0) return NULL;
 
     size_t actual_len = (len < preview_len) ? len : preview_len;
@@ -247,7 +250,7 @@ static inline char* paste_get_preview(const char *content, size_t len, size_t pr
  * Check if sequence matches bracketed paste start
  * Returns number of characters consumed (6 if match, 0 if no match)
  */
-static inline int check_paste_start_sequence(const char *buffer, size_t len) {
+static int check_paste_start_sequence(const char *buffer, size_t len) {
     if (len < 6) return 0;
     if (strncmp(buffer, BRACKETED_PASTE_START, 6) == 0) {
         return 6;
@@ -259,7 +262,7 @@ static inline int check_paste_start_sequence(const char *buffer, size_t len) {
  * Check if sequence matches bracketed paste end
  * Returns number of characters consumed (6 if match, 0 if no match)
  */
-static inline int check_paste_end_sequence(const char *buffer, size_t len) {
+static int check_paste_end_sequence(const char *buffer, size_t len) {
     if (len < 6) return 0;
     if (strncmp(buffer, BRACKETED_PASTE_END, 6) == 0) {
         return 6;
@@ -276,7 +279,8 @@ static inline int check_paste_end_sequence(const char *buffer, size_t len) {
  *   3 = paste ended, buffer contains complete paste
  *  -1 = buffer overflow
  */
-static inline int paste_process_char(PasteState *state, char c) {
+__attribute__((unused))
+static int paste_process_char(PasteState *state, char c) {
     if (!state) return 0;
 
     // Not in paste - check for start sequence
@@ -338,7 +342,7 @@ static inline int paste_process_char(PasteState *state, char c) {
  * Get the completed paste content
  * Returns pointer to internal buffer (do not free)
  */
-static inline const char* paste_get_content(PasteState *state, size_t *out_len) {
+static const char* paste_get_content(PasteState *state, size_t *out_len) {
     if (!state) return NULL;
     if (out_len) *out_len = state->buffer_size;
     state->buffer[state->buffer_size] = '\0'; // Ensure null-terminated
