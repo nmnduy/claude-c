@@ -58,8 +58,9 @@ Abort trap: 6
 - [x] pasting still causes enter
 - [x] large paste fails. how does node js claude prevents that and show X lines pasted.
 - [x] pressing Esc will wait for tool to finish but there is no indicator
-    - [ ] 'esc' doesn't show interrupted right away.
-    - [ ] 'esc' should interrupt certain tools right away and dont wait
+    - [x] 'esc' doesn't show interrupted right away.
+    - [x] 'esc' should interrupt certain tools right away and dont wait
+    - [ ] 'esc' doesn't interrupt API call
 - [x] logs are not flushed often?
 - [x] ctrl + c twice to exit. dont exit right away on ctrl + c
 - [x] all log records should have session id tag. sessions are essential and each run has a new session id
@@ -148,3 +149,12 @@ https://api.openai.com|400|{
   }
 }
 - [x] remove paste confirmation
+
+- [ ] print new file content with truncation if too long in this case
+
+```sh
+[Tool: Write] CACHE_CHECKLIST.md
+- Running 1 tool...
+--- Created new file: /Users/dunguyen/fgit/heliovault/ios/CACHE_CHECKLIST.md ---
+(New file written - no previous content to compare)
+```
