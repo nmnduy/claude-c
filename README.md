@@ -45,6 +45,15 @@ sudo yum install libcurl-devel cjson-devel gcc make
 
 ## Building
 
+**Recommended: Use stable release**
+```bash
+# Clone the latest stable(ish) version (v0.0.17)
+git clone --branch v0.0.17 https://github.com/dunxinh/claude-c.git
+cd claude-c
+make
+```
+
+**Building from source (latest development):**
 ```bash
 cd claude-c
 make
