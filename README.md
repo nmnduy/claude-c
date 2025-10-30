@@ -61,6 +61,14 @@ This installs to `/usr/local/bin/claude-c` so you can run it from anywhere.
 
 ## Usage
 
+### Quick start
+
+```sh
+export OPENAI_API_KEY="$OPENROUTER_API_KEY"
+export OPENAI_API_BASE="https://openrouter.ai/api"
+export OPENAI_MODEL="z-ai/glm-4.6"
+claude-c
+```
 ### Prerequisites
 
 Set your Anthropic API key:
