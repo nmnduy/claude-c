@@ -95,7 +95,6 @@ static PatchOperation parse_operation(const char *block) {
 
     // Extract file path
     size_t path_len = (size_t)(line_end - file_marker);
-    {
     char *raw_path = malloc(path_len + 1);
     if (!raw_path) {
         LOG_ERROR("Failed to allocate memory for file path");
@@ -104,18 +103,15 @@ static PatchOperation parse_operation(const char *block) {
     }
     memcpy(raw_path, file_marker, path_len);
     raw_path[path_len] = '\0';
+    
     // Trim whitespace, free raw buffer
-    char *trimmed = trim_whitespace(raw_path);
+    op.file_path = trim_whitespace(raw_path);
     free(raw_path);
-    op.file_path = trimmed;
 
     if (!op.file_path) {
         LOG_ERROR("Failed to allocate memory for file path");
         return op;
     }
-    memcpy(op.file_path, file_marker, path_len);
-    op.file_path[path_len] = '\0';
-    op.file_path = trim_whitespace(op.file_path);
 
     // Find the @@ markers
     const char *old_marker = strstr(line_end, "@@");
