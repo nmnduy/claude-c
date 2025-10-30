@@ -57,6 +57,8 @@ TEST_WRITE_DIFF_INTEGRATION_TARGET = $(BUILD_DIR)/test_write_diff_integration
 TEST_ROTATION_TARGET = $(BUILD_DIR)/test_rotation
 QUERY_TOOL = $(BUILD_DIR)/query_logs
 SRC = src/claude.c
+UI_SRC = src/ui/status.c
+UI_OBJ = $(BUILD_DIR)/status.o
 LOGGER_SRC = src/logger.c
 LOGGER_OBJ = $(BUILD_DIR)/logger.o
 PERSISTENCE_SRC = src/persistence.c
@@ -100,7 +102,17 @@ QUERY_TOOL_SRC = tools/query_logs.c
 
 .PHONY: all clean check-deps install test test-edit test-input test-read test-lineedit test-todo test-todo-write test-paste test-retry-jitter test-openai-format test-write-diff-integration test-rotation query-tool debug analyze sanitize-ub sanitize-all sanitize-leak valgrind memscan version show-version update-version bump-patch build clang
 
+# UI status module
+UI_SRC = src/ui/status.c
+UI_OBJ = $(BUILD_DIR)/status.o
+
 all: check-deps $(TARGET)
+
+# Status module build
+$(UI_OBJ): $(UI_SRC)
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c -o $(UI_OBJ) $(UI_SRC)
+
 
 build: check-deps $(TARGET)
 
@@ -110,7 +122,7 @@ debug: check-deps $(BUILD_DIR)/claude-c-debug
 
 query-tool: check-deps $(QUERY_TOOL)
 
-test: test-edit test-input test-read test-lineedit test-todo test-paste test-timing test-openai-format test-write-diff-integration test-rotation
+test: test-edit test-input test-read test-lineedit test-todo test-paste test-status test-timing test-openai-format test-write-diff-integration test-rotation
 
 test-edit: check-deps $(TEST_EDIT_TARGET)
 	@echo ""
@@ -154,6 +166,13 @@ test-paste: check-deps $(TEST_PASTE_TARGET)
 	@echo ""
 	@./$(TEST_PASTE_TARGET)
 
+# Status module tests
+test-status: check-deps $(BUILD_DIR)/test_status
+	@echo ""
+	@echo "Running Status module tests..."
+	@echo ""
+	@./$(BUILD_DIR)/test_status
+
 test-retry-jitter: check-deps $(TEST_RETRY_JITTER_TARGET)
 	@echo ""
 	@echo "Running Retry Jitter tests..."
@@ -178,6 +197,12 @@ test-write-diff-integration: check-deps $(TEST_WRITE_DIFF_INTEGRATION_TARGET)
 	@echo ""
 	@./$(TEST_WRITE_DIFF_INTEGRATION_TARGET)
 
+
+	@echo ""
+	@echo "Running Status module tests..."
+	@echo ""
+	@./$(BUILD_DIR)/test_status
+
 test-rotation: check-deps $(TEST_ROTATION_TARGET)
 	@echo ""
 	@echo "Running database rotation tests..."
@@ -186,12 +211,24 @@ test-rotation: check-deps $(TEST_ROTATION_TARGET)
 
 $(TARGET): $(SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(LINEEDIT_OBJ) $(COMMANDS_OBJ) $(COMPLETION_OBJ) $(TUI_OBJ) $(TODO_OBJ) $(AWS_BEDROCK_OBJ) $(PROVIDER_OBJ) $(OPENAI_PROVIDER_OBJ) $(OPENAI_MESSAGES_OBJ) $(BEDROCK_PROVIDER_OBJ) $(BUILTIN_THEMES_OBJ) $(VERSION_H)
 	@mkdir -p $(BUILD_DIR)
-	$(CC) $(CFLAGS) -o $(TARGET) $(SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(LINEEDIT_OBJ) $(COMMANDS_OBJ) $(COMPLETION_OBJ) $(TUI_OBJ) $(TODO_OBJ) $(AWS_BEDROCK_OBJ) $(PROVIDER_OBJ) $(OPENAI_PROVIDER_OBJ) $(OPENAI_MESSAGES_OBJ) $(BEDROCK_PROVIDER_OBJ) $(BUILTIN_THEMES_OBJ) $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $(TARGET) $(SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(LINEEDIT_OBJ) $(COMMANDS_OBJ) $(COMPLETION_OBJ) $(TUI_OBJ) $(TODO_OBJ) $(AWS_BEDROCK_OBJ) $(PROVIDER_OBJ) $(OPENAI_PROVIDER_OBJ) $(OPENAI_MESSAGES_OBJ) $(BEDROCK_PROVIDER_OBJ) $(BUILTIN_THEMES_OBJ) $(UI_OBJ) $(LDFLAGS)
 	@echo ""
 	@echo "✓ Build successful!"
 	@echo "Version: $(VERSION)"
 	@echo "Run: ./$(TARGET) \"your prompt here\""
 	@echo ""
+
+# Status module tests
+$(BUILD_DIR)/status_test.o: $(UI_SRC)
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(CFLAGS) -DTEST_BUILD -I. -Isrc -c $(UI_SRC) -o $(BUILD_DIR)/status_test.o
+
+$(BUILD_DIR)/test_status.o: tests/test_status.c
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(CFLAGS) -Isrc -c tests/test_status.c -o $(BUILD_DIR)/test_status.o
+
+$(BUILD_DIR)/test_status: $(BUILD_DIR)/status_test.o $(BUILD_DIR)/test_status.o
+	$(CC) $(CFLAGS) -o $(BUILD_DIR)/test_status $(BUILD_DIR)/status_test.o $(BUILD_DIR)/test_status.o $(LDFLAGS)
 
 # Generate version.h from VERSION file
 $(VERSION_H): $(VERSION_FILE)

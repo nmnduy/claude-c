@@ -4,10 +4,11 @@
 
 #include "tui.h"
 #include "lineedit.h"
+#include "ui/status.h"
 #define COLORSCHEME_EXTERN
 #include "colorscheme.h"
 #include "fallback_colors.h"
-#include "indicators.h"
+// #include "indicators.h"  // Spinner removed, status module used
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
@@ -27,6 +28,8 @@ static Spinner *g_tui_spinner = NULL;
 
 
 int tui_init(TUIState *tui) {
+    // Initialize status module
+    status_init();
     if (!tui) return -1;
 
     // Set locale for UTF-8 support
@@ -62,6 +65,8 @@ int tui_init(TUIState *tui) {
 }
 
 void tui_cleanup(TUIState *tui) {
+    // Clean up status module
+    status_cleanup();
     if (!tui) return;
 
     // Stop any running spinner
@@ -222,23 +227,14 @@ void tui_add_conversation_line(TUIState *tui, const char *prefix, const char *te
 
 void tui_update_status(TUIState *tui, const char *status_text) {
     if (!tui || !tui->is_initialized) return;
-
-    // If status text is empty, stop any running spinner and clear the line
+    // Clear any previously drawn status
+    clear_status();
+    // If no status text, just stop here
     if (!status_text || strlen(status_text) == 0) {
-        if (g_tui_spinner) {
-            spinner_stop(g_tui_spinner, NULL, 1);  // Clear without message
-            g_tui_spinner = NULL;
-        }
         return;
     }
-
-    // If we have a running spinner, update its message
-    if (g_tui_spinner) {
-        spinner_update(g_tui_spinner, status_text);
-    } else {
-        // Start a new spinner with the status message
-        g_tui_spinner = spinner_start(status_text, SPINNER_CYAN);
-    }
+    // Draw new status
+    draw_status(status_text);
 }
 
 char* tui_read_input(TUIState *tui, const char *prompt) {
