@@ -228,6 +228,7 @@ static size_t paste_sanitize(char *buffer, size_t len, PasteSanitizeOptions *opt
 /**
  * Get preview of pasted content (first N chars)
  */
+__attribute__((unused))
 static char* paste_get_preview(const char *content, size_t len, size_t preview_len) {
     if (!content || len == 0) return NULL;
 
