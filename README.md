@@ -145,6 +145,10 @@ The TUI uses **Kitty terminal's theme format** - a simple, dependency-free confi
 
 ![Memory usage analysis](assets/images/claude-c-memory-usage.webp)
 
+## Known Issues
+
+- [ ] `SIGSTP` then resume will stop the app
+
 ## Security Notes
 
 - API key read from environment (not stored in code)
