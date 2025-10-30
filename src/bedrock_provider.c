@@ -41,6 +41,23 @@ static size_t write_callback(void *contents, size_t size, size_t nmemb, void *us
     return realsize;
 }
 
+// Progress callback to check for ESC key during transfer
+static int progress_callback(void *clientp, curl_off_t dltotal, curl_off_t dlnow,
+                             curl_off_t ultotal, curl_off_t ulnow) {
+    (void)clientp;  // Unused
+    (void)dltotal;  // Unused
+    (void)dlnow;    // Unused
+    (void)ultotal;  // Unused
+    (void)ulnow;    // Unused
+
+    // Check if ESC was pressed - return 1 to abort the transfer
+    if (check_for_esc()) {
+        LOG_INFO("API call interrupted by user (ESC pressed)");
+        return 1;  // Non-zero return value aborts the transfer
+    }
+    return 0;  // Continue transfer
+}
+
 // ============================================================================
 // Request Building (from ConversationState)
 // ============================================================================
@@ -89,6 +106,11 @@ static ApiCallResult bedrock_execute_request(BedrockConfig *config, const char *
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
 
+    // Enable progress callback for ESC interruption
+    curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
+    curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, progress_callback);
+    curl_easy_setopt(curl, CURLOPT_XFERINFODATA, NULL);
+
     struct timespec start, end;
     clock_gettime(CLOCK_MONOTONIC, &start);
     CURLcode res = curl_easy_perform(curl);
@@ -103,11 +125,17 @@ static ApiCallResult bedrock_execute_request(BedrockConfig *config, const char *
 
     // Handle CURL errors
     if (res != CURLE_OK) {
-        result.error_message = strdup(curl_easy_strerror(res));
-        result.is_retryable = (res == CURLE_COULDNT_CONNECT ||
-                               res == CURLE_OPERATION_TIMEDOUT ||
-                               res == CURLE_RECV_ERROR ||
-                               res == CURLE_SEND_ERROR);
+        // Check if the error was due to user interruption (ESC key)
+        if (res == CURLE_ABORTED_BY_CALLBACK) {
+            result.error_message = strdup("API call interrupted by user (ESC)");
+            result.is_retryable = 0;  // User interruption is not retryable
+        } else {
+            result.error_message = strdup(curl_easy_strerror(res));
+            result.is_retryable = (res == CURLE_COULDNT_CONNECT ||
+                                   res == CURLE_OPERATION_TIMEDOUT ||
+                                   res == CURLE_RECV_ERROR ||
+                                   res == CURLE_SEND_ERROR);
+        }
         free(response.output);
         return result;
     }

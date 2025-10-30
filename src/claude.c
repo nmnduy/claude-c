@@ -311,7 +311,7 @@ static volatile sig_atomic_t interrupt_requested = 0;
 
 // Check for ESC key press without blocking
 // Returns: 1 if ESC was pressed, 0 otherwise
-static int check_for_esc(void) {
+int check_for_esc(void) {
     struct termios old_term, new_term;
     int esc_pressed = 0;
 
