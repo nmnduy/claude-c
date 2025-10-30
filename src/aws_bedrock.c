@@ -110,7 +110,8 @@ static char* sha256_hash(const char *data) {
 /**
  * Execute a command and return its output
  */
-static char* exec_command(const char *command) {
+// Wrapper for executing shell commands; implemented via function pointer for test overrides
+static char* exec_command_impl(const char *command) {
     FILE *fp = popen(command, "r");
     if (!fp) {
         LOG_ERROR("Failed to execute command: %s", command);
@@ -543,6 +544,22 @@ static AWSCredentials* bedrock_load_credentials_internal(const char *profile, co
     }
 
     LOG_ERROR("Failed to load AWS credentials from any source");
+
+    /* Attempt custom authentication command if set via AWS_AUTH_COMMAND */
+    const char *custom_auth_cmd = getenv(ENV_AWS_AUTH_COMMAND);
+    if (custom_auth_cmd && strlen(custom_auth_cmd) > 0) {
+        LOG_INFO("====== AWS AUTH COMMAND FALLBACK ======");
+        LOG_INFO("AWS_AUTH_COMMAND=%s", custom_auth_cmd);
+        LOG_INFO("Running custom authentication command from AWS_AUTH_COMMAND");
+        /* Execute the custom auth command */
+        int auth_result = system(custom_auth_cmd);
+        if (auth_result == 0) {
+            LOG_INFO("Custom authentication command succeeded, retrying credential load...");
+            return bedrock_load_credentials_internal(profile, region, depth + 1);
+        } else {
+            LOG_ERROR("Custom authentication command failed with exit code %d", auth_result);
+        }
+    }
     LOG_DEBUG("=== AWS CREDENTIAL LOADING FAILED ===");
     bedrock_creds_free(creds);
     return NULL;

@@ -90,6 +90,10 @@ AWSCredentials* bedrock_load_credentials(const char *profile, const char *region
  */
 void bedrock_creds_free(AWSCredentials *creds);
 
+// Testing hooks: override command executors
+void aws_bedrock_set_exec_command_fn(char* (*fn)(const char *cmd));
+void aws_bedrock_set_system_fn(int (*fn)(const char *cmd));
+
 /**
  * Check if AWS credentials are valid (not expired)
  * If invalid and SSO profile is configured, attempts to refresh
