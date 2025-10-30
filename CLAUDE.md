@@ -166,6 +166,16 @@ Verify: `make check-deps`
 **Request**: Standard Messages API with tool definitions
 **Response**: Extracts `content` array (text + tool_use blocks)
 
+## Documentation
+
+```
+$ ls docs/
+ARCHITECTURE.md
+CI_TROUBLESHOOTING.md
+COLOR_THEMES.md
+RELEASE.md
+```
+
 ## Prompt Caching
 
 **Implementation**: Lines ~1241-1400 in `src/claude.c`
