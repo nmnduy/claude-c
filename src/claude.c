@@ -2076,9 +2076,9 @@ static ApiResponse* call_api_with_retries(ConversationState *state) {
         long elapsed_ms = (now.tv_sec - retry_start.tv_sec) * 1000 +
                          (now.tv_nsec - retry_start.tv_nsec) / 1000000;
         
-        if (attempt_num > 1 && elapsed_ms >= MAX_RETRY_DURATION_MS) {
+        if (attempt_num > 1 && elapsed_ms >= state->max_retry_duration_ms) {
             LOG_ERROR("Maximum retry duration (%d ms) exceeded after %d attempts",
-                     MAX_RETRY_DURATION_MS, attempt_num - 1);
+                     state->max_retry_duration_ms, attempt_num - 1);
             print_error("Maximum retry duration exceeded");
             return NULL;
         }
@@ -2172,12 +2172,12 @@ static ApiResponse* call_api_with_retries(ConversationState *state) {
         clock_gettime(CLOCK_MONOTONIC, &now);
         elapsed_ms = (now.tv_sec - retry_start.tv_sec) * 1000 +
                     (now.tv_nsec - retry_start.tv_nsec) / 1000000;
-        long remaining_ms = MAX_RETRY_DURATION_MS - elapsed_ms;
+        long remaining_ms = state->max_retry_duration_ms - elapsed_ms;
         
         if (delay_ms > remaining_ms) {
             delay_ms = (int)remaining_ms;
             if (delay_ms <= 0) {
-                LOG_ERROR("Maximum retry duration (%d ms) exceeded", MAX_RETRY_DURATION_MS);
+                LOG_ERROR("Maximum retry duration (%d ms) exceeded", state->max_retry_duration_ms);
                 print_error("Maximum retry duration exceeded");
                 free(result.raw_response);
                 free(result.request_json);
@@ -3187,6 +3187,23 @@ static void interactive_mode(ConversationState *state) {
 // ============================================================================
 
 // Generate a unique session ID using timestamp and random data
+// Helper function to get integer value from environment variable with default
+static int get_env_int_retry(const char *name, int default_value) {
+    const char *value = getenv(name);
+    if (!value || value[0] == '\0') {
+        return default_value;
+    }
+
+    char *endptr;
+    long result = strtol(value, &endptr, 10);
+    if (*endptr != '\0' || result < 0 || result > INT_MAX) {
+        LOG_WARN("Invalid value for %s: '%s', using default %d", name, value, default_value);
+        return default_value;
+    }
+
+    return (int)result;
+}
+
 // Format: sess_<timestamp>_<random>
 // Returns: Newly allocated string (caller must free)
 static char* generate_session_id(void) {
@@ -3245,7 +3262,9 @@ int main(int argc, char *argv[]) {
         printf("    CLAUDE_C_LOG_DIR     Optional: Directory for logs (uses claude.log filename)\n");
         printf("    CLAUDE_LOG_LEVEL     Optional: Log level (DEBUG, INFO, WARN, ERROR)\n");
         printf("    CLAUDE_C_DB_PATH     Optional: Path to SQLite database for API history\n");
-        printf("                         Default: ~/.local/share/claude-c/api_calls.db\n\n");
+        printf("                         Default: ~/.local/share/claude-c/api_calls.db\n");
+        printf("    CLAUDE_C_MAX_RETRY_DURATION_MS  Optional: Maximum retry duration in milliseconds\n");
+        printf("                                     Default: 600000 (10 minutes)\n\n");
         printf("  UI Customization:\n");
         printf("    CLAUDE_C_THEME       Optional: Path to Kitty theme file\n\n");
         return 0;
@@ -3396,6 +3415,7 @@ int main(int argc, char *argv[]) {
     state.working_dir = getcwd(NULL, 0);
     state.session_id = session_id;
     state.persistence_db = persistence_db;
+    state.max_retry_duration_ms = get_env_int_retry("CLAUDE_C_MAX_RETRY_DURATION_MS", MAX_RETRY_DURATION_MS);
 
     // Initialize todo list
     state.todo_list = malloc(sizeof(TodoList));

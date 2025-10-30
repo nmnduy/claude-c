@@ -27,7 +27,7 @@
 #define MAX_MESSAGES 10000
 
 // Retry configuration for rate limiting (429 errors)
-#define MAX_RETRY_DURATION_MS 120000     // Maximum retry duration (2 minutes)
+#define MAX_RETRY_DURATION_MS 600000     // Maximum retry duration (10 minutes)
 #define INITIAL_BACKOFF_MS 1000          // Initial backoff delay in milliseconds
 #define MAX_BACKOFF_MS 60000             // Maximum backoff delay in milliseconds (60 seconds)
 #define BACKOFF_MULTIPLIER 2.0           // Exponential backoff multiplier
@@ -173,6 +173,7 @@ typedef struct ConversationState {
     struct PersistenceDB *persistence_db;  // For logging API calls to SQLite
     struct TodoList *todo_list;     // Task tracking list
     Provider *provider;             // API provider abstraction (OpenAI, Bedrock, etc.)
+    int max_retry_duration_ms;      // Maximum retry duration in milliseconds (configurable via env var)
 } ConversationState;
 
 // ============================================================================
