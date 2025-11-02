@@ -135,7 +135,9 @@ static ApiCallResult bedrock_execute_request(BedrockConfig *config, const char *
             result.is_retryable = (res == CURLE_COULDNT_CONNECT ||
                                    res == CURLE_OPERATION_TIMEDOUT ||
                                    res == CURLE_RECV_ERROR ||
-                                   res == CURLE_SEND_ERROR);
+                                   res == CURLE_SEND_ERROR ||
+                                   res == CURLE_SSL_CONNECT_ERROR ||
+                                   res == CURLE_GOT_NOTHING);
         }
         free(response.output);
         return result;
