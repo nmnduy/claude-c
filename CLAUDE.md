@@ -181,13 +181,9 @@ Verify: `make check-deps`
 
 ## Documentation
 
-```
-$ ls docs/
-ARCHITECTURE.md
-CI_TROUBLESHOOTING.md
-COLOR_THEMES.md
-RELEASE.md
-```
+Most documentation is in `docs/`
+
+Do not write documentation unless specified otherwise.
 
 ## Prompt Caching
 
