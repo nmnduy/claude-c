@@ -2,6 +2,18 @@
 
 Project instructions for Claude Code when working with this codebase.
 
+## Guidelines for This Document
+
+**Purpose**: High-level executive overview and table of contents for the codebase.
+
+**Keep it minimal:**
+- Directional, not prescriptive - point to where things are, don't duplicate documentation
+- Table of contents > detailed specs - link to source files and docs, don't copy them
+- Executive summary > implementation details - what and where, not how
+- Updates should be rare and only for structural/architectural changes
+
+**Full documentation lives in**: Source code comments, `docs/*.md`, and individual README files.
+
 ## Quick Navigation
 
 **Current tasks**: `./todo.md`
