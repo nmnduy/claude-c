@@ -30,7 +30,7 @@ Pure C implementation of a coding agent using Anthropic's Claude API.
 
 **Stack:**
 - C11 + POSIX
-- libcurl (HTTP), cJSON (parsing), pthread
+- libcurl (HTTP), cJSON (parsing), pthread, ncurses (TUI)
 - 7 core tools implemented
 - Prompt caching enabled by default
 
@@ -163,6 +163,7 @@ export CLAUDE_C_THEME="./colorschemes/dracula.conf"
 - **libcurl** - HTTP client
 - **cJSON** - JSON parsing
 - **pthread** - Thread support
+- **ncurses** - Terminal UI (scrolling, mouse support)
 - **POSIX** - File ops, glob, process management
 
 Verify: `make check-deps`
