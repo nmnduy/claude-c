@@ -34,6 +34,14 @@ static Spinner *g_tui_spinner = NULL;
 // Global flag to detect terminal resize
 static volatile sig_atomic_t g_resize_flag = 0;
 
+// Ncurses color pair definitions (match TUIColorPair enum)
+#define NCURSES_PAIR_FOREGROUND 1
+#define NCURSES_PAIR_USER 2
+#define NCURSES_PAIR_ASSISTANT 3
+#define NCURSES_PAIR_STATUS 4
+#define NCURSES_PAIR_ERROR 5
+#define NCURSES_PAIR_PROMPT 6
+
 // Signal handler for window resize
 #ifdef SIGWINCH
 static void handle_resize(int sig) {
@@ -46,6 +54,89 @@ static void handle_resize(int sig) {
 // This allows external code to check for resize events
 int tui_resize_pending(void) {
     return g_resize_flag != 0;
+}
+
+// Convert RGB (0-255) to ncurses color (0-1000)
+static short rgb_to_ncurses(int value) {
+    return (short)((value * 1000) / 255);
+}
+
+// Initialize ncurses color pairs from our colorscheme
+static void init_ncurses_colors(void) {
+    // Check if terminal supports colors
+    if (!has_colors()) {
+        LOG_DEBUG("[TUI] Terminal does not support colors");
+        return;
+    }
+    
+    start_color();
+    use_default_colors();  // Use terminal's default colors as base
+    
+    // If we have a loaded theme, use it to initialize custom colors
+    if (g_theme_loaded) {
+        LOG_DEBUG("[TUI] Initializing ncurses colors from loaded theme");
+        
+        // Define custom colors (colors 16-21 are safe to redefine)
+        if (can_change_color()) {
+            // Foreground
+            init_color(16, 
+                rgb_to_ncurses(g_theme.foreground_rgb.r),
+                rgb_to_ncurses(g_theme.foreground_rgb.g),
+                rgb_to_ncurses(g_theme.foreground_rgb.b));
+            
+            // User (green)
+            init_color(17,
+                rgb_to_ncurses(g_theme.user_rgb.r),
+                rgb_to_ncurses(g_theme.user_rgb.g),
+                rgb_to_ncurses(g_theme.user_rgb.b));
+            
+            // Assistant (blue/cyan)
+            init_color(18,
+                rgb_to_ncurses(g_theme.assistant_rgb.r),
+                rgb_to_ncurses(g_theme.assistant_rgb.g),
+                rgb_to_ncurses(g_theme.assistant_rgb.b));
+            
+            // Status (yellow)
+            init_color(19,
+                rgb_to_ncurses(g_theme.status_rgb.r),
+                rgb_to_ncurses(g_theme.status_rgb.g),
+                rgb_to_ncurses(g_theme.status_rgb.b));
+            
+            // Error (red)
+            init_color(20,
+                rgb_to_ncurses(g_theme.error_rgb.r),
+                rgb_to_ncurses(g_theme.error_rgb.g),
+                rgb_to_ncurses(g_theme.error_rgb.b));
+            
+            // Initialize color pairs with custom colors
+            init_pair(NCURSES_PAIR_FOREGROUND, 16, -1);  // -1 = default background
+            init_pair(NCURSES_PAIR_USER, 17, -1);
+            init_pair(NCURSES_PAIR_ASSISTANT, 18, -1);
+            init_pair(NCURSES_PAIR_STATUS, 19, -1);
+            init_pair(NCURSES_PAIR_ERROR, 20, -1);
+            init_pair(NCURSES_PAIR_PROMPT, 17, -1);  // Use USER color for prompt
+            
+            LOG_DEBUG("[TUI] Custom colors initialized successfully");
+        } else {
+            LOG_DEBUG("[TUI] Terminal does not support color changes, using standard colors");
+            // Fall back to standard ncurses colors
+            init_pair(NCURSES_PAIR_FOREGROUND, COLOR_WHITE, -1);
+            init_pair(NCURSES_PAIR_USER, COLOR_GREEN, -1);
+            init_pair(NCURSES_PAIR_ASSISTANT, COLOR_CYAN, -1);
+            init_pair(NCURSES_PAIR_STATUS, COLOR_YELLOW, -1);
+            init_pair(NCURSES_PAIR_ERROR, COLOR_RED, -1);
+            init_pair(NCURSES_PAIR_PROMPT, COLOR_GREEN, -1);
+        }
+    } else {
+        LOG_DEBUG("[TUI] No theme loaded, using standard ncurses colors");
+        // Use standard ncurses color constants
+        init_pair(NCURSES_PAIR_FOREGROUND, COLOR_WHITE, -1);
+        init_pair(NCURSES_PAIR_USER, COLOR_GREEN, -1);
+        init_pair(NCURSES_PAIR_ASSISTANT, COLOR_CYAN, -1);
+        init_pair(NCURSES_PAIR_STATUS, COLOR_YELLOW, -1);
+        init_pair(NCURSES_PAIR_ERROR, COLOR_RED, -1);
+        init_pair(NCURSES_PAIR_PROMPT, COLOR_GREEN, -1);
+    }
 }
 
 // Clear the resize flag (called after handling resize)
@@ -242,11 +333,25 @@ static void input_redraw(const char *prompt) {
     
     // Clear the window
     werase(win);
-    box(win, 0, 0);
     
-    // Draw prompt in top-left corner (inside border)
-    mvwprintw(win, 1, 1, "%s", prompt);
-    int prompt_len = (int)strlen(prompt);
+    // Draw box with accent color if colors are available
+    if (has_colors()) {
+        wattron(win, COLOR_PAIR(NCURSES_PAIR_PROMPT));
+        box(win, 0, 0);
+        wattroff(win, COLOR_PAIR(NCURSES_PAIR_PROMPT));
+    } else {
+        box(win, 0, 0);
+    }
+    
+    // Draw prompt in top-left corner (inside border) with color
+    if (has_colors()) {
+        wattron(win, COLOR_PAIR(NCURSES_PAIR_PROMPT) | A_BOLD);
+        mvwprintw(win, 1, 1, "%s ", prompt);
+        wattroff(win, COLOR_PAIR(NCURSES_PAIR_PROMPT) | A_BOLD);
+    } else {
+        mvwprintw(win, 1, 1, "%s ", prompt);
+    }
+    int prompt_len = (int)strlen(prompt) + 1;  // +1 for space after prompt
     
     // Calculate visible portion of buffer
     int available_width = g_input_state.win_width - prompt_len - 1;
@@ -268,6 +373,11 @@ static void input_redraw(const char *prompt) {
     }
     
     // Handle multiline display (wrap at window width)
+    // Use foreground color for input text
+    if (has_colors()) {
+        wattron(win, COLOR_PAIR(NCURSES_PAIR_FOREGROUND));
+    }
+    
     int y = 1;
     int x = prompt_len + 1;
     for (int i = visible_start; i < visible_end && y < g_input_state.win_height; i++) {
@@ -288,6 +398,10 @@ static void input_redraw(const char *prompt) {
                 if (y >= g_input_state.win_height) break;
             }
         }
+    }
+    
+    if (has_colors()) {
+        wattroff(win, COLOR_PAIR(NCURSES_PAIR_FOREGROUND));
     }
     
     // Position cursor
@@ -323,6 +437,10 @@ int tui_init(TUIState *tui) {
     noecho();  // Don't echo input
     keypad(stdscr, TRUE);  // Enable function keys
     nodelay(stdscr, FALSE);  // Blocking input
+    curs_set(2);  // Make cursor very visible (block cursor)
+    
+    // Initialize colors from colorscheme
+    init_ncurses_colors();
     
     // Create input window at bottom of screen
     int max_y, max_x;
