@@ -3079,6 +3079,12 @@ static void interactive_mode(ConversationState *state) {
     int running = 1;
 
     while (running) {
+        // Check for pending resize before reading input
+        if (tui_resize_pending()) {
+            tui_clear_resize_flag();
+            tui_handle_resize(&tui);
+        }
+
         char *input = tui_read_input(&tui, ">");
         if (!input) {
             // EOF (Ctrl+D)

@@ -78,6 +78,13 @@ void tui_clear_conversation(TUIState *tui);
 // Handle window resize
 void tui_handle_resize(TUIState *tui);
 
+// Check if window resize is pending
+// Returns: Non-zero if resize signal was received, 0 otherwise
+int tui_resize_pending(void);
+
+// Clear the resize pending flag
+void tui_clear_resize_flag(void);
+
 // Display startup banner with blue mascot
 // version: Version string (e.g., "0.0.1")
 // model: Model name

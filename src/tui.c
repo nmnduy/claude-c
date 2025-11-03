@@ -42,6 +42,17 @@ static void handle_resize(int sig) {
 }
 #endif
 
+// Check if resize is pending and return the flag status
+// This allows external code to check for resize events
+int tui_resize_pending(void) {
+    return g_resize_flag != 0;
+}
+
+// Clear the resize flag (called after handling resize)
+void tui_clear_resize_flag(void) {
+    g_resize_flag = 0;
+}
+
 // UTF-8 helper functions (from lineedit.c)
 static int utf8_char_length(unsigned char first_byte) {
     if ((first_byte & 0x80) == 0) return 1;  // 0xxxxxxx
@@ -699,6 +710,12 @@ void tui_clear_conversation(TUIState *tui) {
 void tui_handle_resize(TUIState *tui) {
     if (!tui || !tui->is_initialized) return;
     
+    // Properly handle ncurses resize
+    // This sequence is important for correct resize handling
+    endwin();         // End the current ncurses session
+    refresh();        // Refresh stdscr to get new dimensions
+    clear();          // Clear the screen
+    
     // Update screen dimensions
     int max_y, max_x;
     getmaxyx(stdscr, max_y, max_x);
@@ -707,14 +724,21 @@ void tui_handle_resize(TUIState *tui) {
     
     // Resize and reposition input window
     if (tui->input_win) {
-        wresize(tui->input_win, INPUT_WIN_HEIGHT, max_x);
-        mvwin(tui->input_win, max_y - INPUT_WIN_HEIGHT, 0);
+        // Delete and recreate window to avoid ncurses resize issues
+        delwin(tui->input_win);
+        tui->input_win = newwin(INPUT_WIN_HEIGHT, max_x, max_y - INPUT_WIN_HEIGHT, 0);
         
-        // Update input state dimensions
-        int h, w;
-        getmaxyx(tui->input_win, h, w);
-        g_input_state.win_width = w - 2;
-        g_input_state.win_height = h - 2;
+        if (tui->input_win) {
+            // Re-enable keypad for the new window
+            keypad(tui->input_win, TRUE);
+            
+            // Update input state dimensions
+            int h, w;
+            getmaxyx(tui->input_win, h, w);
+            g_input_state.win_width = w - 2;
+            g_input_state.win_height = h - 2;
+            g_input_state.win = tui->input_win;
+        }
     }
     
     refresh();
