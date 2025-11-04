@@ -36,6 +36,10 @@ typedef struct {
 // Context pointer can be used to pass ConversationState or other data
 typedef CompletionResult* (*CompletionFn)(const char *line, int cursor_pos, void *ctx);
 
+// Resize callback: called when input needs more/less height
+// Returns the new height that was granted (may be less than requested)
+typedef int (*ResizeFn)(void *ctx, int requested_height);
+
 // ============================================================================
 // NCurses Input Bar
 // ============================================================================
@@ -46,9 +50,10 @@ typedef struct NCursesInput {
     size_t buffer_capacity;  // Capacity of buffer
     int cursor;              // Cursor position (0 to length)
     int length;              // Current length of input
-    int window_height;       // Height of input window (in lines)
+    int window_height;       // Current height of input window (in lines)
     int window_width;        // Width of input window (in columns)
     int scroll_offset;       // Horizontal scroll offset for long lines
+    int line_scroll_offset;  // Vertical scroll offset for multiline (0 = show last lines)
     
     // History support
     char **history;          // Array of history strings
@@ -60,6 +65,12 @@ typedef struct NCursesInput {
     // Completion support
     CompletionFn completer;  // Optional: for tab completion
     void *completer_ctx;     // Context passed to completer
+    
+    // Resize support
+    ResizeFn resizer;        // Optional: for dynamic height adjustment
+    void *resizer_ctx;       // Context passed to resizer
+    int min_height;          // Minimum window height (lines)
+    int max_height;          // Maximum window height (lines)
     
     // Paste tracking
     char *paste_content;     // Actual pasted content (kept separate from visible buffer)
@@ -83,6 +94,18 @@ typedef struct NCursesInput {
  */
 int ncurses_input_init(NCursesInput *input, WINDOW *window, 
                       CompletionFn completer, void *ctx);
+
+/**
+ * Set resize callback for dynamic height adjustment
+ *
+ * @param input      Pointer to initialized NCursesInput
+ * @param resizer    Resize callback function
+ * @param ctx        Context passed to resizer
+ * @param min_height Minimum height in lines (default 1)
+ * @param max_height Maximum height in lines (default 3)
+ */
+void ncurses_input_set_resize_callback(NCursesInput *input, ResizeFn resizer, 
+                                       void *ctx, int min_height, int max_height);
 
 /**
  * Read a line of input with editing support

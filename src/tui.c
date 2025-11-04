@@ -26,13 +26,17 @@
 
 #define INITIAL_CONV_CAPACITY 1000
 #define INPUT_BUFFER_SIZE 8192
-#define INPUT_WIN_HEIGHT 5  // Height for input window (includes borders)
+#define INPUT_WIN_MIN_HEIGHT 3  // Min height for input window (1 line + 2 borders)
+#define INPUT_WIN_MAX_HEIGHT 5  // Max height for input window (3 lines + 2 borders)
 
 // Global spinner for TUI status updates
 static Spinner *g_tui_spinner = NULL;
 
 // Global flag to detect terminal resize
 static volatile sig_atomic_t g_resize_flag = 0;
+
+// Global TUI state pointer (for input resize callback)
+static TUIState *g_tui_state_ptr = NULL;
 
 // Ncurses color pair definitions (match TUIColorPair enum)
 #define NCURSES_PAIR_FOREGROUND 1
@@ -190,9 +194,92 @@ typedef struct {
     int win_height;
     // Display state
     int view_offset;  // Horizontal scroll offset for long lines
+    int line_scroll_offset;  // Vertical scroll offset (which line to show at top)
 } InputState;
 
 static InputState g_input_state = {0};
+
+// Calculate how many visual lines are needed for the current buffer
+// Note: This assumes first line includes the prompt
+static int calculate_needed_lines(const char *buffer, int buffer_len, int available_width, int prompt_len) {
+    if (buffer_len == 0) return 1;
+    
+    int lines = 1;
+    int current_col = prompt_len;  // First line starts after prompt
+    int current_line = 0;
+    
+    for (int i = 0; i < buffer_len; i++) {
+        if (buffer[i] == '\n') {
+            lines++;
+            current_line++;
+            current_col = 0;  // Newlines don't have prompt
+        } else {
+            current_col++;
+            // First line has prompt, others don't
+            int line_width = (current_line == 0) ? available_width + prompt_len : available_width;
+            if (current_col >= line_width) {
+                lines++;
+                current_line++;
+                current_col = 0;
+            }
+        }
+    }
+    
+    return lines;
+}
+
+// Resize input window dynamically (called from redraw)
+static int resize_input_window(TUIState *tui, int desired_lines) {
+    if (!tui || !tui->is_initialized) return -1;
+    
+    // Clamp to min/max (1-3 lines of content, +2 for borders)
+    int min_window_height = INPUT_WIN_MIN_HEIGHT;  // 1 line + borders
+    int max_window_height = INPUT_WIN_MAX_HEIGHT;  // 3 lines + borders
+    int new_window_height = desired_lines + 2;  // +2 for borders
+    
+    if (new_window_height < min_window_height) {
+        new_window_height = min_window_height;
+    } else if (new_window_height > max_window_height) {
+        new_window_height = max_window_height;
+    }
+    
+    // Only resize if height actually changed
+    if (new_window_height == tui->input_height) {
+        return 0;
+    }
+    
+    // Delete old window
+    if (tui->input_win) {
+        delwin(tui->input_win);
+    }
+    
+    // Create new window with adjusted height
+    int max_y, max_x;
+    getmaxyx(stdscr, max_y, max_x);
+    tui->input_height = new_window_height;
+    tui->input_win = newwin(new_window_height, max_x, max_y - new_window_height, 0);
+    
+    if (!tui->input_win) {
+        LOG_ERROR("Failed to resize input window");
+        return -1;
+    }
+    
+    // Update input state
+    g_input_state.win = tui->input_win;
+    int h, w;
+    getmaxyx(tui->input_win, h, w);
+    g_input_state.win_width = w - 2;
+    g_input_state.win_height = h - 2;
+    
+    // Enable keypad for new window
+    keypad(tui->input_win, TRUE);
+    
+    // Refresh stdscr to clear old area
+    touchwin(stdscr);
+    refresh();
+    
+    return 0;
+}
 
 // Initialize input buffer
 static int input_init(WINDOW *win) {
@@ -206,6 +293,7 @@ static int input_init(WINDOW *win) {
     g_input_state.cursor = 0;
     g_input_state.win = win;
     g_input_state.view_offset = 0;
+    g_input_state.line_scroll_offset = 0;
     
     // Get window dimensions
     int h, w;
@@ -331,6 +419,46 @@ static void input_redraw(const char *prompt) {
     WINDOW *win = g_input_state.win;
     if (!win) return;
     
+    int prompt_len = (int)strlen(prompt) + 1;  // +1 for space after prompt
+    
+    // Calculate available width for text (window width - borders - prompt)
+    int available_width = g_input_state.win_width - prompt_len;
+    if (available_width < 10) available_width = 10;
+    
+    // Calculate how many lines we need to display all content
+    int needed_lines = calculate_needed_lines(g_input_state.buffer, g_input_state.length, available_width, prompt_len);
+    
+    // Request window resize (this will be a no-op if size hasn't changed)
+    if (g_tui_state_ptr) {
+        resize_input_window(g_tui_state_ptr, needed_lines);
+        win = g_input_state.win;  // Window may have been recreated
+        if (!win) return;
+    }
+    
+    // Calculate cursor line position
+    int cursor_line = 0;
+    int cursor_col = prompt_len;
+    for (int i = 0; i < g_input_state.cursor; i++) {
+        if (g_input_state.buffer[i] == '\n') {
+            cursor_line++;
+            cursor_col = 0;
+        } else {
+            cursor_col++;
+            if (cursor_col >= available_width + prompt_len) {
+                cursor_line++;
+                cursor_col = 0;
+            }
+        }
+    }
+    
+    // Adjust vertical scroll to keep cursor visible
+    int max_visible_lines = g_input_state.win_height;
+    if (cursor_line < g_input_state.line_scroll_offset) {
+        g_input_state.line_scroll_offset = cursor_line;
+    } else if (cursor_line >= g_input_state.line_scroll_offset + max_visible_lines) {
+        g_input_state.line_scroll_offset = cursor_line - max_visible_lines + 1;
+    }
+    
     // Clear the window
     werase(win);
     
@@ -343,59 +471,64 @@ static void input_redraw(const char *prompt) {
         box(win, 0, 0);
     }
     
-    // Draw prompt in top-left corner (inside border) with color
-    if (has_colors()) {
-        wattron(win, COLOR_PAIR(NCURSES_PAIR_PROMPT) | A_BOLD);
-        mvwprintw(win, 1, 1, "%s ", prompt);
-        wattroff(win, COLOR_PAIR(NCURSES_PAIR_PROMPT) | A_BOLD);
-    } else {
-        mvwprintw(win, 1, 1, "%s ", prompt);
-    }
-    int prompt_len = (int)strlen(prompt) + 1;  // +1 for space after prompt
-    
-    // Calculate visible portion of buffer
-    int available_width = g_input_state.win_width - prompt_len - 1;
-    if (available_width < 10) available_width = 10;  // Minimum visible width
-    
-    // Adjust view offset to keep cursor visible
-    if (g_input_state.cursor < g_input_state.view_offset) {
-        g_input_state.view_offset = g_input_state.cursor;
-    }
-    if (g_input_state.cursor > g_input_state.view_offset + available_width) {
-        g_input_state.view_offset = g_input_state.cursor - available_width;
+    // Draw prompt on first visible line (if we're not scrolled past it)
+    if (g_input_state.line_scroll_offset == 0) {
+        if (has_colors()) {
+            wattron(win, COLOR_PAIR(NCURSES_PAIR_PROMPT) | A_BOLD);
+            mvwprintw(win, 1, 1, "%s ", prompt);
+            wattroff(win, COLOR_PAIR(NCURSES_PAIR_PROMPT) | A_BOLD);
+        } else {
+            mvwprintw(win, 1, 1, "%s ", prompt);
+        }
     }
     
-    // Draw visible portion of buffer
-    int visible_start = g_input_state.view_offset;
-    int visible_end = g_input_state.view_offset + available_width;
-    if (visible_end > g_input_state.length) {
-        visible_end = g_input_state.length;
-    }
-    
-    // Handle multiline display (wrap at window width)
-    // Use foreground color for input text
+    // Render visible lines with scrolling support
     if (has_colors()) {
         wattron(win, COLOR_PAIR(NCURSES_PAIR_FOREGROUND));
     }
     
-    int y = 1;
-    int x = prompt_len + 1;
-    for (int i = visible_start; i < visible_end && y < g_input_state.win_height; i++) {
+    int current_line = 0;
+    int screen_y = 1;
+    int screen_x = (current_line == 0) ? prompt_len + 1 : 1;
+    
+    for (int i = 0; i < g_input_state.length && screen_y <= g_input_state.win_height; i++) {
+        // Skip lines before scroll offset
+        if (current_line < g_input_state.line_scroll_offset) {
+            if (g_input_state.buffer[i] == '\n') {
+                current_line++;
+                screen_x = 0;
+            } else {
+                screen_x++;
+                if (screen_x >= available_width + ((current_line == 0) ? prompt_len : 0)) {
+                    current_line++;
+                    screen_x = 0;
+                }
+            }
+            continue;
+        }
+        
+        // Render character
         char c = g_input_state.buffer[i];
         if (c == '\n') {
-            // Manual newline
-            y++;
-            x = 1;
-            if (y >= g_input_state.win_height) break;
+            // Show newline as dimmed character (using + as fallback for arrow)
+            mvwaddch(win, screen_y, screen_x, (unsigned char)'+' | A_DIM);
+            screen_y++;
+            current_line++;
+            screen_x = 1;  // Reset to left edge (after border)
         } else {
-            // Regular character
-            mvwaddch(win, y, x, c);
-            x++;
-            // Wrap at window edge
-            if (x >= g_input_state.win_width) {
-                y++;
-                x = 1;
-                if (y >= g_input_state.win_height) break;
+            mvwaddch(win, screen_y, screen_x, c);
+            screen_x++;
+            
+            // Check if we need to wrap
+            int line_width = available_width;
+            if (current_line == g_input_state.line_scroll_offset && g_input_state.line_scroll_offset == 0) {
+                line_width += prompt_len;  // First line includes prompt
+            }
+            
+            if (screen_x > line_width) {
+                screen_y++;
+                current_line++;
+                screen_x = 1;
             }
         }
     }
@@ -404,29 +537,42 @@ static void input_redraw(const char *prompt) {
         wattroff(win, COLOR_PAIR(NCURSES_PAIR_FOREGROUND));
     }
     
-    // Position cursor
-    // Calculate cursor position in window coordinates
-    int cursor_y = 1;
-    int cursor_x = prompt_len + 1;
-    for (int i = visible_start; i < g_input_state.cursor && i < visible_end; i++) {
+    // Position cursor (adjusted for scroll)
+    int cursor_screen_y = cursor_line - g_input_state.line_scroll_offset + 1;
+    int cursor_screen_x = cursor_col + 1;  // +1 for border
+    
+    // Recalculate cursor_col relative to its line
+    int temp_line = 0;
+    int temp_col = (temp_line == 0) ? prompt_len : 0;
+    for (int i = 0; i < g_input_state.cursor; i++) {
         if (g_input_state.buffer[i] == '\n') {
-            cursor_y++;
-            cursor_x = 1;
+            temp_line++;
+            temp_col = 0;
         } else {
-            cursor_x++;
-            if (cursor_x >= g_input_state.win_width) {
-                cursor_y++;
-                cursor_x = 1;
+            temp_col++;
+            int line_width = available_width + ((temp_line == 0) ? prompt_len : 0);
+            if (temp_col >= line_width) {
+                temp_line++;
+                temp_col = 0;
             }
         }
     }
+    cursor_screen_x = temp_col + 1;
     
-    wmove(win, cursor_y, cursor_x);
+    // Bounds check for cursor position
+    if (cursor_screen_y >= 1 && cursor_screen_y <= g_input_state.win_height &&
+        cursor_screen_x >= 1 && cursor_screen_x <= g_input_state.win_width) {
+        wmove(win, cursor_screen_y, cursor_screen_x);
+    }
+    
     wrefresh(win);
 }
 
 int tui_init(TUIState *tui) {
     if (!tui) return -1;
+    
+    // Store global pointer for input resize callback
+    g_tui_state_ptr = tui;
     
     // Set locale for UTF-8 support
     setlocale(LC_ALL, "");
@@ -448,10 +594,10 @@ int tui_init(TUIState *tui) {
     
     tui->screen_height = max_y;
     tui->screen_width = max_x;
-    tui->input_height = INPUT_WIN_HEIGHT;
+    tui->input_height = INPUT_WIN_MIN_HEIGHT;  // Start with minimum height
     
-    // Create input window
-    tui->input_win = newwin(INPUT_WIN_HEIGHT, max_x, max_y - INPUT_WIN_HEIGHT, 0);
+    // Create input window (start with minimum height)
+    tui->input_win = newwin(INPUT_WIN_MIN_HEIGHT, max_x, max_y - INPUT_WIN_MIN_HEIGHT, 0);
     if (!tui->input_win) {
         endwin();
         return -1;
@@ -477,6 +623,9 @@ int tui_init(TUIState *tui) {
 
 void tui_cleanup(TUIState *tui) {
     if (!tui || !tui->is_initialized) return;
+    
+    // Clear global pointer
+    g_tui_state_ptr = NULL;
     
     // Stop any running spinner
     if (g_tui_spinner) {
@@ -844,7 +993,7 @@ void tui_handle_resize(TUIState *tui) {
     if (tui->input_win) {
         // Delete and recreate window to avoid ncurses resize issues
         delwin(tui->input_win);
-        tui->input_win = newwin(INPUT_WIN_HEIGHT, max_x, max_y - INPUT_WIN_HEIGHT, 0);
+        tui->input_win = newwin(tui->input_height, max_x, max_y - tui->input_height, 0);
         
         if (tui->input_win) {
             // Re-enable keypad for the new window

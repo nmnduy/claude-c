@@ -213,54 +213,154 @@ static int buffer_delete_word_forward(NCursesInput *input) {
 // Display Functions
 // ============================================================================
 
-// Redraw the input window
-static void redraw_input(NCursesInput *input, const char *prompt) {
-    werase(input->window);
+// Calculate number of visual lines needed for the buffer
+static int calculate_needed_lines(const char *buffer, int buffer_len, 
+                                   int available_width, int prompt_len) {
+    if (buffer_len == 0) return 1;
     
-    // Draw prompt
-    mvwprintw(input->window, 0, 0, "%s", prompt);
-    int prompt_len = (int)strlen(prompt);
+    int lines = 1;
+    int current_line_width = prompt_len;  // First line includes prompt
     
-    // Calculate visible portion of input (handle horizontal scrolling)
-    int available_width = input->window_width - prompt_len - 1;
-    int start_pos = 0;
-    
-    if (input->cursor >= available_width + input->scroll_offset) {
-        // Cursor is off right edge - scroll right
-        input->scroll_offset = input->cursor - available_width + 1;
-    } else if (input->cursor < input->scroll_offset) {
-        // Cursor is off left edge - scroll left
-        input->scroll_offset = input->cursor;
-    }
-    
-    start_pos = input->scroll_offset;
-    int end_pos = start_pos + available_width;
-    if (end_pos > input->length) {
-        end_pos = input->length;
-    }
-    
-    // Draw visible portion of input
-    if (start_pos < input->length) {
-        char visible[4096];
-        int visible_len = end_pos - start_pos;
-        if (visible_len > 4095) visible_len = 4095;
-        
-        strncpy(visible, &input->buffer[start_pos], (size_t)visible_len);
-        visible[visible_len] = '\0';
-        
-        // Replace newlines with visible character for display
-        for (int i = 0; i < visible_len; i++) {
-            if (visible[i] == '\n') {
-                visible[i] = '↵';  // Show newline as special character
+    for (int i = 0; i < buffer_len; i++) {
+        if (buffer[i] == '\n') {
+            lines++;
+            current_line_width = 0;
+        } else {
+            current_line_width++;
+            if (current_line_width >= available_width) {
+                lines++;
+                current_line_width = 0;
             }
         }
+    }
+    
+    return lines;
+}
+
+// Calculate cursor position in screen coordinates (line, column)
+static void calculate_cursor_position(const char *buffer, int cursor_pos,
+                                      int available_width, int prompt_len,
+                                      int *out_line, int *out_col) {
+    int line = 0;
+    int col = prompt_len;  // First line starts after prompt
+    
+    for (int i = 0; i < cursor_pos; i++) {
+        if (buffer[i] == '\n') {
+            line++;
+            col = 0;
+        } else {
+            col++;
+            if (col >= available_width) {
+                line++;
+                col = 0;
+            }
+        }
+    }
+    
+    *out_line = line;
+    *out_col = col;
+}
+
+// Redraw the input window with multiline support
+static void redraw_input(NCursesInput *input, const char *prompt) {
+    int prompt_len = (int)strlen(prompt);
+    int available_width = input->window_width;
+    
+    // Calculate how many lines we need
+    int needed_lines = calculate_needed_lines(input->buffer, input->length, 
+                                              available_width, prompt_len);
+    
+    // Request resize if needed and callback is available
+    if (input->resizer) {
+        int desired_height = needed_lines;
+        if (desired_height < input->min_height) {
+            desired_height = input->min_height;
+        } else if (desired_height > input->max_height) {
+            desired_height = input->max_height;
+        }
         
-        mvwprintw(input->window, 0, prompt_len, "%s", visible);
+        if (desired_height != input->window_height) {
+            int granted_height = input->resizer(input->resizer_ctx, desired_height);
+            if (granted_height > 0) {
+                input->window_height = granted_height;
+                getmaxyx(input->window, input->window_height, input->window_width);
+            }
+        }
+    }
+    
+    werase(input->window);
+    
+    int available_height = input->window_height;
+    
+    // Calculate cursor screen position
+    int cursor_line = 0, cursor_col = 0;
+    calculate_cursor_position(input->buffer, input->cursor, 
+                              available_width, prompt_len,
+                              &cursor_line, &cursor_col);
+    
+    // Adjust vertical scroll to keep cursor visible
+    if (cursor_line < input->line_scroll_offset) {
+        input->line_scroll_offset = cursor_line;
+    } else if (cursor_line >= input->line_scroll_offset + available_height) {
+        input->line_scroll_offset = cursor_line - available_height + 1;
+    }
+    
+    // Render visible lines
+    int screen_line = 0;
+    int current_line = 0;
+    int current_col = prompt_len;
+    int render_col = prompt_len;
+    
+    // Draw prompt on first line
+    if (input->line_scroll_offset == 0) {
+        mvwprintw(input->window, 0, 0, "%s", prompt);
+    } else {
+        render_col = 0;
+    }
+    
+    for (int i = 0; i < input->length && screen_line < available_height; i++) {
+        // Skip lines before scroll offset
+        if (current_line < input->line_scroll_offset) {
+            if (input->buffer[i] == '\n') {
+                current_line++;
+                current_col = 0;
+            } else {
+                current_col++;
+                if (current_col >= available_width) {
+                    current_line++;
+                    current_col = 0;
+                }
+            }
+            continue;
+        }
+        
+        // Render character
+        if (input->buffer[i] == '\n') {
+            // Show newline as special character
+            mvwaddch(input->window, screen_line, render_col, '↵' | A_DIM);
+            screen_line++;
+            render_col = 0;
+            current_line++;
+            current_col = 0;
+        } else {
+            mvwaddch(input->window, screen_line, render_col, input->buffer[i]);
+            render_col++;
+            current_col++;
+            
+            if (render_col >= available_width) {
+                screen_line++;
+                render_col = 0;
+                current_line++;
+                current_col = 0;
+            }
+        }
     }
     
     // Position cursor
-    int cursor_x = prompt_len + (input->cursor - input->scroll_offset);
-    wmove(input->window, 0, cursor_x);
+    int cursor_screen_line = cursor_line - input->line_scroll_offset;
+    if (cursor_screen_line >= 0 && cursor_screen_line < available_height) {
+        wmove(input->window, cursor_screen_line, cursor_col);
+    }
     
     wrefresh(input->window);
 }
@@ -285,6 +385,7 @@ int ncurses_input_init(NCursesInput *input, WINDOW *window,
     input->cursor = 0;
     input->length = 0;
     input->scroll_offset = 0;
+    input->line_scroll_offset = 0;
     
     // Get window dimensions
     getmaxyx(window, input->window_height, input->window_width);
@@ -295,6 +396,12 @@ int ncurses_input_init(NCursesInput *input, WINDOW *window,
     // Set completion
     input->completer = completer;
     input->completer_ctx = ctx;
+    
+    // Initialize resize support
+    input->resizer = NULL;
+    input->resizer_ctx = NULL;
+    input->min_height = 1;
+    input->max_height = 3;
     
     // Initialize paste tracking
     input->paste_content = NULL;
@@ -339,6 +446,16 @@ void ncurses_completion_free(CompletionResult *result) {
     }
     free(result->options);
     free(result);
+}
+
+void ncurses_input_set_resize_callback(NCursesInput *input, ResizeFn resizer,
+                                       void *ctx, int min_height, int max_height) {
+    if (!input) return;
+    
+    input->resizer = resizer;
+    input->resizer_ctx = ctx;
+    input->min_height = (min_height > 0) ? min_height : 1;
+    input->max_height = (max_height > min_height) ? max_height : min_height;
 }
 
 char* ncurses_input_readline(NCursesInput *input, const char *prompt) {
