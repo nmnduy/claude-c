@@ -336,7 +336,144 @@ static void free_conversation_entries(TUIState *tui) {
     tui->entries_capacity = 0;
 }
 
-// Helper: Render conversation window (simple version - one entry per line)
+// Word-wrap helper: Find the last space before or at max_len
+// Returns the position to break the line (0 if no good break found)
+static int find_wrap_position(const char *text, int max_len) {
+    if (!text || max_len <= 0) return 0;
+    
+    int text_len = (int)strlen(text);
+    if (text_len <= max_len) return text_len;
+    
+    // Look for the last space before max_len
+    int break_pos = max_len;
+    while (break_pos > 0 && text[break_pos] != ' ' && text[break_pos] != '\t') {
+        break_pos--;
+    }
+    
+    // If we found a space, break there
+    if (break_pos > 0) {
+        return break_pos;
+    }
+    
+    // No space found - hard break at max_len
+    return max_len;
+}
+
+// Wrap text into multiple lines
+// Returns a dynamically allocated array of strings (NULL-terminated)
+// Caller must free the array and each string
+static char** wrap_text(const char *text, int max_width, int *line_count) {
+    if (!text || max_width <= 0) {
+        *line_count = 0;
+        return NULL;
+    }
+    
+    // Allocate initial array for lines (will grow if needed)
+    int capacity = 16;
+    char **lines = calloc((size_t)capacity, sizeof(char*));
+    if (!lines) {
+        *line_count = 0;
+        return NULL;
+    }
+    
+    int count = 0;
+    const char *remaining = text;
+    int remaining_len = (int)strlen(text);
+    
+    while (remaining_len > 0) {
+        // Grow array if needed
+        if (count >= capacity - 1) {
+            capacity *= 2;
+            char **new_lines = realloc(lines, (size_t)capacity * sizeof(char*));
+            if (!new_lines) {
+                // Free what we have so far
+                for (int i = 0; i < count; i++) {
+                    free(lines[i]);
+                }
+                free(lines);
+                *line_count = 0;
+                return NULL;
+            }
+            lines = new_lines;
+        }
+        
+        // Find where to break this line
+        int break_pos = find_wrap_position(remaining, max_width);
+        if (break_pos <= 0) break_pos = 1; // At least take one char
+        
+        // Allocate and copy this line
+        lines[count] = malloc((size_t)break_pos + 1);
+        if (!lines[count]) {
+            // Free what we have so far
+            for (int i = 0; i < count; i++) {
+                free(lines[i]);
+            }
+            free(lines);
+            *line_count = 0;
+            return NULL;
+        }
+        
+        strncpy(lines[count], remaining, (size_t)break_pos);
+        lines[count][break_pos] = '\0';
+        
+        // Trim trailing spaces from the line
+        int end = (int)strlen(lines[count]) - 1;
+        while (end >= 0 && (lines[count][end] == ' ' || lines[count][end] == '\t')) {
+            lines[count][end] = '\0';
+            end--;
+        }
+        
+        count++;
+        
+        // Move to next part of text (skip leading spaces)
+        remaining += break_pos;
+        remaining_len -= break_pos;
+        while (remaining_len > 0 && (*remaining == ' ' || *remaining == '\t')) {
+            remaining++;
+            remaining_len--;
+        }
+    }
+    
+    lines[count] = NULL; // NULL-terminate the array
+    *line_count = count;
+    return lines;
+}
+
+// Free wrapped text array
+static void free_wrapped_text(char **lines) {
+    if (!lines) return;
+    
+    for (int i = 0; lines[i] != NULL; i++) {
+        free(lines[i]);
+    }
+    free(lines);
+}
+
+// Calculate total visual lines needed for all entries
+static int calculate_total_visual_lines(TUIState *tui, int max_x) {
+    if (!tui) return 0;
+    
+    int total_lines = 0;
+    for (int i = 0; i < tui->entries_count; i++) {
+        ConversationEntry *entry = &tui->entries[i];
+        int prefix_len = (entry->prefix && entry->prefix[0] != '\0') ? (int)strlen(entry->prefix) + 1 : 0;
+        int text_width = max_x - prefix_len;
+        if (text_width < 10) text_width = 10;
+        
+        int line_count = 0;
+        if (entry->text && entry->text[0] != '\0') {
+            char **wrapped = wrap_text(entry->text, text_width, &line_count);
+            free_wrapped_text(wrapped);
+        }
+        if (line_count == 0) line_count = 1; // Empty lines still take one line
+        
+        total_lines += line_count;
+    }
+    
+    return total_lines;
+}
+
+// Helper: Render conversation window with text wrapping
 static void render_conversation_window(TUIState *tui) {
     if (!tui || !tui->conv_win) return;
 
@@ -345,12 +482,53 @@ static void render_conversation_window(TUIState *tui) {
     int max_y, max_x;
     getmaxyx(tui->conv_win, max_y, max_x);
 
-    // Simple rendering: display entries from scroll offset
-    int start_entry = tui->conv_scroll_offset;
-    if (start_entry < 0) start_entry = 0;
-    if (start_entry >= tui->entries_count) start_entry = tui->entries_count - max_y;
-    if (start_entry < 0) start_entry = 0;
+    // Calculate total visual lines needed for all entries
+    // This is needed to properly handle scrolling with wrapped text
+    int total_visual_lines = 0;
+    int *entry_line_counts = calloc((size_t)tui->entries_count, sizeof(int));
+    if (!entry_line_counts) {
+        LOG_ERROR("[TUI] Failed to allocate entry_line_counts");
+        return;
+    }
+    
+    // Calculate visual lines for each entry
+    for (int i = 0; i < tui->entries_count; i++) {
+        ConversationEntry *entry = &tui->entries[i];
+        int prefix_len = (entry->prefix && entry->prefix[0] != '\0') ? (int)strlen(entry->prefix) + 1 : 0;
+        int text_width = max_x - prefix_len;
+        if (text_width < 10) text_width = 10;
+        
+        int line_count = 0;
+        if (entry->text && entry->text[0] != '\0') {
+            char **wrapped = wrap_text(entry->text, text_width, &line_count);
+            free_wrapped_text(wrapped);
+        }
+        if (line_count == 0) line_count = 1; // Empty lines still take one line
+        
+        entry_line_counts[i] = line_count;
+        total_visual_lines += line_count;
+    }
+    
+    // Find which entry to start rendering from based on scroll offset
+    int target_line = tui->conv_scroll_offset;
+    if (target_line < 0) target_line = 0;
+    if (target_line >= total_visual_lines) target_line = total_visual_lines - 1;
+    if (target_line < 0) target_line = 0;
+    
+    int start_entry = 0;
+    int skip_lines = 0;
+    int cumulative_lines = 0;
+    
+    for (int i = 0; i < tui->entries_count; i++) {
+        if (cumulative_lines + entry_line_counts[i] > target_line) {
+            start_entry = i;
+            skip_lines = target_line - cumulative_lines;
+            break;
+        }
+        cumulative_lines += entry_line_counts[i];
+    }
 
+    // Render entries starting from start_entry
     int y = 0;
     for (int i = start_entry; i < tui->entries_count && y < max_y; i++) {
         ConversationEntry *entry = &tui->entries[i];
@@ -390,60 +568,75 @@ static void render_conversation_window(TUIState *tui) {
             text_pair = mapped_pair;
         }
 
-        // Move to start of line
-        wmove(tui->conv_win, y, 0);
+        // Calculate text wrapping
+        int prefix_len = prefix_has_text ? (int)strlen(entry->prefix) + 1 : 0;
+        int text_width = max_x - prefix_len;
+        if (text_width < 10) text_width = 10;
         
-        // Print prefix with color
-        if (prefix_has_text) {
-            if (has_colors()) {
-                wattron(tui->conv_win, COLOR_PAIR(prefix_pair) | A_BOLD);
-            }
-            wprintw(tui->conv_win, "%s", entry->prefix);
-            if (has_colors()) {
-                wattroff(tui->conv_win, COLOR_PAIR(prefix_pair) | A_BOLD);
-            }
+        int line_count = 0;
+        char **wrapped_lines = NULL;
+        if (entry->text && entry->text[0] != '\0') {
+            wrapped_lines = wrap_text(entry->text, text_width, &line_count);
         }
-
-        // Print text with foreground color
-        if (entry->text) {
-            if (has_colors()) {
-                wattron(tui->conv_win, COLOR_PAIR(text_pair));
+        
+        // Render wrapped lines
+        for (int line_idx = 0; line_idx < line_count && y < max_y; line_idx++) {
+            // Skip lines if we're starting mid-entry
+            if (i == start_entry && line_idx < skip_lines) {
+                continue;
             }
             
-            // Add space between prefix and text if both exist
-            if (prefix_has_text) {
-                wprintw(tui->conv_win, " ");
-            }
+            wmove(tui->conv_win, y, 0);
             
-            // Print text, truncating if too long
-            int remaining = max_x - (prefix_has_text ? (int)strlen(entry->prefix) + 1 : 0);
-            if (remaining > 0) {
-                // Simple truncation - print up to remaining chars
-                int text_len = (int)strlen(entry->text);
-                if (text_len <= remaining) {
-                    wprintw(tui->conv_win, "%s", entry->text);
-                } else {
-                    // Print truncated with ellipsis
-                    char truncated[4096];
-                    int copy_len = remaining - 3;  // Leave room for "..."
-                    if (copy_len < 0) copy_len = 0;
-                    if (copy_len > (int)sizeof(truncated) - 4) copy_len = (int)sizeof(truncated) - 4;
-                    
-                    strncpy(truncated, entry->text, (size_t)copy_len);
-                    truncated[copy_len] = '\0';
-                    strcat(truncated, "...");
-                    wprintw(tui->conv_win, "%s", truncated);
+            // Print prefix only on first line
+            if (line_idx == 0 && prefix_has_text) {
+                if (has_colors()) {
+                    wattron(tui->conv_win, COLOR_PAIR(prefix_pair) | A_BOLD);
+                }
+                wprintw(tui->conv_win, "%s ", entry->prefix);
+                if (has_colors()) {
+                    wattroff(tui->conv_win, COLOR_PAIR(prefix_pair) | A_BOLD);
+                }
+            } else if (prefix_has_text) {
+                // Indent continuation lines to align with text
+                for (int sp = 0; sp < prefix_len; sp++) {
+                    waddch(tui->conv_win, ' ');
                 }
             }
             
-            if (has_colors()) {
-                wattroff(tui->conv_win, COLOR_PAIR(text_pair));
+            // Print this line of wrapped text
+            if (wrapped_lines && wrapped_lines[line_idx]) {
+                if (has_colors()) {
+                    wattron(tui->conv_win, COLOR_PAIR(text_pair));
+                }
+                wprintw(tui->conv_win, "%s", wrapped_lines[line_idx]);
+                if (has_colors()) {
+                    wattroff(tui->conv_win, COLOR_PAIR(text_pair));
+                }
             }
+            
+            y++;
         }
-
-        y++;
+        
+        // If entry has no text or empty, still show the prefix
+        if (line_count == 0 && y < max_y) {
+            wmove(tui->conv_win, y, 0);
+            if (prefix_has_text) {
+                if (has_colors()) {
+                    wattron(tui->conv_win, COLOR_PAIR(prefix_pair) | A_BOLD);
+                }
+                wprintw(tui->conv_win, "%s", entry->prefix);
+                if (has_colors()) {
+                    wattroff(tui->conv_win, COLOR_PAIR(prefix_pair) | A_BOLD);
+                }
+            }
+            y++;
+        }
+        
+        free_wrapped_text(wrapped_lines);
     }
-
+    
+    free(entry_line_counts);
     wrefresh(tui->conv_win);
 }
 
@@ -1101,9 +1294,19 @@ void tui_add_conversation_line(TUIState *tui, const char *prefix, const char *te
     }
 
     // Auto-scroll to bottom (show latest messages)
-    tui->conv_scroll_offset = tui->entries_count - tui->conv_height;
-    if (tui->conv_scroll_offset < 0) {
-        tui->conv_scroll_offset = 0;
+    // Calculate total visual lines to properly position scroll
+    int max_x = 0;
+    if (tui->conv_win) {
+        int max_y;
+        getmaxyx(tui->conv_win, max_y, max_x);
+    }
+    
+    if (max_x > 0) {
+        int total_visual_lines = calculate_total_visual_lines(tui, max_x);
+        tui->conv_scroll_offset = total_visual_lines - tui->conv_height;
+        if (tui->conv_scroll_offset < 0) {
+            tui->conv_scroll_offset = 0;
+        }
     }
 
     // Render the conversation window
@@ -1301,8 +1504,12 @@ void tui_show_startup_banner(TUIState *tui, const char *version, const char *mod
 void tui_scroll_conversation(TUIState *tui, int direction) {
     if (!tui || !tui->is_initialized || !tui->conv_win) return;
 
-    // Calculate max scroll offset
-    int max_offset = tui->entries_count - tui->conv_height;
+    // Calculate max scroll offset based on visual lines
+    int max_y, max_x;
+    getmaxyx(tui->conv_win, max_y, max_x);
+    
+    int total_visual_lines = calculate_total_visual_lines(tui, max_x);
+    int max_offset = total_visual_lines - tui->conv_height;
     if (max_offset < 0) max_offset = 0;
 
     // Update scroll offset
