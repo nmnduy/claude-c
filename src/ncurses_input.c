@@ -656,13 +656,12 @@ char* ncurses_input_readline(NCursesInput *input, const char *prompt) {
             // ============================================================
             // Submit and control
             // ============================================================
-            case '\n':  // Enter - submit
-            case '\r':
-            case KEY_ENTER:
+            case '\r':       // Enter key (with nonl() mode) - submit
+            case KEY_ENTER:  // Keypad Enter - submit
                 running = 0;
                 break;
 
-            case 10:  // Ctrl+J - insert newline for multiline input
+            case '\n':  // Ctrl+J (newline, ASCII 10) - insert newline for multiline input
                 if (buffer_insert_char(input, '\n') == 0) {
                     redraw_input(input, prompt);
                 }

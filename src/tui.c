@@ -581,6 +581,7 @@ int tui_init(TUIState *tui) {
     initscr();
     cbreak();  // Disable line buffering
     noecho();  // Don't echo input
+    nonl();    // Don't translate Enter to newline (allows distinguishing Enter from Ctrl+J)
     keypad(stdscr, TRUE);  // Enable function keys
     nodelay(stdscr, FALSE);  // Blocking input
     curs_set(2);  // Make cursor very visible (block cursor)
