@@ -20,13 +20,12 @@
 
 // Forward declarations
 typedef struct NCursesInput NCursesInput;
-typedef struct CompletionResult CompletionResult;
 
 // ============================================================================
 // Completion Support
 // ============================================================================
 
-typedef struct {
+typedef struct CompletionResult {
     char **options;      // Array of completion options
     int count;           // Number of options
     int selected;        // Which option is highlighted (for cycling)

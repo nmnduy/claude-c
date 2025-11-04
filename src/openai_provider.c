@@ -53,11 +53,8 @@ static int progress_callback(void *clientp, curl_off_t dltotal, curl_off_t dlnow
     (void)ultotal;  // Unused
     (void)ulnow;    // Unused
 
-    // Check if ESC was pressed - return 1 to abort the transfer
-    if (check_for_esc()) {
-        LOG_INFO("API call interrupted by user (ESC pressed)");
-        return 1;  // Non-zero return value aborts the transfer
-    }
+    // ESC key handling is now done by TUI/ncurses event loop
+    // Non-TUI mode doesn't have interactive ESC key support during API calls
     return 0;  // Continue transfer
 }
 

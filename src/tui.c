@@ -11,7 +11,6 @@
 #endif
 
 #include "tui.h"
-#include "lineedit.h"
 #define COLORSCHEME_EXTERN
 #include "colorscheme.h"
 #include "fallback_colors.h"

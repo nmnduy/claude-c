@@ -30,7 +30,6 @@
 #include <limits.h>
 #include <libgen.h>
 #include <dirent.h>
-#include <termios.h>
 #include <ctype.h>
 #include <signal.h>
 #include "colorscheme.h"
@@ -109,8 +108,7 @@ static int bedrock_handle_auth_error(BedrockConfig *config, long http_status, co
 #include "provider.h"  // For ApiCallResult and Provider definitions
 #include "todo.h"
 
-// New input system modules
-#include "lineedit.h"
+// Commands module
 #include "commands.h"
 
 // TUI module
@@ -565,58 +563,6 @@ static void print_error(const char *text) {
 // ESC Key Interrupt Handling
 // ============================================================================
 
-// Global interrupt flag - set to 1 when ESC is pressed
-static volatile sig_atomic_t interrupt_requested = 0;
-
-
-
-// Check for ESC key press without blocking
-// Returns: 1 if ESC was pressed, 0 otherwise
-int check_for_esc(void) {
-    struct termios old_term, new_term;
-    int esc_pressed = 0;
-
-    // Save current terminal settings
-    if (tcgetattr(STDIN_FILENO, &old_term) < 0) {
-        return 0;  // Can't check, assume no ESC
-    }
-
-    // Set terminal to non-blocking mode
-    new_term = old_term;
-    new_term.c_lflag &= (tcflag_t)~(ICANON | ECHO);
-    new_term.c_cc[VMIN] = 0;   // Non-blocking
-    new_term.c_cc[VTIME] = 0;  // No timeout
-    tcsetattr(STDIN_FILENO, TCSANOW, &new_term);
-
-    // Check if there's input available
-    fd_set readfds;
-    struct timeval timeout;
-    FD_ZERO(&readfds);
-    FD_SET(STDIN_FILENO, &readfds);
-    timeout.tv_sec = 0;
-    timeout.tv_usec = 0;
-
-    int ready = select(STDIN_FILENO + 1, &readfds, NULL, NULL, &timeout);
-    if (ready > 0) {
-        unsigned char c;
-        if (read(STDIN_FILENO, &c, 1) == 1) {
-            if (c == 27) {  // ESC key
-                esc_pressed = 1;
-                interrupt_requested = 1;
-
-                // Drain any following characters (like [, etc. from arrow keys)
-                while (read(STDIN_FILENO, &c, 1) == 1) {
-                    // Keep draining
-                }
-            }
-        }
-    }
-
-    // Restore terminal settings
-    tcsetattr(STDIN_FILENO, TCSANOW, &old_term);
-
-    return esc_pressed;
-}
 
 
 // ============================================================================
@@ -3495,7 +3441,8 @@ static void process_response(ConversationState *state,
                     deadline.tv_nsec -= 1000000000L;
                 }
 
-                int wait_rc = pthread_cond_timedwait(&tracker.cond, &tracker.mutex, &deadline);
+                // Wait for condition variable with timeout
+                (void)pthread_cond_timedwait(&tracker.cond, &tracker.mutex, &deadline);
                 done = tracker.completed >= tracker.total;
                 cancelled = tracker.cancelled;
                 pthread_mutex_unlock(&tracker.mutex);
@@ -3504,29 +3451,8 @@ static void process_response(ConversationState *state,
                     break;
                 }
 
-                // Only check for ESC in non-TUI mode (TUI mode handles keyboard via ncurses)
-                if (wait_rc == ETIMEDOUT && !tui && check_for_esc()) {
-                    LOG_INFO("Tool execution interrupted by user (ESC pressed) - cancelling threads");
-                    interrupted = 1;
-
-                    if (!tui && !queue) {
-                        if (tool_spinner) {
-                            spinner_update(tool_spinner, "Interrupted (ESC) - terminating tools...");
-                        }
-                    } else {
-                        ui_set_status(tui, queue, "Interrupted (ESC) - terminating tools...");
-                    }
-
-                    pthread_mutex_lock(&tracker.mutex);
-                    tracker.cancelled = 1;
-                    pthread_cond_broadcast(&tracker.cond);
-                    pthread_mutex_unlock(&tracker.mutex);
-
-                    for (int t = 0; t < started_threads; t++) {
-                        pthread_cancel(threads[t]);
-                    }
-                    break;
-                }
+                // ESC key handling is now done by TUI/ncurses event loop
+                // Non-TUI mode doesn't have interactive ESC key support anymore
             }
         }
 

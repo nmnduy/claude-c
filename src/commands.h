@@ -8,7 +8,7 @@
 #ifndef COMMANDS_H
 #define COMMANDS_H
 
-#include "lineedit.h"
+#include "ncurses_input.h"  // For CompletionResult and CompletionFn types
 #include "claude_internal.h"
 
 // ============================================================================
