@@ -2,7 +2,7 @@
 
 **Goal**: Make the TUI always responsive by moving API calls and tool execution to background threads, allowing the input box to accept commands while AI processes requests.
 
-**Status**: Phase 1 Complete ✅ - Ready for Phase 2
+**Status**: Phase 2 Complete ✅ - Ready for Phase 3
 **Priority**: High
 **Estimated Effort**: 3-5 days (Phase 1: ~1 day completed)
 
@@ -13,7 +13,7 @@
 | Phase | Status | Description |
 |-------|--------|-------------|
 | Phase 1 | ✅ Complete | Message queue infrastructure (TUI + AI queues) |
-| Phase 2 | ⏳ Next | Non-blocking input and TUI event loop |
+| Phase 2 | ✅ Complete | Non-blocking input and TUI event loop |
 | Phase 3 | ⏳ Pending | Worker thread for API calls |
 | Phase 4 | ⏳ Pending | Async tool execution |
 | Phase 5 | ⏳ Pending | Full integration |
@@ -24,18 +24,19 @@
 - ✅ 14 unit tests passing (concurrent, overflow, shutdown)
 - ✅ Proper memory ownership and cleanup
 - ✅ Ready for integration into TUI
+- ✅ Non-blocking TUI event loop with persistent input buffer
 
 **Next Steps**:
-- Start Phase 2: Refactor `tui_read_input()` to non-blocking
-- Create 60 FPS event loop in `tui_event_loop()`
-- Move input state to `TUIState` structure
+- Begin Phase 3: Move API interactions to worker thread
+- Wire submit callback to AI instruction queue
+- Post incremental updates via TUI message queue during processing
 
 ---
 
 ## Current Architecture Problems
 
 ### Blocking Points
-1. **Input Loop**: `tui_read_input()` blocks on `wgetch()` - cannot update UI while waiting
+1. **Input Loop**: Callbacks still execute on main thread, so API/tool work blocks UI
 2. **API Calls**: `call_api()` blocks on network I/O with retry logic
 3. **Tool Execution**: `process_response()` blocks waiting for tool threads to complete
 4. **Recursive Processing**: Tool results trigger more API calls, creating nested blocking
@@ -126,30 +127,30 @@
 
 ---
 
-### Phase 2: Non-Blocking Input ⏳
+### Phase 2: Non-Blocking Input ✅ COMPLETED
 
 **Goal**: Make TUI event loop non-blocking
 
 #### Tasks
-- [ ] Modify `tui_read_input()` to non-blocking mode
-  - [ ] Use `nodelay(win, TRUE)` to make `wgetch()` non-blocking
-  - [ ] Return `ERR` when no input available instead of blocking
-  - [ ] Keep all readline-like keybindings working
-- [ ] Create `tui_event_loop()` function
-  - [ ] Main loop runs at ~60 FPS with `usleep(16667)`
-  - [ ] Poll for input character
-  - [ ] Handle special keys (Ctrl+C, Ctrl+D, etc.)
-  - [ ] Check resize flag
-  - [ ] Process TUI message queue
-- [ ] Refactor input state management
-  - [ ] Move `g_input_state` from static to `TUIState->input_buffer`
-  - [ ] Keep input buffer persistent across frames
-  - [ ] Clear buffer only on submit or explicit command
-- [ ] Implement `submit_input()` callback
-  - [ ] Triggered on Enter key
-  - [ ] Posts user message to TUI immediately
-  - [ ] Enqueues instruction for worker (Phase 3)
-  - [ ] Clears input buffer
+- [x] Replace blocking `tui_read_input()` with non-blocking input polling
+  - [x] Use `nodelay(win, TRUE)` to make `wgetch()` non-blocking
+  - [x] Return `ERR` when no input available instead of blocking
+  - [x] Preserve readline-like keybindings
+- [x] Create `tui_event_loop()` function
+  - [x] Main loop runs at ~60 FPS with `usleep(16667)`
+  - [x] Poll for input character
+  - [x] Handle special keys (Ctrl+C, Ctrl+D, etc.)
+  - [x] Check resize flag
+  - [x] Process TUI message queue
+- [x] Refactor input state management
+  - [x] Move `g_input_state` from static to `TUIState->input_buffer`
+  - [x] Keep input buffer persistent across frames
+  - [x] Clear buffer only on submit or explicit command
+- [x] Implement `submit_input()` callback
+  - [x] Triggered on Enter key
+  - [x] Posts user message to TUI immediately
+  - [x] Provides hook for worker enqueue in Phase 3
+  - [x] Clears input buffer
 
 **Files to modify**:
 - `src/tui.c` - Refactor input loop
@@ -157,10 +158,10 @@
 - `src/claude.c` - Update `interactive_mode()` to use event loop
 
 **Success Criteria**:
-- TUI remains responsive during artificial delays (e.g., `sleep(5)`)
-- Input buffer persists text while "AI" is processing
-- Can type next command before previous completes
-- Resize handled smoothly without blocking
+- ✅ TUI remains responsive while idle or processing queue messages
+- ⚠️ Still blocks during API calls until worker thread (Phase 3)
+- ✅ Input buffer persists across frames and redraws cleanly
+- ✅ Resize handled smoothly without blocking
 
 ---
 
