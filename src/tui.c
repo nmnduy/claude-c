@@ -1287,6 +1287,9 @@ void tui_show_startup_banner(TUIState *tui, const char *version, const char *mod
     snprintf(line2, sizeof(line2), "▝▜█████▛▘  %s", model);
     snprintf(line3, sizeof(line3), "  ▘▘ ▝▝    %s", working_dir);
 
+    // Add padding before mascot
+    tui_add_conversation_line(tui, NULL, "", COLOR_PAIR_FOREGROUND);
+    
     // Add banner lines to conversation window
     tui_add_conversation_line(tui, NULL, line1, COLOR_PAIR_ASSISTANT);
     tui_add_conversation_line(tui, NULL, line2, COLOR_PAIR_ASSISTANT);
