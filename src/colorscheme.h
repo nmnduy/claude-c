@@ -117,6 +117,9 @@ static void rgb_to_ansi_code(RGB rgb, char *buf, size_t bufsize) {
 
 // Get ANSI color code for a colorscheme element
 // Returns 0 on success, -1 if no theme loaded
+#if defined(__GNUC__)
+__attribute__((unused))
+#endif
 static int get_colorscheme_color(ColorschemeElement element, char *buf, size_t bufsize) {
     if (!g_theme_loaded) {
         static int warned = 0;

@@ -15,7 +15,7 @@
 #define COLORSCHEME_EXTERN
 #include "colorscheme.h"
 #include "fallback_colors.h"
-#include "indicators.h"
+#include "logger.h"
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
@@ -23,21 +23,19 @@
 #include <ncurses.h>
 #include <signal.h>
 #include <sys/ioctl.h>
+#include <unistd.h>
+#include <time.h>
+#include "message_queue.h"
 
 #define INITIAL_CONV_CAPACITY 1000
 #define INPUT_BUFFER_SIZE 8192
 #define INPUT_WIN_MIN_HEIGHT 3  // Min height for input window (1 line + 2 borders)
 #define INPUT_WIN_MAX_HEIGHT 5  // Max height for input window (3 lines + 2 borders)
 #define CONV_WIN_PADDING 1      // Lines of padding between conv window and input window
-
-// Global spinner for TUI status updates
-static Spinner *g_tui_spinner = NULL;
+#define STATUS_WIN_HEIGHT 1     // Single-line status window
 
 // Global flag to detect terminal resize
 static volatile sig_atomic_t g_resize_flag = 0;
-
-// Global TUI state pointer (for input resize callback)
-static TUIState *g_tui_state_ptr = NULL;
 
 // Ncurses color pair definitions (match TUIColorPair enum)
 #define NCURSES_PAIR_FOREGROUND 1
@@ -64,6 +62,38 @@ int tui_resize_pending(void) {
 // Convert RGB (0-255) to ncurses color (0-1000)
 static short rgb_to_ncurses(int value) {
     return (short)((value * 1000) / 255);
+}
+
+// Render the status window based on current state
+static void render_status_window(TUIState *tui) {
+    if (!tui || !tui->status_win) {
+        return;
+    }
+
+    int height, width;
+    getmaxyx(tui->status_win, height, width);
+    (void)height;
+
+    werase(tui->status_win);
+
+    if (tui->status_visible && tui->status_message && tui->status_message[0] != '\0') {
+        if (has_colors()) {
+            wattron(tui->status_win, COLOR_PAIR(NCURSES_PAIR_STATUS) | A_BOLD);
+        } else {
+            wattron(tui->status_win, A_BOLD);
+        }
+
+        // Trim message to window width
+        mvwaddnstr(tui->status_win, 0, 0, tui->status_message, width);
+
+        if (has_colors()) {
+            wattroff(tui->status_win, COLOR_PAIR(NCURSES_PAIR_STATUS) | A_BOLD);
+        } else {
+            wattroff(tui->status_win, A_BOLD);
+        }
+    }
+
+    wrefresh(tui->status_win);
 }
 
 // Initialize ncurses color pairs from our colorscheme
@@ -333,7 +363,7 @@ static int move_forward_word(const char *buffer, int cursor_pos, int buffer_len)
 }
 
 // Input buffer management
-typedef struct {
+struct TUIInputBuffer {
     char *buffer;
     size_t capacity;
     int length;
@@ -342,11 +372,9 @@ typedef struct {
     int win_width;
     int win_height;
     // Display state
-    int view_offset;  // Horizontal scroll offset for long lines
+    int view_offset;         // Horizontal scroll offset for long lines
     int line_scroll_offset;  // Vertical scroll offset (which line to show at top)
-} InputState;
-
-static InputState g_input_state = {0};
+};
 
 // Calculate how many visual lines are needed for the current buffer
 // Note: This assumes first line includes the prompt
@@ -405,7 +433,7 @@ static int resize_input_window(TUIState *tui, int desired_lines) {
     tui->input_height = new_window_height;
     
     // Recalculate conversation window height
-    int new_conv_height = max_y - new_window_height - CONV_WIN_PADDING;
+    int new_conv_height = max_y - new_window_height - tui->status_height - CONV_WIN_PADDING;
     if (new_conv_height < 5) new_conv_height = 5;
 
     // Resize conversation window if height changed
@@ -418,6 +446,18 @@ static int resize_input_window(TUIState *tui, int desired_lines) {
                 scrollok(tui->conv_win, TRUE);
                 render_conversation_window(tui);
             }
+        }
+    }
+
+    // Recreate status window to account for new offsets
+    if (tui->status_win) {
+        delwin(tui->status_win);
+        tui->status_win = NULL;
+    }
+    if (tui->status_height > 0) {
+        tui->status_win = newwin(tui->status_height, max_x, tui->conv_height, 0);
+        if (tui->status_win) {
+            render_status_window(tui);
         }
     }
 
@@ -435,181 +475,224 @@ static int resize_input_window(TUIState *tui, int desired_lines) {
     }
 
     // Update input state
-    g_input_state.win = tui->input_win;
-    int h, w;
-    getmaxyx(tui->input_win, h, w);
-    g_input_state.win_width = w - 2;
-    g_input_state.win_height = h - 2;
+    if (tui->input_buffer) {
+        tui->input_buffer->win = tui->input_win;
+        int h, w;
+        getmaxyx(tui->input_win, h, w);
+        tui->input_buffer->win_width = w - 2;
+        tui->input_buffer->win_height = h - 2;
+    }
 
     // Enable keypad for new window
     keypad(tui->input_win, TRUE);
 
     // Refresh stdscr to clear old area
     touchwin(stdscr);
+    if (tui->status_height > 0) {
+        render_status_window(tui);
+    }
     refresh();
+
+    LOG_DEBUG("[TUI] Input window resized (new_input_h=%d, conv_h=%d, status_h=%d)",
+              tui->input_height, tui->conv_height, tui->status_height);
 
     return 0;
 }
 
 // Initialize input buffer
-static int input_init(WINDOW *win) {
-    g_input_state.buffer = malloc(INPUT_BUFFER_SIZE);
-    if (!g_input_state.buffer) {
+static int input_init(TUIState *tui) {
+    if (!tui || !tui->input_win) {
         return -1;
     }
-    g_input_state.capacity = INPUT_BUFFER_SIZE;
-    g_input_state.buffer[0] = '\0';
-    g_input_state.length = 0;
-    g_input_state.cursor = 0;
-    g_input_state.win = win;
-    g_input_state.view_offset = 0;
-    g_input_state.line_scroll_offset = 0;
+
+    TUIInputBuffer *input = calloc(1, sizeof(TUIInputBuffer));
+    if (!input) {
+        return -1;
+    }
+
+    input->buffer = malloc(INPUT_BUFFER_SIZE);
+    if (!input->buffer) {
+        free(input);
+        return -1;
+    }
+
+    input->capacity = INPUT_BUFFER_SIZE;
+    input->buffer[0] = '\0';
+    input->length = 0;
+    input->cursor = 0;
+    input->win = tui->input_win;
+    input->view_offset = 0;
+    input->line_scroll_offset = 0;
 
     // Get window dimensions
     int h, w;
-    getmaxyx(win, h, w);
-    g_input_state.win_width = w - 2;  // Account for borders
-    g_input_state.win_height = h - 2;
+    getmaxyx(tui->input_win, h, w);
+    input->win_width = w - 2;  // Account for borders
+    input->win_height = h - 2;
 
+    tui->input_buffer = input;
     return 0;
 }
 
 // Free input buffer
-static void input_free(void) {
-    free(g_input_state.buffer);
-    g_input_state.buffer = NULL;
-    g_input_state.capacity = 0;
-    g_input_state.length = 0;
-    g_input_state.cursor = 0;
+static void input_free(TUIState *tui) {
+    if (!tui || !tui->input_buffer) {
+        return;
+    }
+
+    free(tui->input_buffer->buffer);
+    tui->input_buffer->buffer = NULL;
+    tui->input_buffer->capacity = 0;
+    tui->input_buffer->length = 0;
+    tui->input_buffer->cursor = 0;
+
+    free(tui->input_buffer);
+    tui->input_buffer = NULL;
 }
 
 // Insert character(s) at cursor position
-static int input_insert_char(const unsigned char *utf8_char, int char_bytes) {
-    if (g_input_state.length + char_bytes >= (int)g_input_state.capacity - 1) {
+static int input_insert_char(TUIInputBuffer *input, const unsigned char *utf8_char, int char_bytes) {
+    if (!input) {
+        return -1;
+    }
+
+    if (input->length + char_bytes >= (int)input->capacity - 1) {
         return -1;  // Buffer full
     }
 
     // Make space for the new character(s)
-    memmove(&g_input_state.buffer[g_input_state.cursor + char_bytes],
-            &g_input_state.buffer[g_input_state.cursor],
-            (size_t)(g_input_state.length - g_input_state.cursor + 1));
+    memmove(&input->buffer[input->cursor + char_bytes],
+            &input->buffer[input->cursor],
+            (size_t)(input->length - input->cursor + 1));
 
     // Copy the character bytes
     for (int i = 0; i < char_bytes; i++) {
-        g_input_state.buffer[g_input_state.cursor + i] = (char)utf8_char[i];
+        input->buffer[input->cursor + i] = (char)utf8_char[i];
     }
 
-    g_input_state.length += char_bytes;
-    g_input_state.cursor += char_bytes;
+    input->length += char_bytes;
+    input->cursor += char_bytes;
     return 0;
 }
 
 // Delete character at cursor position (forward delete)
-static int input_delete_char(void) {
-    if (g_input_state.cursor >= g_input_state.length) {
+static int input_delete_char(TUIInputBuffer *input) {
+    if (!input || input->cursor >= input->length) {
         return 0;  // Nothing to delete
     }
 
     // Find the length of the UTF-8 character at cursor
-    int char_len = utf8_char_length((unsigned char)g_input_state.buffer[g_input_state.cursor]);
+    int char_len = utf8_char_length((unsigned char)input->buffer[input->cursor]);
 
     // Delete the character by moving subsequent text left
-    memmove(&g_input_state.buffer[g_input_state.cursor],
-            &g_input_state.buffer[g_input_state.cursor + char_len],
-            (size_t)(g_input_state.length - g_input_state.cursor - char_len + 1));
+    memmove(&input->buffer[input->cursor],
+            &input->buffer[input->cursor + char_len],
+            (size_t)(input->length - input->cursor - char_len + 1));
 
-    g_input_state.length -= char_len;
+    input->length -= char_len;
     return char_len;
 }
 
 // Delete character before cursor (backspace)
-static int input_backspace(void) {
-    if (g_input_state.cursor <= 0) {
+static int input_backspace(TUIInputBuffer *input) {
+    if (!input || input->cursor <= 0) {
         return 0;  // Nothing to delete
     }
 
-    memmove(&g_input_state.buffer[g_input_state.cursor - 1],
-            &g_input_state.buffer[g_input_state.cursor],
-            (size_t)(g_input_state.length - g_input_state.cursor + 1));
-    g_input_state.length--;
-    g_input_state.cursor--;
+    memmove(&input->buffer[input->cursor - 1],
+            &input->buffer[input->cursor],
+            (size_t)(input->length - input->cursor + 1));
+    input->length--;
+    input->cursor--;
     return 1;
 }
 
 // Delete word before cursor (Alt+Backspace)
-static int input_delete_word_backward(void) {
-    if (g_input_state.cursor <= 0) {
+static int input_delete_word_backward(TUIInputBuffer *input) {
+    if (!input || input->cursor <= 0) {
         return 0;
     }
 
-    int word_start = g_input_state.cursor - 1;
-    while (word_start > 0 && is_word_boundary(g_input_state.buffer[word_start])) {
+    int word_start = input->cursor - 1;
+    while (word_start > 0 && is_word_boundary(input->buffer[word_start])) {
         word_start--;
     }
-    while (word_start > 0 && !is_word_boundary(g_input_state.buffer[word_start])) {
+    while (word_start > 0 && !is_word_boundary(input->buffer[word_start])) {
         word_start--;
     }
-    if (word_start > 0 && is_word_boundary(g_input_state.buffer[word_start])) {
+    if (word_start > 0 && is_word_boundary(input->buffer[word_start])) {
         word_start++;
     }
 
-    int delete_count = g_input_state.cursor - word_start;
+    int delete_count = input->cursor - word_start;
     if (delete_count > 0) {
-        memmove(&g_input_state.buffer[word_start],
-                &g_input_state.buffer[g_input_state.cursor],
-                (size_t)(g_input_state.length - g_input_state.cursor + 1));
-        g_input_state.length -= delete_count;
-        g_input_state.cursor = word_start;
+        memmove(&input->buffer[word_start],
+                &input->buffer[input->cursor],
+                (size_t)(input->length - input->cursor + 1));
+        input->length -= delete_count;
+        input->cursor = word_start;
     }
 
     return delete_count;
 }
 
 // Delete word forward (Alt+d)
-static int input_delete_word_forward(void) {
-    if (g_input_state.cursor >= g_input_state.length) {
+static int input_delete_word_forward(TUIInputBuffer *input) {
+    if (!input || input->cursor >= input->length) {
         return 0;
     }
 
-    int word_end = move_forward_word(g_input_state.buffer, g_input_state.cursor, g_input_state.length);
-    int delete_count = word_end - g_input_state.cursor;
+    int word_end = move_forward_word(input->buffer, input->cursor, input->length);
+    int delete_count = word_end - input->cursor;
 
     if (delete_count > 0) {
-        memmove(&g_input_state.buffer[g_input_state.cursor],
-                &g_input_state.buffer[word_end],
-                (size_t)(g_input_state.length - word_end + 1));
-        g_input_state.length -= delete_count;
+        memmove(&input->buffer[input->cursor],
+                &input->buffer[word_end],
+                (size_t)(input->length - word_end + 1));
+        input->length -= delete_count;
     }
 
     return delete_count;
 }
 
 // Redraw the input window
-static void input_redraw(const char *prompt) {
-    WINDOW *win = g_input_state.win;
-    if (!win) return;
+static void input_redraw(TUIState *tui, const char *prompt) {
+    if (!tui || !tui->input_buffer) {
+        return;
+    }
+
+    TUIInputBuffer *input = tui->input_buffer;
+    WINDOW *win = input->win;
+    if (!win) {
+        return;
+    }
 
     int prompt_len = (int)strlen(prompt) + 1;  // +1 for space after prompt
 
     // Calculate available width for text (window width - borders - prompt)
-    int available_width = g_input_state.win_width - prompt_len;
+    int available_width = input->win_width - prompt_len;
     if (available_width < 10) available_width = 10;
 
     // Calculate how many lines we need to display all content
-    int needed_lines = calculate_needed_lines(g_input_state.buffer, g_input_state.length, available_width, prompt_len);
+    int needed_lines = calculate_needed_lines(input->buffer, input->length, available_width, prompt_len);
 
     // Request window resize (this will be a no-op if size hasn't changed)
-    if (g_tui_state_ptr) {
-        resize_input_window(g_tui_state_ptr, needed_lines);
-        win = g_input_state.win;  // Window may have been recreated
-        if (!win) return;
+    resize_input_window(tui, needed_lines);
+    input = tui->input_buffer;
+    win = input->win;
+    if (!win) {
+        return;
     }
+
+    // Recalculate available width in case window resized
+    available_width = input->win_width - prompt_len;
+    if (available_width < 10) available_width = 10;
 
     // Calculate cursor line position
     int cursor_line = 0;
     int cursor_col = prompt_len;
-    for (int i = 0; i < g_input_state.cursor; i++) {
-        if (g_input_state.buffer[i] == '\n') {
+    for (int i = 0; i < input->cursor; i++) {
+        if (input->buffer[i] == '\n') {
             cursor_line++;
             cursor_col = 0;
         } else {
@@ -622,11 +705,11 @@ static void input_redraw(const char *prompt) {
     }
 
     // Adjust vertical scroll to keep cursor visible
-    int max_visible_lines = g_input_state.win_height;
-    if (cursor_line < g_input_state.line_scroll_offset) {
-        g_input_state.line_scroll_offset = cursor_line;
-    } else if (cursor_line >= g_input_state.line_scroll_offset + max_visible_lines) {
-        g_input_state.line_scroll_offset = cursor_line - max_visible_lines + 1;
+    int max_visible_lines = input->win_height;
+    if (cursor_line < input->line_scroll_offset) {
+        input->line_scroll_offset = cursor_line;
+    } else if (cursor_line >= input->line_scroll_offset + max_visible_lines) {
+        input->line_scroll_offset = cursor_line - max_visible_lines + 1;
     }
 
     // Clear the window
@@ -642,7 +725,7 @@ static void input_redraw(const char *prompt) {
     }
 
     // Draw prompt on first visible line (if we're not scrolled past it)
-    if (g_input_state.line_scroll_offset == 0) {
+    if (input->line_scroll_offset == 0) {
         if (has_colors()) {
             wattron(win, COLOR_PAIR(NCURSES_PAIR_PROMPT) | A_BOLD);
             mvwprintw(win, 1, 1, "%s ", prompt);
@@ -661,10 +744,10 @@ static void input_redraw(const char *prompt) {
     int screen_y = 1;
     int screen_x = (current_line == 0) ? prompt_len + 1 : 1;
 
-    for (int i = 0; i < g_input_state.length && screen_y <= g_input_state.win_height; i++) {
+    for (int i = 0; i < input->length && screen_y <= input->win_height; i++) {
         // Skip lines before scroll offset
-        if (current_line < g_input_state.line_scroll_offset) {
-            if (g_input_state.buffer[i] == '\n') {
+        if (current_line < input->line_scroll_offset) {
+            if (input->buffer[i] == '\n') {
                 current_line++;
                 screen_x = 0;
             } else {
@@ -678,9 +761,8 @@ static void input_redraw(const char *prompt) {
         }
 
         // Render character
-        char c = g_input_state.buffer[i];
+        char c = input->buffer[i];
         if (c == '\n') {
-            // Show newline as dimmed character (using + as fallback for arrow)
             mvwaddch(win, screen_y, screen_x, (unsigned char)'+' | A_DIM);
             screen_y++;
             current_line++;
@@ -691,7 +773,7 @@ static void input_redraw(const char *prompt) {
 
             // Check if we need to wrap
             int line_width = available_width;
-            if (current_line == g_input_state.line_scroll_offset && g_input_state.line_scroll_offset == 0) {
+            if (current_line == input->line_scroll_offset && input->line_scroll_offset == 0) {
                 line_width += prompt_len;  // First line includes prompt
             }
 
@@ -708,14 +790,14 @@ static void input_redraw(const char *prompt) {
     }
 
     // Position cursor (adjusted for scroll)
-    int cursor_screen_y = cursor_line - g_input_state.line_scroll_offset + 1;
+    int cursor_screen_y = cursor_line - input->line_scroll_offset + 1;
     int cursor_screen_x = cursor_col + 1;  // +1 for border
 
     // Recalculate cursor_col relative to its line
     int temp_line = 0;
     int temp_col = (temp_line == 0) ? prompt_len : 0;
-    for (int i = 0; i < g_input_state.cursor; i++) {
-        if (g_input_state.buffer[i] == '\n') {
+    for (int i = 0; i < input->cursor; i++) {
+        if (input->buffer[i] == '\n') {
             temp_line++;
             temp_col = 0;
         } else {
@@ -730,8 +812,8 @@ static void input_redraw(const char *prompt) {
     cursor_screen_x = temp_col + 1;
 
     // Bounds check for cursor position
-    if (cursor_screen_y >= 1 && cursor_screen_y <= g_input_state.win_height &&
-        cursor_screen_x >= 1 && cursor_screen_x <= g_input_state.win_width) {
+    if (cursor_screen_y >= 1 && cursor_screen_y <= input->win_height &&
+        cursor_screen_x >= 1 && cursor_screen_x <= input->win_width) {
         wmove(win, cursor_screen_y, cursor_screen_x);
     }
 
@@ -742,8 +824,6 @@ int tui_init(TUIState *tui) {
     if (!tui) return -1;
 
     // Store global pointer for input resize callback
-    g_tui_state_ptr = tui;
-
     // Set locale for UTF-8 support
     setlocale(LC_ALL, "");
 
@@ -766,9 +846,16 @@ int tui_init(TUIState *tui) {
     tui->screen_height = max_y;
     tui->screen_width = max_x;
     tui->input_height = INPUT_WIN_MIN_HEIGHT;  // Start with minimum height
+    tui->status_height = STATUS_WIN_HEIGHT;
 
-    // Calculate conversation window height (screen - input - padding)
-    tui->conv_height = max_y - INPUT_WIN_MIN_HEIGHT - CONV_WIN_PADDING;
+    // Ensure we have enough space for status window; disable if terminal too small
+    if (max_y - tui->input_height - CONV_WIN_PADDING - tui->status_height < 5) {
+        LOG_WARN("[TUI] Terminal height too small for status window, disabling status line");
+        tui->status_height = 0;
+    }
+
+    // Calculate conversation window height (screen - input - status - padding)
+    tui->conv_height = max_y - tui->input_height - tui->status_height - CONV_WIN_PADDING;
     if (tui->conv_height < 5) tui->conv_height = 5;  // Minimum height
 
     // Create conversation window (top of screen)
@@ -779,10 +866,25 @@ int tui_init(TUIState *tui) {
     }
     scrollok(tui->conv_win, TRUE);
 
+    // Create status window if enabled
+    if (tui->status_height > 0) {
+        tui->status_win = newwin(tui->status_height, max_x, tui->conv_height, 0);
+        if (!tui->status_win) {
+            delwin(tui->conv_win);
+            endwin();
+            return -1;
+        }
+    } else {
+        tui->status_win = NULL;
+    }
+
     // Create input window (bottom of screen)
     tui->input_win = newwin(INPUT_WIN_MIN_HEIGHT, max_x, max_y - INPUT_WIN_MIN_HEIGHT, 0);
     if (!tui->input_win) {
         delwin(tui->conv_win);
+        if (tui->status_win) {
+            delwin(tui->status_win);
+        }
         endwin();
         return -1;
     }
@@ -792,10 +894,15 @@ int tui_init(TUIState *tui) {
     tui->entries_count = 0;
     tui->entries_capacity = 0;
     tui->conv_scroll_offset = 0;
+    tui->status_message = NULL;
+    tui->status_visible = 0;
 
     // Initialize input buffer
-    if (input_init(tui->input_win) != 0) {
+    if (input_init(tui) != 0) {
         delwin(tui->conv_win);
+        if (tui->status_win) {
+            delwin(tui->status_win);
+        }
         delwin(tui->input_win);
         endwin();
         return -1;
@@ -807,6 +914,15 @@ int tui_init(TUIState *tui) {
 #endif
 
     tui->is_initialized = 1;
+
+    LOG_DEBUG("[TUI] Initialized (screen=%dx%d, conv_h=%d, status_h=%d, input_h=%d)",
+              tui->screen_width, tui->screen_height, tui->conv_height,
+              tui->status_height, tui->input_height);
+
+    if (tui->status_height > 0) {
+        render_status_window(tui);
+    }
+
     refresh();
 
     return 0;
@@ -815,20 +931,21 @@ int tui_init(TUIState *tui) {
 void tui_cleanup(TUIState *tui) {
     if (!tui || !tui->is_initialized) return;
 
-    // Clear global pointer
-    g_tui_state_ptr = NULL;
-
-    // Stop any running spinner
-    if (g_tui_spinner) {
-        spinner_stop(g_tui_spinner, NULL, 1);
-        g_tui_spinner = NULL;
-    }
-
     // Free conversation entries
     free_conversation_entries(tui);
 
     // Free input state
-    input_free();
+    input_free(tui);
+
+    // Free status message
+    free(tui->status_message);
+    tui->status_message = NULL;
+
+    // Destroy status window
+    if (tui->status_win) {
+        delwin(tui->status_win);
+        tui->status_win = NULL;
+    }
 
     // Destroy windows
     if (tui->conv_win) {
@@ -847,17 +964,12 @@ void tui_cleanup(TUIState *tui) {
 
     // Print a newline to ensure clean exit
     printf("\n");
+    LOG_DEBUG("[TUI] Cleaned up ncurses resources");
     fflush(stdout);
 }
 
 void tui_add_conversation_line(TUIState *tui, const char *prefix, const char *text, TUIColorPair color_pair) {
     if (!tui || !tui->is_initialized) return;
-
-    // Stop any running spinner before adding conversation lines
-    if (g_tui_spinner) {
-        spinner_stop(g_tui_spinner, NULL, 1);
-        g_tui_spinner = NULL;
-    }
 
     // Add entry to conversation history
     if (add_conversation_entry(tui, prefix, text, color_pair) != 0) {
@@ -874,6 +986,10 @@ void tui_add_conversation_line(TUIState *tui, const char *prefix, const char *te
     // Render the conversation window
     render_conversation_window(tui);
 
+    if (tui->status_height > 0) {
+        render_status_window(tui);
+    }
+
     // Redraw input window to ensure it stays visible
     if (tui->input_win) {
         touchwin(tui->input_win);
@@ -884,168 +1000,36 @@ void tui_add_conversation_line(TUIState *tui, const char *prefix, const char *te
 void tui_update_status(TUIState *tui, const char *status_text) {
     if (!tui || !tui->is_initialized) return;
 
-    // If status text is empty, stop any running spinner
-    if (!status_text || strlen(status_text) == 0) {
-        if (g_tui_spinner) {
-            spinner_stop(g_tui_spinner, NULL, 1);
-            g_tui_spinner = NULL;
+    const char *message = status_text ? status_text : "";
+    LOG_DEBUG("[TUI] Status update requested: '%s'", message[0] ? message : "(clear)");
+
+    if (message[0] == '\0') {
+        tui->status_visible = 0;
+        free(tui->status_message);
+        tui->status_message = NULL;
+        if (tui->status_height > 0) {
+            render_status_window(tui);
         }
         return;
     }
 
-    // Update spinner or start new one
-    if (g_tui_spinner) {
-        spinner_update(g_tui_spinner, status_text);
-    } else {
-        g_tui_spinner = spinner_start(status_text, SPINNER_CYAN);
+    if (!tui->status_message || strcmp(tui->status_message, message) != 0) {
+        char *copy = strdup(message);
+        if (!copy) {
+            LOG_ERROR("[TUI] Failed to allocate memory for status message");
+            return;
+        }
+        free(tui->status_message);
+        tui->status_message = copy;
+    }
+
+    tui->status_visible = 1;
+
+    if (tui->status_height > 0) {
+        render_status_window(tui);
     }
 }
 
-char* tui_read_input(TUIState *tui, const char *prompt) {
-    if (!tui || !tui->is_initialized || !tui->input_win) return NULL;
-
-    // Stop any running spinner before showing input prompt
-    if (g_tui_spinner) {
-        spinner_stop(g_tui_spinner, NULL, 1);
-        g_tui_spinner = NULL;
-    }
-
-    // Reset input state
-    g_input_state.buffer[0] = '\0';
-    g_input_state.length = 0;
-    g_input_state.cursor = 0;
-    g_input_state.view_offset = 0;
-
-    // Initial draw
-    input_redraw(prompt);
-
-    int running = 1;
-    while (running) {
-        // Check for resize
-        if (g_resize_flag) {
-            g_resize_flag = 0;
-            tui_handle_resize(tui);
-            input_redraw(prompt);
-            continue;
-        }
-
-        int ch = wgetch(tui->input_win);
-
-        // Handle special keys
-        if (ch == KEY_RESIZE) {
-            tui_handle_resize(tui);
-            input_redraw(prompt);
-            continue;
-        } else if (ch == 1) {  // Ctrl+A: beginning of line
-            g_input_state.cursor = 0;
-            input_redraw(prompt);
-        } else if (ch == 5) {  // Ctrl+E: end of line
-            g_input_state.cursor = g_input_state.length;
-            input_redraw(prompt);
-        } else if (ch == 4) {  // Ctrl+D: EOF
-            return NULL;
-        } else if (ch == 11) {  // Ctrl+K: kill to end of line
-            g_input_state.buffer[g_input_state.cursor] = '\0';
-            g_input_state.length = g_input_state.cursor;
-            input_redraw(prompt);
-        } else if (ch == 21) {  // Ctrl+U: kill to beginning of line
-            if (g_input_state.cursor > 0) {
-                memmove(g_input_state.buffer,
-                       &g_input_state.buffer[g_input_state.cursor],
-                       (size_t)(g_input_state.length - g_input_state.cursor + 1));
-                g_input_state.length -= g_input_state.cursor;
-                g_input_state.cursor = 0;
-                input_redraw(prompt);
-            }
-        } else if (ch == 12) {  // Ctrl+L: clear input
-            g_input_state.buffer[0] = '\0';
-            g_input_state.length = 0;
-            g_input_state.cursor = 0;
-            input_redraw(prompt);
-        } else if (ch == KEY_BACKSPACE || ch == 127 || ch == 8) {  // Backspace
-            if (input_backspace() > 0) {
-                input_redraw(prompt);
-            }
-        } else if (ch == KEY_DC) {  // Delete key
-            if (input_delete_char() > 0) {
-                input_redraw(prompt);
-            }
-        } else if (ch == KEY_LEFT) {  // Left arrow
-            if (g_input_state.cursor > 0) {
-                g_input_state.cursor--;
-                input_redraw(prompt);
-            }
-        } else if (ch == KEY_RIGHT) {  // Right arrow
-            if (g_input_state.cursor < g_input_state.length) {
-                g_input_state.cursor++;
-                input_redraw(prompt);
-            }
-        } else if (ch == KEY_HOME) {  // Home
-            g_input_state.cursor = 0;
-            input_redraw(prompt);
-        } else if (ch == KEY_END) {  // End
-            g_input_state.cursor = g_input_state.length;
-            input_redraw(prompt);
-        } else if (ch == KEY_PPAGE) {  // Page Up: scroll conversation up
-            tui_scroll_conversation(tui, -10);  // Scroll up by 10 lines
-            input_redraw(prompt);
-        } else if (ch == KEY_NPAGE) {  // Page Down: scroll conversation down
-            tui_scroll_conversation(tui, 10);  // Scroll down by 10 lines
-            input_redraw(prompt);
-        } else if (ch == KEY_UP) {  // Up arrow: scroll conversation up (1 line)
-            tui_scroll_conversation(tui, -1);
-            input_redraw(prompt);
-        } else if (ch == KEY_DOWN) {  // Down arrow: scroll conversation down (1 line)
-            tui_scroll_conversation(tui, 1);
-            input_redraw(prompt);
-        } else if (ch == 10) {  // Ctrl+J: insert newline
-            unsigned char newline = '\n';
-            if (input_insert_char(&newline, 1) == 0) {
-                input_redraw(prompt);
-            }
-        } else if (ch == 13) {  // Enter: submit
-            running = 0;
-        } else if (ch == 27) {  // ESC sequence (Alt key combinations)
-            // Set nodelay to check for following character
-            nodelay(tui->input_win, TRUE);
-            int next_ch = wgetch(tui->input_win);
-            nodelay(tui->input_win, FALSE);
-
-            if (next_ch == ERR) {
-                // Standalone ESC, ignore
-                continue;
-            } else if (next_ch == 'b' || next_ch == 'B') {  // Alt+b: backward word
-                g_input_state.cursor = move_backward_word(g_input_state.buffer, g_input_state.cursor);
-                input_redraw(prompt);
-            } else if (next_ch == 'f' || next_ch == 'F') {  // Alt+f: forward word
-                g_input_state.cursor = move_forward_word(g_input_state.buffer, g_input_state.cursor, g_input_state.length);
-                input_redraw(prompt);
-            } else if (next_ch == 'd' || next_ch == 'D') {  // Alt+d: delete next word
-                if (input_delete_word_forward() > 0) {
-                    input_redraw(prompt);
-                }
-            } else if (next_ch == KEY_BACKSPACE || next_ch == 127 || next_ch == 8) {  // Alt+Backspace: delete previous word
-                if (input_delete_word_backward() > 0) {
-                    input_redraw(prompt);
-                }
-            }
-        } else if (ch >= 32 && ch < 127) {  // Printable ASCII
-            unsigned char c = (unsigned char)ch;
-            if (input_insert_char(&c, 1) == 0) {
-                input_redraw(prompt);
-            }
-        } else if (ch >= 128) {  // UTF-8 multibyte character (basic support)
-            // ncurses handles most UTF-8 automatically, just insert as-is
-            unsigned char c = (unsigned char)ch;
-            if (input_insert_char(&c, 1) == 0) {
-                input_redraw(prompt);
-            }
-        }
-    }
-
-    // Return a copy of the buffer
-    return strdup(g_input_state.buffer);
-}
 
 void tui_refresh(TUIState *tui) {
     if (!tui || !tui->is_initialized) return;
@@ -1091,8 +1075,17 @@ void tui_handle_resize(TUIState *tui) {
     tui->screen_height = max_y;
     tui->screen_width = max_x;
 
+    int new_status_height = STATUS_WIN_HEIGHT;
+    if (max_y - tui->input_height - CONV_WIN_PADDING - new_status_height < 5) {
+        if (tui->status_height != 0) {
+            LOG_WARN("[TUI] Resize reduced status window due to limited height");
+        }
+        new_status_height = 0;
+    }
+    tui->status_height = new_status_height;
+
     // Recalculate conversation window height
-    tui->conv_height = max_y - tui->input_height - CONV_WIN_PADDING;
+    tui->conv_height = max_y - tui->input_height - tui->status_height - CONV_WIN_PADDING;
     if (tui->conv_height < 5) tui->conv_height = 5;
 
     // Resize and reposition conversation window
@@ -1103,6 +1096,18 @@ void tui_handle_resize(TUIState *tui) {
             scrollok(tui->conv_win, TRUE);
             render_conversation_window(tui);
             wrefresh(tui->conv_win);  // Force refresh after render
+        }
+    }
+
+    // Resize and reposition status window
+    if (tui->status_win) {
+        delwin(tui->status_win);
+        tui->status_win = NULL;
+    }
+    if (tui->status_height > 0) {
+        tui->status_win = newwin(tui->status_height, max_x, tui->conv_height, 0);
+        if (tui->status_win) {
+            render_status_window(tui);
         }
     }
 
@@ -1117,17 +1122,23 @@ void tui_handle_resize(TUIState *tui) {
             keypad(tui->input_win, TRUE);
 
             // Update input state dimensions
-            int h, w;
-            getmaxyx(tui->input_win, h, w);
-            g_input_state.win_width = w - 2;
-            g_input_state.win_height = h - 2;
-            g_input_state.win = tui->input_win;
+            if (tui->input_buffer) {
+                int h, w;
+                getmaxyx(tui->input_win, h, w);
+                tui->input_buffer->win_width = w - 2;
+                tui->input_buffer->win_height = h - 2;
+                tui->input_buffer->win = tui->input_win;
+            }
             
             // Force redraw of input window
             touchwin(tui->input_win);
             wrefresh(tui->input_win);
         }
     }
+
+    LOG_DEBUG("[TUI] Resize handled (screen=%dx%d, conv_h=%d, status_h=%d, input_h=%d)",
+              tui->screen_width, tui->screen_height, tui->conv_height,
+              tui->status_height, tui->input_height);
 
     // Final refresh to ensure everything is visible
     refresh();
@@ -1155,12 +1166,6 @@ void tui_show_startup_banner(TUIState *tui, const char *version, const char *mod
 
 void tui_render_todo_list(TUIState *tui, const TodoList *todo_list) {
     if (!tui || !tui->is_initialized || !todo_list) return;
-
-    // Stop any running spinner before rendering TODO list
-    if (g_tui_spinner) {
-        spinner_stop(g_tui_spinner, NULL, 1);
-        g_tui_spinner = NULL;
-    }
 
     // Call todo_render function which handles the formatting
     todo_render(todo_list);
@@ -1191,4 +1196,317 @@ void tui_scroll_conversation(TUIState *tui, int direction) {
         touchwin(tui->input_win);
         wrefresh(tui->input_win);
     }
+}
+
+// ============================================================================
+// Phase 2: Non-blocking Input and Event Loop Implementation
+// ============================================================================
+
+int tui_poll_input(TUIState *tui) {
+    if (!tui || !tui->is_initialized || !tui->input_win) {
+        return ERR;
+    }
+    
+    // Make wgetch() non-blocking temporarily
+    nodelay(tui->input_win, TRUE);
+    int ch = wgetch(tui->input_win);
+    nodelay(tui->input_win, FALSE);
+    
+    return ch;
+}
+
+int tui_process_input_char(TUIState *tui, int ch, const char *prompt) {
+    if (!tui || !tui->is_initialized || !tui->input_win) {
+        return -1;
+    }
+
+    TUIInputBuffer *input = tui->input_buffer;
+    if (!input) {
+        return -1;
+    }
+
+    // Handle special keys
+    if (ch == KEY_RESIZE) {
+        tui_handle_resize(tui);
+        input_redraw(tui, prompt);
+        return 0;
+    } else if (ch == 1) {  // Ctrl+A: beginning of line
+        input->cursor = 0;
+        input_redraw(tui, prompt);
+    } else if (ch == 5) {  // Ctrl+E: end of line
+        input->cursor = input->length;
+        input_redraw(tui, prompt);
+    } else if (ch == 4) {  // Ctrl+D: EOF
+        return -1;
+    } else if (ch == 11) {  // Ctrl+K: kill to end of line
+        input->buffer[input->cursor] = '\0';
+        input->length = input->cursor;
+        input_redraw(tui, prompt);
+    } else if (ch == 21) {  // Ctrl+U: kill to beginning of line
+        if (input->cursor > 0) {
+            memmove(input->buffer,
+                    &input->buffer[input->cursor],
+                    (size_t)(input->length - input->cursor + 1));
+            input->length -= input->cursor;
+            input->cursor = 0;
+            input_redraw(tui, prompt);
+        }
+    } else if (ch == 12) {  // Ctrl+L: clear input
+        input->buffer[0] = '\0';
+        input->length = 0;
+        input->cursor = 0;
+        input_redraw(tui, prompt);
+    } else if (ch == KEY_BACKSPACE || ch == 127 || ch == 8) {  // Backspace
+        if (input_backspace(input) > 0) {
+            input_redraw(tui, prompt);
+        }
+    } else if (ch == KEY_DC) {  // Delete key
+        if (input_delete_char(input) > 0) {
+            input_redraw(tui, prompt);
+        }
+    } else if (ch == KEY_LEFT) {  // Left arrow
+        if (input->cursor > 0) {
+            input->cursor--;
+            input_redraw(tui, prompt);
+        }
+    } else if (ch == KEY_RIGHT) {  // Right arrow
+        if (input->cursor < input->length) {
+            input->cursor++;
+            input_redraw(tui, prompt);
+        }
+    } else if (ch == KEY_HOME) {  // Home
+        input->cursor = 0;
+        input_redraw(tui, prompt);
+    } else if (ch == KEY_END) {  // End
+        input->cursor = input->length;
+        input_redraw(tui, prompt);
+    } else if (ch == KEY_PPAGE) {  // Page Up: scroll conversation up
+        tui_scroll_conversation(tui, -10);
+        input_redraw(tui, prompt);
+    } else if (ch == KEY_NPAGE) {  // Page Down: scroll conversation down
+        tui_scroll_conversation(tui, 10);
+        input_redraw(tui, prompt);
+    } else if (ch == KEY_UP) {  // Up arrow: scroll conversation up (1 line)
+        tui_scroll_conversation(tui, -1);
+        input_redraw(tui, prompt);
+    } else if (ch == KEY_DOWN) {  // Down arrow: scroll conversation down (1 line)
+        tui_scroll_conversation(tui, 1);
+        input_redraw(tui, prompt);
+    } else if (ch == 10) {  // Ctrl+J: insert newline
+        unsigned char newline = '\n';
+        if (input_insert_char(input, &newline, 1) == 0) {
+            input_redraw(tui, prompt);
+        }
+    } else if (ch == 13) {  // Enter: submit
+        return 1;  // Signal submission
+    } else if (ch == 27) {  // ESC sequence (Alt key combinations)
+        // Set nodelay to check for following character
+        nodelay(tui->input_win, TRUE);
+        int next_ch = wgetch(tui->input_win);
+        nodelay(tui->input_win, FALSE);
+
+        if (next_ch == ERR) {
+            // Standalone ESC, ignore
+            return 0;
+        } else if (next_ch == 'b' || next_ch == 'B') {  // Alt+b: backward word
+            input->cursor = move_backward_word(input->buffer, input->cursor);
+            input_redraw(tui, prompt);
+        } else if (next_ch == 'f' || next_ch == 'F') {  // Alt+f: forward word
+            input->cursor = move_forward_word(input->buffer, input->cursor, input->length);
+            input_redraw(tui, prompt);
+        } else if (next_ch == 'd' || next_ch == 'D') {  // Alt+d: delete next word
+            if (input_delete_word_forward(input) > 0) {
+                input_redraw(tui, prompt);
+            }
+        } else if (next_ch == KEY_BACKSPACE || next_ch == 127 || next_ch == 8) {  // Alt+Backspace
+            if (input_delete_word_backward(input) > 0) {
+                input_redraw(tui, prompt);
+            }
+        }
+    } else if (ch >= 32 && ch < 127) {  // Printable ASCII
+        unsigned char c = (unsigned char)ch;
+        if (input_insert_char(input, &c, 1) == 0) {
+            input_redraw(tui, prompt);
+        }
+    } else if (ch >= 128) {  // UTF-8 multibyte character (basic support)
+        unsigned char c = (unsigned char)ch;
+        if (input_insert_char(input, &c, 1) == 0) {
+            input_redraw(tui, prompt);
+        }
+    }
+
+    return 0;  // Continue processing
+}
+
+const char* tui_get_input_buffer(TUIState *tui) {
+    if (!tui || !tui->input_buffer || tui->input_buffer->length == 0) {
+        return NULL;
+    }
+    return tui->input_buffer->buffer;
+}
+
+void tui_clear_input_buffer(TUIState *tui) {
+    if (!tui || !tui->input_buffer) {
+        return;
+    }
+
+    tui->input_buffer->buffer[0] = '\0';
+    tui->input_buffer->length = 0;
+    tui->input_buffer->cursor = 0;
+    tui->input_buffer->view_offset = 0;
+    tui->input_buffer->line_scroll_offset = 0;
+}
+
+void tui_redraw_input(TUIState *tui, const char *prompt) {
+    input_redraw(tui, prompt);
+}
+
+int tui_event_loop(TUIState *tui, const char *prompt, 
+                   InputSubmitCallback callback, void *user_data,
+                   void *msg_queue_ptr) {
+    if (!tui || !tui->is_initialized || !callback) {
+        return -1;
+    }
+
+    TUIMessageQueue *msg_queue = (TUIMessageQueue *)msg_queue_ptr;
+    int running = 1;
+    const long frame_time_us = 16667;  // ~60 FPS (1/60 second in microseconds)
+    
+    // Clear input buffer at start
+    tui_clear_input_buffer(tui);
+    
+    // Initial draw
+    tui_redraw_input(tui, prompt);
+    
+    while (running) {
+        struct timespec frame_start;
+        clock_gettime(CLOCK_MONOTONIC, &frame_start);
+        
+        // 1. Check for resize
+        if (g_resize_flag) {
+            g_resize_flag = 0;
+            tui_handle_resize(tui);
+            tui_redraw_input(tui, prompt);
+        }
+        
+        // 2. Poll for input (non-blocking)
+        int ch = tui_poll_input(tui);
+        if (ch != ERR) {
+            int result = tui_process_input_char(tui, ch, prompt);
+            if (result == 1) {
+                // Enter pressed - submit input
+                const char *input = tui_get_input_buffer(tui);
+                if (input && strlen(input) > 0) {
+                    LOG_DEBUG("[TUI] Submitting input (%zu bytes)", strlen(input));
+                    // Call the callback
+                    int callback_result = callback(input, user_data);
+                    
+                    // Clear input buffer after submission
+                    tui_clear_input_buffer(tui);
+                    tui_redraw_input(tui, prompt);
+                    
+                    // Check if callback wants to exit
+                    if (callback_result != 0) {
+                        LOG_DEBUG("[TUI] Callback requested exit (code=%d)", callback_result);
+                        running = 0;
+                    }
+                }
+            } else if (result == -1) {
+                // EOF/quit signal
+                LOG_DEBUG("[TUI] Input processing returned EOF/quit");
+                running = 0;
+            }
+        }
+        
+        // 3. Process TUI message queue (if provided)
+        if (msg_queue) {
+            TUIMessage msg;
+            int messages_processed = 0;
+            const int max_messages_per_frame = 10;  // Rate limiting
+            
+            while (messages_processed < max_messages_per_frame && 
+                   poll_tui_message(msg_queue, &msg) == 1) {
+                
+                switch (msg.type) {
+                    case TUI_MSG_ADD_LINE:
+                        // Parse prefix and text from message
+                        // Format: "[Prefix] text"
+                        if (msg.text) {
+                            char *bracket_end = strchr(msg.text, ']');
+                            if (bracket_end && msg.text[0] == '[') {
+                                size_t prefix_len = (size_t)(bracket_end - msg.text + 1);
+                                char *prefix = strndup(msg.text, prefix_len);
+                                char *text = bracket_end + 1;
+                                if (*text == ' ') text++;  // Skip space after bracket
+                                
+                                // Determine color based on prefix
+                                TUIColorPair color = COLOR_PAIR_DEFAULT;
+                                if (strstr(prefix, "User")) {
+                                    color = COLOR_PAIR_USER;
+                                } else if (strstr(prefix, "Assistant")) {
+                                    color = COLOR_PAIR_ASSISTANT;
+                                } else if (strstr(prefix, "Tool")) {
+                                    color = COLOR_PAIR_TOOL;
+                                } else if (strstr(prefix, "Error")) {
+                                    color = COLOR_PAIR_ERROR;
+                                } else if (strstr(prefix, "System")) {
+                                    color = COLOR_PAIR_STATUS;
+                                }
+                                
+                                tui_add_conversation_line(tui, prefix, text, color);
+                                free(prefix);
+                            } else {
+                                // No prefix, just add as is
+                                tui_add_conversation_line(tui, "", msg.text, COLOR_PAIR_DEFAULT);
+                            }
+                        }
+                        break;
+                        
+                    case TUI_MSG_STATUS:
+                        if (msg.text) {
+                            tui_update_status(tui, msg.text);
+                        }
+                        break;
+                        
+                    case TUI_MSG_CLEAR:
+                        tui_clear_conversation(tui);
+                        break;
+                        
+                    case TUI_MSG_ERROR:
+                        if (msg.text) {
+                            tui_add_conversation_line(tui, "[Error]", msg.text, COLOR_PAIR_ERROR);
+                        }
+                        break;
+                        
+                    case TUI_MSG_TODO_UPDATE:
+                        // TODO: Implement TODO list update when integrated
+                        break;
+                }
+                
+                // Free message text (allocated by queue)
+                free(msg.text);
+                messages_processed++;
+            }
+            
+            // Redraw input if we processed messages
+            if (messages_processed > 0) {
+                LOG_DEBUG("[TUI] Processed %d queued message(s)", messages_processed);
+                tui_redraw_input(tui, prompt);
+            }
+        }
+        
+        // 4. Sleep to maintain frame rate
+        struct timespec frame_end;
+        clock_gettime(CLOCK_MONOTONIC, &frame_end);
+        
+        long elapsed_ns = (frame_end.tv_sec - frame_start.tv_sec) * 1000000000L +
+                         (frame_end.tv_nsec - frame_start.tv_nsec);
+        long elapsed_us = elapsed_ns / 1000;
+        
+        if (elapsed_us < frame_time_us) {
+            usleep((useconds_t)(frame_time_us - elapsed_us));
+        }
+    }
+    
+    return 0;
 }

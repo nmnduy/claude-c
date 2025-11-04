@@ -3041,7 +3041,116 @@ static void process_response(ConversationState *state, ApiResponse *response, TU
 
 
 
-// Advanced input handler with readline-like keybindings
+typedef struct {
+    ConversationState *state;
+    TUIState *tui;
+} InteractiveContext;
+
+// Submit callback invoked by the TUI event loop when the user presses Enter
+static int submit_input_callback(const char *input, void *user_data) {
+    InteractiveContext *ctx = (InteractiveContext *)user_data;
+    if (!ctx || !ctx->state || !ctx->tui || !input) {
+        return 0;
+    }
+
+    // Ignore empty submissions
+    if (input[0] == '\0') {
+        return 0;
+    }
+
+    TUIState *tui = ctx->tui;
+    ConversationState *state = ctx->state;
+
+    char *input_copy = strdup(input);
+    if (!input_copy) {
+        tui_add_conversation_line(tui, "[Error]", "Memory allocation failed", COLOR_PAIR_ERROR);
+        return 0;
+    }
+
+    // Handle commands (prefixed with '/')
+    if (input_copy[0] == '/') {
+        tui_add_conversation_line(tui, "[User]", input_copy, COLOR_PAIR_USER);
+
+        if (strcmp(input_copy, "/exit") == 0 || strcmp(input_copy, "/quit") == 0) {
+            free(input_copy);
+            return 1;  // Signal event loop to exit
+        } else if (strcmp(input_copy, "/clear") == 0) {
+            clear_conversation(state);
+            tui_clear_conversation(tui);
+            tui_add_conversation_line(tui, "[System]", "Conversation cleared", COLOR_PAIR_STATUS);
+            free(input_copy);
+            return 0;
+        } else if (strncmp(input_copy, "/add-dir ", 9) == 0) {
+            const char *path = input_copy + 9;
+            if (add_directory(state, path) == 0) {
+                tui_add_conversation_line(tui, "[System]", "Directory added successfully", COLOR_PAIR_STATUS);
+                char *new_system_prompt = build_system_prompt(state);
+                if (!new_system_prompt) {
+                    free(input_copy);
+                    return 0;
+                }
+
+                if (state->count > 0 && state->messages[0].role == MSG_SYSTEM) {
+                    free(state->messages[0].contents[0].text);
+                    state->messages[0].contents[0].text = strdup(new_system_prompt);
+                    if (!state->messages[0].contents[0].text) {
+                        tui_add_conversation_line(tui, "[Error]", "Memory allocation failed", COLOR_PAIR_ERROR);
+                    }
+                }
+                free(new_system_prompt);
+            } else {
+                tui_add_conversation_line(tui, "[Error]", "Failed to add directory", COLOR_PAIR_ERROR);
+            }
+            free(input_copy);
+            return 0;
+        } else if (strcmp(input_copy, "/help") == 0) {
+            tui_add_conversation_line(tui, "[System]", "Available commands:", COLOR_PAIR_STATUS);
+            tui_add_conversation_line(tui, "[System]", "  /exit, /quit - Exit the program", COLOR_PAIR_STATUS);
+            tui_add_conversation_line(tui, "[System]", "  /clear - Clear conversation history", COLOR_PAIR_STATUS);
+            tui_add_conversation_line(tui, "[System]", "  /add-dir <path> - Add additional working directory", COLOR_PAIR_STATUS);
+            tui_add_conversation_line(tui, "[System]", "  /help - Show this help message", COLOR_PAIR_STATUS);
+            free(input_copy);
+            return 0;
+        } else {
+            tui_add_conversation_line(tui, "[Error]", "Unknown command. Type /help for available commands.", COLOR_PAIR_ERROR);
+            free(input_copy);
+            return 0;
+        }
+    }
+
+    // Regular input: show user message in conversation
+    tui_add_conversation_line(tui, "[User]", input_copy, COLOR_PAIR_USER);
+
+    // Add message to conversation state (makes internal copy)
+    add_user_message(state, input_copy);
+    free(input_copy);
+
+    // Call API with status update
+    tui_update_status(tui, "Waiting for API response...");
+    ApiResponse *response = call_api(state);
+    tui_update_status(tui, "");  // Clear status after API response
+
+    if (!response) {
+        tui_add_conversation_line(tui, "[Error]", "Failed to get response from API", COLOR_PAIR_ERROR);
+        return 0;
+    }
+
+    // Check for errors in raw response
+    cJSON *error = cJSON_GetObjectItem(response->raw_response, "error");
+    if (error) {
+        cJSON *error_message = cJSON_GetObjectItem(error, "message");
+        const char *error_msg = error_message ? error_message->valuestring : "Unknown error";
+        tui_add_conversation_line(tui, "[Error]", error_msg, COLOR_PAIR_ERROR);
+        api_response_free(response);
+        return 0;
+    }
+
+    process_response(state, response, tui);
+    api_response_free(response);
+    return 0;
+}
+
+// Advanced input handler with readline-like keybindings, driven by non-blocking event loop
 static void interactive_mode(ConversationState *state) {
     // Display startup banner with theme colors (colorscheme already initialized in main())
     char color_code[32];
@@ -3076,112 +3185,12 @@ static void interactive_mode(ConversationState *state) {
              state->model, state->session_id ? state->session_id : "none");
     tui_update_status(&tui, status_msg);
 
-    int running = 1;
+    InteractiveContext ctx = {
+        .state = state,
+        .tui = &tui,
+    };
 
-    while (running) {
-        // Check for pending resize before reading input
-        if (tui_resize_pending()) {
-            tui_clear_resize_flag();
-            tui_handle_resize(&tui);
-        }
-
-        char *input = tui_read_input(&tui, ">");
-        if (!input) {
-            // EOF (Ctrl+D)
-            break;
-        }
-
-        // Skip empty input
-        if (strlen(input) == 0) {
-            free(input);
-            continue;
-        }
-
-        // Handle commands
-        if (input[0] == '/') {
-            // Show command in conversation
-            tui_add_conversation_line(&tui, "[User]", input, COLOR_PAIR_USER);
-
-            if (strcmp(input, "/exit") == 0 || strcmp(input, "/quit") == 0) {
-                free(input);
-                break;
-            } else if (strcmp(input, "/clear") == 0) {
-                clear_conversation(state);
-                tui_clear_conversation(&tui);
-                tui_add_conversation_line(&tui, "[System]", "Conversation cleared", COLOR_PAIR_STATUS);
-                free(input);
-                continue;
-            } else if (strncmp(input, "/add-dir ", 9) == 0) {
-                const char *path = input + 9;
-                if (add_directory(state, path) == 0) {
-                    tui_add_conversation_line(&tui, "[System]", "Directory added successfully", COLOR_PAIR_STATUS);
-                    // Update system message
-                    char *new_system_prompt = build_system_prompt(state);
-                    if (!new_system_prompt) {
-                        goto cleanup_add_dir;
-                    }
-
-                    if (state->count > 0 && state->messages[0].role == MSG_SYSTEM) {
-                        free(state->messages[0].contents[0].text);
-                        state->messages[0].contents[0].text = strdup(new_system_prompt);
-                        if (!state->messages[0].contents[0].text) {
-                            // Failed to allocate, but we'll still cleanup
-                            tui_add_conversation_line(&tui, "[Error]", "Memory allocation failed", COLOR_PAIR_ERROR);
-                        }
-                    }
-
-                cleanup_add_dir:
-                    free(new_system_prompt);
-                } else {
-                    tui_add_conversation_line(&tui, "[Error]", "Failed to add directory", COLOR_PAIR_ERROR);
-                }
-                free(input);
-                continue;
-            } else if (strcmp(input, "/help") == 0) {
-                tui_add_conversation_line(&tui, "[System]", "Available commands:", COLOR_PAIR_STATUS);
-                tui_add_conversation_line(&tui, "[System]", "  /exit, /quit - Exit the program", COLOR_PAIR_STATUS);
-                tui_add_conversation_line(&tui, "[System]", "  /clear - Clear conversation history", COLOR_PAIR_STATUS);
-                tui_add_conversation_line(&tui, "[System]", "  /add-dir <path> - Add additional working directory", COLOR_PAIR_STATUS);
-                tui_add_conversation_line(&tui, "[System]", "  /help - Show this help message", COLOR_PAIR_STATUS);
-                free(input);
-                continue;
-            } else {
-                tui_add_conversation_line(&tui, "[Error]", "Unknown command. Type /help for available commands.", COLOR_PAIR_ERROR);
-                free(input);
-                continue;
-            }
-        }
-
-        // Display user message in conversation
-        tui_add_conversation_line(&tui, "[User]", input, COLOR_PAIR_USER);
-
-        // Add to conversation
-        add_user_message(state, input);
-        free(input);
-
-        // Call API with status update
-        tui_update_status(&tui, "Waiting for API response...");
-        ApiResponse *response = call_api(state);
-        tui_update_status(&tui, "");  // Clear status after API response
-
-        if (!response) {
-            tui_add_conversation_line(&tui, "[Error]", "Failed to get response from API", COLOR_PAIR_ERROR);
-            continue;
-        }
-
-        // Check for errors in raw response
-        cJSON *error = cJSON_GetObjectItem(response->raw_response, "error");
-        if (error) {
-            cJSON *error_message = cJSON_GetObjectItem(error, "message");
-            const char *error_msg = error_message ? error_message->valuestring : "Unknown error";
-            tui_add_conversation_line(&tui, "[Error]", error_msg, COLOR_PAIR_ERROR);
-            api_response_free(response);
-            continue;
-        }
-
-        process_response(state, response, &tui);
-        api_response_free(response);
-    }
+    tui_event_loop(&tui, ">", submit_input_callback, &ctx, NULL);
 
     // Cleanup TUI
     tui_cleanup(&tui);
