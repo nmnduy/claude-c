@@ -150,7 +150,7 @@ void todo_render(const TodoList *list) {
     const char *dim = ANSI_FALLBACK_DIM;
     const char *reset = ANSI_RESET;
     const char *bold = ANSI_FALLBACK_BOLD;
-    
+
     // Green (for completed tasks) - maps to USER color
     if (get_colorscheme_color(COLORSCHEME_USER, green_buf, sizeof(green_buf)) == 0) {
         green = green_buf;
@@ -158,7 +158,7 @@ void todo_render(const TodoList *list) {
         LOG_WARN("Using fallback ANSI color for USER (todo green)");
         green = ANSI_FALLBACK_GREEN;
     }
-    
+
     // Yellow (for in-progress tasks) - maps to TOOL/STATUS color
     if (get_colorscheme_color(COLORSCHEME_TOOL, yellow_buf, sizeof(yellow_buf)) == 0) {
         yellow = yellow_buf;
@@ -166,7 +166,7 @@ void todo_render(const TodoList *list) {
         LOG_WARN("Using fallback ANSI color for TOOL (todo yellow)");
         yellow = ANSI_FALLBACK_YELLOW;
     }
-    
+
     // Cyan (for header) - maps to STATUS color
     if (get_colorscheme_color(COLORSCHEME_STATUS, cyan_buf, sizeof(cyan_buf)) == 0) {
         cyan = cyan_buf;

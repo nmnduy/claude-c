@@ -87,7 +87,7 @@ static void history_add(NCursesInput *input, const char *entry) {
     }
 
     // Don't add if it's the same as the last entry
-    if (input->history_count > 0 && 
+    if (input->history_count > 0 &&
         strcmp(input->history[input->history_count - 1], entry) == 0) {
         return;
     }
@@ -180,7 +180,7 @@ static int buffer_delete_word_backward(NCursesInput *input) {
 
     int word_start = move_backward_word(input->buffer, input->cursor);
     int delete_count = input->cursor - word_start;
-    
+
     if (delete_count > 0) {
         memmove(&input->buffer[word_start], &input->buffer[input->cursor],
                 (size_t)(input->length - input->cursor + 1));
@@ -199,7 +199,7 @@ static int buffer_delete_word_forward(NCursesInput *input) {
 
     int word_end = move_forward_word(input->buffer, input->cursor, input->length);
     int delete_count = word_end - input->cursor;
-    
+
     if (delete_count > 0) {
         memmove(&input->buffer[input->cursor], &input->buffer[word_end],
                 (size_t)(input->length - word_end + 1));
@@ -214,13 +214,13 @@ static int buffer_delete_word_forward(NCursesInput *input) {
 // ============================================================================
 
 // Calculate number of visual lines needed for the buffer
-static int calculate_needed_lines(const char *buffer, int buffer_len, 
+static int calculate_needed_lines(const char *buffer, int buffer_len,
                                    int available_width, int prompt_len) {
     if (buffer_len == 0) return 1;
-    
+
     int lines = 1;
     int current_line_width = prompt_len;  // First line includes prompt
-    
+
     for (int i = 0; i < buffer_len; i++) {
         if (buffer[i] == '\n') {
             lines++;
@@ -233,7 +233,7 @@ static int calculate_needed_lines(const char *buffer, int buffer_len,
             }
         }
     }
-    
+
     return lines;
 }
 
@@ -243,7 +243,7 @@ static void calculate_cursor_position(const char *buffer, int cursor_pos,
                                       int *out_line, int *out_col) {
     int line = 0;
     int col = prompt_len;  // First line starts after prompt
-    
+
     for (int i = 0; i < cursor_pos; i++) {
         if (buffer[i] == '\n') {
             line++;
@@ -256,7 +256,7 @@ static void calculate_cursor_position(const char *buffer, int cursor_pos,
             }
         }
     }
-    
+
     *out_line = line;
     *out_col = col;
 }
@@ -265,11 +265,11 @@ static void calculate_cursor_position(const char *buffer, int cursor_pos,
 static void redraw_input(NCursesInput *input, const char *prompt) {
     int prompt_len = (int)strlen(prompt);
     int available_width = input->window_width;
-    
+
     // Calculate how many lines we need
-    int needed_lines = calculate_needed_lines(input->buffer, input->length, 
+    int needed_lines = calculate_needed_lines(input->buffer, input->length,
                                               available_width, prompt_len);
-    
+
     // Request resize if needed and callback is available
     if (input->resizer) {
         int desired_height = needed_lines;
@@ -278,7 +278,7 @@ static void redraw_input(NCursesInput *input, const char *prompt) {
         } else if (desired_height > input->max_height) {
             desired_height = input->max_height;
         }
-        
+
         if (desired_height != input->window_height) {
             int granted_height = input->resizer(input->resizer_ctx, desired_height);
             if (granted_height > 0) {
@@ -287,37 +287,37 @@ static void redraw_input(NCursesInput *input, const char *prompt) {
             }
         }
     }
-    
+
     werase(input->window);
-    
+
     int available_height = input->window_height;
-    
+
     // Calculate cursor screen position
     int cursor_line = 0, cursor_col = 0;
-    calculate_cursor_position(input->buffer, input->cursor, 
+    calculate_cursor_position(input->buffer, input->cursor,
                               available_width, prompt_len,
                               &cursor_line, &cursor_col);
-    
+
     // Adjust vertical scroll to keep cursor visible
     if (cursor_line < input->line_scroll_offset) {
         input->line_scroll_offset = cursor_line;
     } else if (cursor_line >= input->line_scroll_offset + available_height) {
         input->line_scroll_offset = cursor_line - available_height + 1;
     }
-    
+
     // Render visible lines
     int screen_line = 0;
     int current_line = 0;
     int current_col = prompt_len;
     int render_col = prompt_len;
-    
+
     // Draw prompt on first line
     if (input->line_scroll_offset == 0) {
         mvwprintw(input->window, 0, 0, "%s", prompt);
     } else {
         render_col = 0;
     }
-    
+
     for (int i = 0; i < input->length && screen_line < available_height; i++) {
         // Skip lines before scroll offset
         if (current_line < input->line_scroll_offset) {
@@ -333,7 +333,7 @@ static void redraw_input(NCursesInput *input, const char *prompt) {
             }
             continue;
         }
-        
+
         // Render character
         if (input->buffer[i] == '\n') {
             // Show newline as special character
@@ -346,7 +346,7 @@ static void redraw_input(NCursesInput *input, const char *prompt) {
             mvwaddch(input->window, screen_line, render_col, input->buffer[i]);
             render_col++;
             current_col++;
-            
+
             if (render_col >= available_width) {
                 screen_line++;
                 render_col = 0;
@@ -355,13 +355,13 @@ static void redraw_input(NCursesInput *input, const char *prompt) {
             }
         }
     }
-    
+
     // Position cursor
     int cursor_screen_line = cursor_line - input->line_scroll_offset;
     if (cursor_screen_line >= 0 && cursor_screen_line < available_height) {
         wmove(input->window, cursor_screen_line, cursor_col);
     }
-    
+
     wrefresh(input->window);
 }
 
@@ -372,66 +372,66 @@ static void redraw_input(NCursesInput *input, const char *prompt) {
 int ncurses_input_init(NCursesInput *input, WINDOW *window,
                       CompletionFn completer, void *ctx) {
     if (!input || !window) return -1;
-    
+
     input->window = window;
     input->buffer = malloc(INITIAL_BUFFER_SIZE);
     if (!input->buffer) {
         LOG_ERROR("Failed to allocate input buffer");
         return -1;
     }
-    
+
     input->buffer_capacity = INITIAL_BUFFER_SIZE;
     input->buffer[0] = '\0';
     input->cursor = 0;
     input->length = 0;
     input->scroll_offset = 0;
     input->line_scroll_offset = 0;
-    
+
     // Get window dimensions
     getmaxyx(window, input->window_height, input->window_width);
-    
+
     // Initialize history
     history_init(input);
-    
+
     // Set completion
     input->completer = completer;
     input->completer_ctx = ctx;
-    
+
     // Initialize resize support
     input->resizer = NULL;
     input->resizer_ctx = NULL;
     input->min_height = 1;
     input->max_height = 3;
-    
+
     // Initialize paste tracking
     input->paste_content = NULL;
     input->paste_content_len = 0;
     input->paste_placeholder_start = 0;
     input->paste_placeholder_len = 0;
-    
+
     // Enable keypad mode for arrow keys and function keys
     keypad(window, TRUE);
-    
+
     // Disable echo and set nodelay to non-blocking for paste detection
     noecho();
-    
+
     return 0;
 }
 
 void ncurses_input_free(NCursesInput *input) {
     if (!input) return;
-    
+
     free(input->buffer);
     input->buffer = NULL;
     input->buffer_capacity = 0;
     input->cursor = 0;
     input->length = 0;
-    
+
     history_free(input);
-    
+
     free(input->saved_input);
     input->saved_input = NULL;
-    
+
     // Free paste tracking
     free(input->paste_content);
     input->paste_content = NULL;
@@ -451,7 +451,7 @@ void ncurses_completion_free(CompletionResult *result) {
 void ncurses_input_set_resize_callback(NCursesInput *input, ResizeFn resizer,
                                        void *ctx, int min_height, int max_height) {
     if (!input) return;
-    
+
     input->resizer = resizer;
     input->resizer_ctx = ctx;
     input->min_height = (min_height > 0) ? min_height : 1;
@@ -460,30 +460,30 @@ void ncurses_input_set_resize_callback(NCursesInput *input, ResizeFn resizer,
 
 char* ncurses_input_readline(NCursesInput *input, const char *prompt) {
     if (!input || !prompt) return NULL;
-    
+
     // Reset buffer
     input->buffer[0] = '\0';
     input->length = 0;
     input->cursor = 0;
     input->scroll_offset = 0;
-    
+
     // Clear saved input from previous history navigation
     free(input->saved_input);
     input->saved_input = NULL;
     input->history_position = -1;
-    
+
     // Initial draw
     redraw_input(input, prompt);
-    
+
     int running = 1;
     while (running) {
         int ch = wgetch(input->window);
-        
+
         if (ch == ERR) {
             // No input available
             continue;
         }
-        
+
         switch (ch) {
             // ============================================================
             // Navigation keys
@@ -494,26 +494,26 @@ char* ncurses_input_readline(NCursesInput *input, const char *prompt) {
                     redraw_input(input, prompt);
                 }
                 break;
-                
+
             case KEY_RIGHT:
                 if (input->cursor < input->length) {
                     input->cursor++;
                     redraw_input(input, prompt);
                 }
                 break;
-                
+
             case KEY_HOME:
             case 1:  // Ctrl+A
                 input->cursor = 0;
                 redraw_input(input, prompt);
                 break;
-                
+
             case KEY_END:
             case 5:  // Ctrl+E
                 input->cursor = input->length;
                 redraw_input(input, prompt);
                 break;
-                
+
             // ============================================================
             // History navigation
             // ============================================================
@@ -525,7 +525,7 @@ char* ncurses_input_readline(NCursesInput *input, const char *prompt) {
                         input->saved_input = strdup(input->buffer);
                         input->history_position = input->history_count;
                     }
-                    
+
                     // Navigate to previous entry
                     if (input->history_position > 0) {
                         input->history_position--;
@@ -538,11 +538,11 @@ char* ncurses_input_readline(NCursesInput *input, const char *prompt) {
                     }
                 }
                 break;
-                
+
             case KEY_DOWN:
                 if (input->history_position != -1) {
                     input->history_position++;
-                    
+
                     if (input->history_position >= input->history_count) {
                         // Restore saved input
                         if (input->saved_input) {
@@ -567,7 +567,7 @@ char* ncurses_input_readline(NCursesInput *input, const char *prompt) {
                     redraw_input(input, prompt);
                 }
                 break;
-                
+
             // ============================================================
             // Editing keys
             // ============================================================
@@ -578,19 +578,19 @@ char* ncurses_input_readline(NCursesInput *input, const char *prompt) {
                     redraw_input(input, prompt);
                 }
                 break;
-                
+
             case KEY_DC:  // Delete key
                 if (buffer_delete_char(input)) {
                     redraw_input(input, prompt);
                 }
                 break;
-                
+
             case 11:  // Ctrl+K - kill to end of line
                 input->buffer[input->cursor] = '\0';
                 input->length = input->cursor;
                 redraw_input(input, prompt);
                 break;
-                
+
             case 21:  // Ctrl+U - kill to beginning of line
                 if (input->cursor > 0) {
                     memmove(input->buffer, &input->buffer[input->cursor],
@@ -600,14 +600,14 @@ char* ncurses_input_readline(NCursesInput *input, const char *prompt) {
                     redraw_input(input, prompt);
                 }
                 break;
-                
+
             case 12:  // Ctrl+L - clear entire input
                 input->buffer[0] = '\0';
                 input->length = 0;
                 input->cursor = 0;
                 redraw_input(input, prompt);
                 break;
-                
+
             // ============================================================
             // Word operations (Alt/Esc sequences)
             // ============================================================
@@ -617,32 +617,32 @@ char* ncurses_input_readline(NCursesInput *input, const char *prompt) {
                     nodelay(input->window, TRUE);
                     int next_ch = wgetch(input->window);
                     nodelay(input->window, FALSE);
-                    
+
                     if (next_ch == ERR) {
                         // Standalone ESC - ignore for now
                         break;
                     }
-                    
+
                     switch (next_ch) {
                         case 'b':  // Alt+b - backward word
                         case 'B':
                             input->cursor = move_backward_word(input->buffer, input->cursor);
                             redraw_input(input, prompt);
                             break;
-                            
+
                         case 'f':  // Alt+f - forward word
                         case 'F':
                             input->cursor = move_forward_word(input->buffer, input->cursor, input->length);
                             redraw_input(input, prompt);
                             break;
-                            
+
                         case 'd':  // Alt+d - delete next word
                         case 'D':
                             if (buffer_delete_word_forward(input)) {
                                 redraw_input(input, prompt);
                             }
                             break;
-                            
+
                         case 127:  // Alt+Backspace - delete previous word
                         case 8:
                             if (buffer_delete_word_backward(input)) {
@@ -652,7 +652,7 @@ char* ncurses_input_readline(NCursesInput *input, const char *prompt) {
                     }
                 }
                 break;
-                
+
             // ============================================================
             // Submit and control
             // ============================================================
@@ -661,23 +661,23 @@ char* ncurses_input_readline(NCursesInput *input, const char *prompt) {
             case KEY_ENTER:
                 running = 0;
                 break;
-                
+
             case 10:  // Ctrl+J - insert newline for multiline input
                 if (buffer_insert_char(input, '\n') == 0) {
                     redraw_input(input, prompt);
                 }
                 break;
-                
+
             case 4:  // Ctrl+D - EOF
                 return NULL;
-                
+
             // ============================================================
             // Tab completion
             // ============================================================
             case '\t':
                 if (input->completer) {
-                    CompletionResult *res = input->completer(input->buffer, 
-                                                            input->cursor, 
+                    CompletionResult *res = input->completer(input->buffer,
+                                                            input->cursor,
                                                             input->completer_ctx);
                     if (!res || res->count == 0) {
                         // No completions, beep
@@ -687,18 +687,18 @@ char* ncurses_input_readline(NCursesInput *input, const char *prompt) {
                         // Single completion: replace current word
                         const char *opt = res->options[0];
                         int optlen = (int)strlen(opt);
-                        
+
                         // Find start of current word
                         int start = input->cursor - 1;
-                        while (start >= 0 && input->buffer[start] != ' ' && 
+                        while (start >= 0 && input->buffer[start] != ' ' &&
                                input->buffer[start] != '\t') {
                             start--;
                         }
                         start++;
-                        
+
                         int tail_len = input->length - input->cursor;
                         size_t needed = (size_t)(start + optlen + tail_len + 1);
-                        
+
                         if (needed > input->buffer_capacity) {
                             char *new_buffer = realloc(input->buffer, needed);
                             if (new_buffer) {
@@ -706,17 +706,17 @@ char* ncurses_input_readline(NCursesInput *input, const char *prompt) {
                                 input->buffer_capacity = needed;
                             }
                         }
-                        
+
                         // Move tail
-                        memmove(input->buffer + start + optlen, 
-                               input->buffer + input->cursor, 
+                        memmove(input->buffer + start + optlen,
+                               input->buffer + input->cursor,
                                (size_t)(tail_len + 1));
-                        
+
                         // Copy completion
                         memcpy(input->buffer + start, opt, (size_t)optlen);
                         input->cursor = start + optlen;
                         input->length = start + optlen + tail_len;
-                        
+
                         ncurses_completion_free(res);
                         redraw_input(input, prompt);
                     } else {
@@ -729,7 +729,7 @@ char* ncurses_input_readline(NCursesInput *input, const char *prompt) {
                     beep();
                 }
                 break;
-                
+
             // ============================================================
             // Regular printable characters
             // ============================================================
@@ -742,11 +742,11 @@ char* ncurses_input_readline(NCursesInput *input, const char *prompt) {
                 break;
         }
     }
-    
+
     // Add to history (if not empty)
     if (input->buffer[0] != '\0') {
         history_add(input, input->buffer);
     }
-    
+
     return strdup(input->buffer);
 }

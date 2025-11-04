@@ -54,24 +54,24 @@ typedef struct NCursesInput {
     int window_width;        // Width of input window (in columns)
     int scroll_offset;       // Horizontal scroll offset for long lines
     int line_scroll_offset;  // Vertical scroll offset for multiline (0 = show last lines)
-    
+
     // History support
     char **history;          // Array of history strings
     int history_capacity;    // Max history entries
     int history_count;       // Current number of entries
     int history_position;    // Current position when navigating (-1 = not navigating)
     char *saved_input;       // Saved input when navigating history
-    
+
     // Completion support
     CompletionFn completer;  // Optional: for tab completion
     void *completer_ctx;     // Context passed to completer
-    
+
     // Resize support
     ResizeFn resizer;        // Optional: for dynamic height adjustment
     void *resizer_ctx;       // Context passed to resizer
     int min_height;          // Minimum window height (lines)
     int max_height;          // Maximum window height (lines)
-    
+
     // Paste tracking
     char *paste_content;     // Actual pasted content (kept separate from visible buffer)
     size_t paste_content_len; // Length of pasted content
@@ -92,7 +92,7 @@ typedef struct NCursesInput {
  * @param ctx        Optional context passed to completer (can be NULL)
  * @return           0 on success, -1 on failure
  */
-int ncurses_input_init(NCursesInput *input, WINDOW *window, 
+int ncurses_input_init(NCursesInput *input, WINDOW *window,
                       CompletionFn completer, void *ctx);
 
 /**
@@ -104,7 +104,7 @@ int ncurses_input_init(NCursesInput *input, WINDOW *window,
  * @param min_height Minimum height in lines (default 1)
  * @param max_height Maximum height in lines (default 3)
  */
-void ncurses_input_set_resize_callback(NCursesInput *input, ResizeFn resizer, 
+void ncurses_input_set_resize_callback(NCursesInput *input, ResizeFn resizer,
                                        void *ctx, int min_height, int max_height);
 
 /**

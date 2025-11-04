@@ -106,7 +106,7 @@ TEST_THREAD_CANCEL_SRC = tests/test_thread_cancel.c
 TEST_AWS_CRED_ROTATION_SRC = tests/test_aws_credential_rotation.c
 QUERY_TOOL_SRC = tools/query_logs.c
 
-.PHONY: all clean check-deps install test test-edit test-input test-read test-lineedit test-todo test-todo-write test-paste test-retry-jitter test-openai-format test-write-diff-integration test-rotation test-patch-parser test-thread-cancel test-aws-cred-rotation query-tool debug analyze sanitize-ub sanitize-all sanitize-leak valgrind memscan version show-version update-version bump-version bump-patch build clang ci-test ci-gcc ci-clang ci-gcc-sanitize ci-clang-sanitize ci-all
+.PHONY: all clean check-deps install test test-edit test-input test-read test-lineedit test-todo test-todo-write test-paste test-retry-jitter test-openai-format test-write-diff-integration test-rotation test-patch-parser test-thread-cancel test-aws-cred-rotation query-tool debug analyze sanitize-ub sanitize-all sanitize-leak valgrind memscan version show-version update-version bump-version bump-patch build clang ci-test ci-gcc ci-clang ci-gcc-sanitize ci-clang-sanitize ci-all fmt-whitespace
 
 all: check-deps $(TARGET)
 
@@ -659,6 +659,12 @@ endif
 clean:
 	rm -rf $(BUILD_DIR)
 
+# Format: Remove trailing whitespaces from source files
+fmt-whitespace:
+	@echo "Removing trailing whitespaces from source files..."
+	@find src tests tools -type f \( -name "*.c" -o -name "*.h" \) -exec sed -i '' 's/[[:space:]]*$$//' {} +
+	@echo "✓ Trailing whitespaces removed"
+
 check-deps:
 	@echo "Checking dependencies..."
 	@command -v $(CC) >/dev/null 2>&1 || { echo "Error: gcc not found. Please install gcc."; exit 1; }
@@ -711,6 +717,9 @@ help:
 	@echo "  make sanitize-ub  - Build with Undefined Behavior Sanitizer only"
 	@echo "  make sanitize-leak - Build with Leak Sanitizer only"
 	@echo "  make valgrind     - Run test suite under Valgrind"
+	@echo ""
+	@echo "Code Formatting:"
+	@echo "  make fmt-whitespace - Remove trailing whitespaces from all source files"
 	@echo ""
 	@echo "Dependencies:"
 	@echo "  - gcc or clang (or compatible C compiler)"

@@ -3,7 +3,7 @@
 
 // Built-in themes embedded as raw .conf content
 const BuiltInTheme built_in_themes[] = {
-    { "dracula", 
+    { "dracula",
       "# Dracula Theme for Kitty\n"
       "# https://draculatheme.com/\n"
       "\n"
@@ -116,7 +116,7 @@ const char *get_builtin_theme_content(const char *filepath) {
     // Extract base name
     const char *base = strrchr(filepath, '/');
     base = base ? base + 1 : filepath;
-    
+
     // Remove .conf extension if present
     size_t len = strlen(base);
     char key[64];

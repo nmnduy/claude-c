@@ -916,7 +916,7 @@ char* lineedit_readline(LineEditor *ed, const char *prompt) {
     int running = 1;
     while (running) {
         unsigned char c;
-        
+
         // If in paste mode (timing-based), check if paste is complete
         if (paste_state->in_paste && paste_state->buffer_size > 0) {
             // Check if more data is available with a short timeout
@@ -1165,7 +1165,7 @@ char* lineedit_readline(LineEditor *ed, const char *prompt) {
                 if (ed->paste_content && ed->paste_content_len > 0) {
                     // Calculate new buffer size needed
                     size_t new_len = (size_t)ed->length - (size_t)ed->paste_placeholder_len + ed->paste_content_len;
-                    
+
                     // Ensure buffer is large enough
                     if (new_len + 1 > ed->buffer_capacity) {
                         size_t new_capacity = ed->buffer_capacity;
@@ -1182,28 +1182,28 @@ char* lineedit_readline(LineEditor *ed, const char *prompt) {
                         ed->buffer = new_buffer;
                         ed->buffer_capacity = new_capacity;
                     }
-                    
+
                     // Calculate positions
                     size_t placeholder_start = (size_t)ed->paste_placeholder_start;
                     int placeholder_end = ed->paste_placeholder_start + ed->paste_placeholder_len;
                     int tail_len = ed->length - placeholder_end;
-                    
+
                     // Move tail if necessary
                     if (tail_len > 0) {
                         memmove(&ed->buffer[placeholder_start + ed->paste_content_len],
                                 &ed->buffer[placeholder_end],
                                 (size_t)tail_len);
                     }
-                    
+
                     // Replace placeholder with actual content
                     memcpy(&ed->buffer[placeholder_start],
                            ed->paste_content,
                            ed->paste_content_len);
-                    
+
                     // Update length
                     ed->length = (int)new_len;
                     ed->buffer[ed->length] = '\0';
-                    
+
                     // Clear paste tracking
                     free(ed->paste_content);
                     ed->paste_content = NULL;
@@ -1211,7 +1211,7 @@ char* lineedit_readline(LineEditor *ed, const char *prompt) {
                     ed->paste_placeholder_start = 0;
                     ed->paste_placeholder_len = 0;
                 }
-                
+
                 printf("\n");
                 running = 0;
             }
@@ -1270,7 +1270,7 @@ char* lineedit_readline(LineEditor *ed, const char *prompt) {
             // Always check for rapid input timing (tmux paste, Ctrl+Shift+V, etc.)
             // This updates the timing state even if not yet in paste mode
             int paste_detected = detect_paste_by_timing(paste_state);
-            
+
             if (!paste_state->in_paste && paste_detected) {
                 // Fast input detected - enter paste mode
                 paste_state->in_paste = 1;

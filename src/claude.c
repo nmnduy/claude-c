@@ -579,7 +579,7 @@ static int show_diff(const char *file_path, const char *original_content) {
     // Get color codes for diff elements
     char add_color[32], remove_color[32], header_color[32], context_color[32];
     const char *add_color_start, *remove_color_start, *header_color_start, *context_color_start;
-    
+
     // Try to get colors from colorscheme, fall back to ANSI colors
     if (get_colorscheme_color(COLORSCHEME_DIFF_ADD, add_color, sizeof(add_color)) == 0) {
         add_color_start = add_color;
@@ -587,21 +587,21 @@ static int show_diff(const char *file_path, const char *original_content) {
         LOG_WARN("Using fallback ANSI color for DIFF_ADD");
         add_color_start = ANSI_FALLBACK_DIFF_ADD;
     }
-    
+
     if (get_colorscheme_color(COLORSCHEME_DIFF_REMOVE, remove_color, sizeof(remove_color)) == 0) {
         remove_color_start = remove_color;
     } else {
         LOG_WARN("Using fallback ANSI color for DIFF_REMOVE");
         remove_color_start = ANSI_FALLBACK_DIFF_REMOVE;
     }
-    
+
     if (get_colorscheme_color(COLORSCHEME_DIFF_HEADER, header_color, sizeof(header_color)) == 0) {
         header_color_start = header_color;
     } else {
         LOG_WARN("Using fallback ANSI color for DIFF_HEADER");
         header_color_start = ANSI_FALLBACK_DIFF_HEADER;
     }
-    
+
     if (get_colorscheme_color(COLORSCHEME_DIFF_CONTEXT, context_color, sizeof(context_color)) == 0) {
         context_color_start = context_color;
     } else {
@@ -610,13 +610,13 @@ static int show_diff(const char *file_path, const char *original_content) {
     }
 
     // Read and display colorized diff output
-    
+
     char line[1024];
     int has_diff = 0;
 
     while (fgets(line, sizeof(line), pipe)) {
         has_diff = 1;
-        
+
         // Colorize based on line prefix
         if (line[0] == '+' && line[1] != '+') {
             // Added line (but not +++ header)
@@ -646,7 +646,7 @@ static int show_diff(const char *file_path, const char *original_content) {
         printf("(No differences found)\n");
     }
 
-    
+
     return 0;
 }
 
@@ -2075,7 +2075,7 @@ static ApiResponse* call_api_with_retries(ConversationState *state) {
         clock_gettime(CLOCK_MONOTONIC, &now);
         long elapsed_ms = (now.tv_sec - retry_start.tv_sec) * 1000 +
                          (now.tv_nsec - retry_start.tv_nsec) / 1000000;
-        
+
         if (attempt_num > 1 && elapsed_ms >= state->max_retry_duration_ms) {
             LOG_ERROR("Maximum retry duration (%d ms) exceeded after %d attempts",
                      state->max_retry_duration_ms, attempt_num - 1);
@@ -2173,7 +2173,7 @@ static ApiResponse* call_api_with_retries(ConversationState *state) {
         elapsed_ms = (now.tv_sec - retry_start.tv_sec) * 1000 +
                     (now.tv_nsec - retry_start.tv_nsec) / 1000000;
         long remaining_ms = state->max_retry_duration_ms - elapsed_ms;
-        
+
         if (delay_ms > remaining_ms) {
             delay_ms = (int)remaining_ms;
             if (delay_ms <= 0) {
@@ -3152,8 +3152,8 @@ static void interactive_mode(ConversationState *state) {
             }
         }
 
-        // Display user message - skip since it's already shown when typing
-        // tui_add_conversation_line(&tui, "[User]", input, COLOR_PAIR_USER);
+        // Display user message in conversation
+        tui_add_conversation_line(&tui, "[User]", input, COLOR_PAIR_USER);
 
         // Add to conversation
         add_user_message(state, input);
