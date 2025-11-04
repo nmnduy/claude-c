@@ -3692,6 +3692,9 @@ static void interactive_mode(ConversationState *state) {
              state->model, state->session_id ? state->session_id : "none");
     tui_update_status(&tui, status_msg);
 
+    // Display startup banner with mascot in the TUI
+    tui_show_startup_banner(&tui, VERSION, state->model, state->working_dir);
+
     const size_t TUI_QUEUE_CAPACITY = 256;
     const size_t AI_QUEUE_CAPACITY = 16;
     TUIMessageQueue tui_queue;
