@@ -17,7 +17,7 @@
 - [x] rotation for api call db files
 - [x] pasting still fucks up the terminal
 - [x] add retries to falied API calls
-- [ ] implement instruction queue. so user can keep typing
+- [x] implement instruction queue. so user can keep typing (Phase 1: message queues complete, see TODO_ASYNC_TUI.md)
 - [ ] run memory analyzers
 
 - [x]
