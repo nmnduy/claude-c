@@ -687,6 +687,10 @@ struct TUIInputBuffer {
     // Display state
     int view_offset;         // Horizontal scroll offset for long lines
     int line_scroll_offset;  // Vertical scroll offset (which line to show at top)
+    // Paste mode detection
+    int paste_mode;          // 1 when in bracketed paste, 0 otherwise
+    struct timespec last_input_time;  // Track timing for paste detection
+    int rapid_input_count;   // Count of rapid inputs (heuristic for paste)
 };
 
 // Calculate how many visual lines are needed for the current buffer
@@ -836,6 +840,9 @@ static int input_init(TUIState *tui) {
     input->win = tui->input_win;
     input->view_offset = 0;
     input->line_scroll_offset = 0;
+    input->paste_mode = 0;
+    input->rapid_input_count = 0;
+    clock_gettime(CLOCK_MONOTONIC, &input->last_input_time);
 
     // Get window dimensions
     int h, w;
@@ -1149,6 +1156,11 @@ int tui_init(TUIState *tui) {
     nodelay(stdscr, FALSE);  // Blocking input
     curs_set(2);  // Make cursor very visible (block cursor)
 
+    // Enable bracketed paste mode (allows detecting pasted content)
+    // ESC[?2004h enables, ESC[?2004l disables
+    printf("\033[?2004h");
+    fflush(stdout);
+
     // Initialize colors from colorscheme
     init_ncurses_colors();
 
@@ -1272,6 +1284,10 @@ void tui_cleanup(TUIState *tui) {
         delwin(tui->input_win);
         tui->input_win = NULL;
     }
+
+    // Disable bracketed paste mode
+    printf("\033[?2004l");
+    fflush(stdout);
 
     // End ncurses
     endwin();
@@ -1559,6 +1575,33 @@ int tui_process_input_char(TUIState *tui, int ch, const char *prompt) {
         return -1;
     }
 
+    // Detect rapid input (paste heuristic when bracketed paste not available)
+    struct timespec current_time;
+    clock_gettime(CLOCK_MONOTONIC, &current_time);
+    
+    long elapsed_ms = (current_time.tv_sec - input->last_input_time.tv_sec) * 1000 +
+                      (current_time.tv_nsec - input->last_input_time.tv_nsec) / 1000000;
+    
+    // If input arrives within 50ms, it's likely a paste
+    if (elapsed_ms < 50) {
+        input->rapid_input_count++;
+        if (input->rapid_input_count >= 5 && !input->paste_mode) {
+            input->paste_mode = 1;
+            LOG_DEBUG("[TUI] Rapid input detected - entering paste mode (heuristic)");
+        }
+    } else if (elapsed_ms > 500) {
+        // Reset if there's a pause
+        if (input->paste_mode && input->rapid_input_count > 0) {
+            input->paste_mode = 0;
+            input->rapid_input_count = 0;
+            LOG_DEBUG("[TUI] Pause detected - exiting paste mode (heuristic)");
+        } else {
+            input->rapid_input_count = 0;
+        }
+    }
+    
+    input->last_input_time = current_time;
+    
     // Handle special keys
     if (ch == KEY_RESIZE) {
         tui_handle_resize(tui);
@@ -1591,6 +1634,8 @@ int tui_process_input_char(TUIState *tui, int ch, const char *prompt) {
         input->buffer[0] = '\0';
         input->length = 0;
         input->cursor = 0;
+        input->paste_mode = 0;  // Reset paste mode
+        input->rapid_input_count = 0;
         input_redraw(tui, prompt);
     } else if (ch == KEY_BACKSPACE || ch == 127 || ch == 8) {  // Backspace
         if (input_backspace(input) > 0) {
@@ -1633,12 +1678,61 @@ int tui_process_input_char(TUIState *tui, int ch, const char *prompt) {
         if (input_insert_char(input, &newline, 1) == 0) {
             input_redraw(tui, prompt);
         }
-    } else if (ch == 13) {  // Enter: submit
-        return 1;  // Signal submission
-    } else if (ch == 27) {  // ESC sequence (Alt key combinations)
+    } else if (ch == 13) {  // Enter: submit or newline
+        if (input->paste_mode) {
+            // In paste mode, Enter inserts newline instead of submitting
+            unsigned char newline = '\n';
+            if (input_insert_char(input, &newline, 1) == 0) {
+                input_redraw(tui, prompt);
+            }
+            return 0;
+        } else {
+            // Normal mode: submit
+            input->rapid_input_count = 0;  // Reset on submit
+            return 1;  // Signal submission
+        }
+    } else if (ch == 27) {  // ESC sequence (Alt key combinations or bracketed paste)
         // Set nodelay to check for following character
         nodelay(tui->input_win, TRUE);
         int next_ch = wgetch(tui->input_win);
+        
+        LOG_DEBUG("[TUI] ESC sequence detected, next_ch=%d", next_ch);
+        
+        if (next_ch == '[') {
+            // Could be bracketed paste sequence or other CSI sequence
+            // Read the sequence with a small delay to allow characters to arrive
+            nodelay(tui->input_win, FALSE);
+            timeout(100);  // 100ms timeout for sequence
+            
+            int ch1 = wgetch(tui->input_win);
+            int ch2 = wgetch(tui->input_win);
+            int ch3 = wgetch(tui->input_win);
+            int ch4 = wgetch(tui->input_win);
+            
+            timeout(-1);  // Back to blocking
+            
+            LOG_DEBUG("[TUI] Escape sequence: ESC[%c%c%c%c (values: %d %d %d %d)", 
+                     ch1 > 0 ? ch1 : '?', ch2 > 0 ? ch2 : '?', 
+                     ch3 > 0 ? ch3 : '?', ch4 > 0 ? ch4 : '?',
+                     ch1, ch2, ch3, ch4);
+            
+            // Check for ESC[200~ (paste start) or ESC[201~ (paste end)
+            if (ch1 == '2' && ch2 == '0' && ch3 == '0' && ch4 == '~') {
+                // Bracketed paste start
+                input->paste_mode = 1;
+                LOG_DEBUG("[TUI] Bracketed paste mode started");
+                return 0;
+            } else if (ch1 == '2' && ch2 == '0' && ch3 == '1' && ch4 == '~') {
+                // Bracketed paste end
+                input->paste_mode = 0;
+                LOG_DEBUG("[TUI] Bracketed paste mode ended");
+                input_redraw(tui, prompt);  // Redraw to show all pasted content
+                return 0;
+            }
+            // Other CSI sequences - ignore
+            return 0;
+        }
+        
         nodelay(tui->input_win, FALSE);
 
         if (next_ch == ERR) {
@@ -1691,6 +1785,8 @@ void tui_clear_input_buffer(TUIState *tui) {
     tui->input_buffer->cursor = 0;
     tui->input_buffer->view_offset = 0;
     tui->input_buffer->line_scroll_offset = 0;
+    tui->input_buffer->paste_mode = 0;  // Reset paste mode on clear
+    tui->input_buffer->rapid_input_count = 0;
 }
 
 void tui_redraw_input(TUIState *tui, const char *prompt) {
