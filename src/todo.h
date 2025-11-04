@@ -62,8 +62,11 @@ void todo_clear(TodoList *list);
 // Get count of items by status
 size_t todo_count_by_status(const TodoList *list, TodoStatus status);
 
-// Render TODO list to terminal with colors
-// Uses ANSI escape codes for visual indicators
+// Render TODO list to string
+// Returns: Allocated string that must be freed by caller, NULL if no todos
+char* todo_render_to_string(const TodoList *list);
+
+// Render TODO list to terminal as plain conversation output
 void todo_render(const TodoList *list);
 
 // Parse TODO updates from assistant text

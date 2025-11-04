@@ -3434,6 +3434,23 @@ static void process_response(ConversationState *state,
 
         add_tool_results(state, results, tool_count);
 
+        // Check if TodoWrite was executed and display the updated TODO list
+        int todo_write_executed = 0;
+        for (int i = 0; i < tool_count; i++) {
+            if (results[i].tool_name && strcmp(results[i].tool_name, "TodoWrite") == 0) {
+                todo_write_executed = 1;
+                break;
+            }
+        }
+
+        if (todo_write_executed && state->todo_list && state->todo_list->count > 0) {
+            char *todo_text = todo_render_to_string(state->todo_list);
+            if (todo_text) {
+                ui_append_line(tui, queue, "[Assistant]", todo_text, COLOR_PAIR_ASSISTANT);
+                free(todo_text);
+            }
+        }
+
         Spinner *followup_spinner = NULL;
         if (!tui && !queue) {
             followup_spinner = spinner_start("Processing tool results...", SPINNER_CYAN);

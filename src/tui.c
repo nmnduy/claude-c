@@ -247,35 +247,45 @@ static void render_conversation_window(TUIState *tui) {
         ConversationEntry *entry = &tui->entries[i];
         
         // Map TUIColorPair to ncurses color pair
-        int prefix_pair = NCURSES_PAIR_FOREGROUND;
+        int mapped_pair = NCURSES_PAIR_FOREGROUND;
         switch (entry->color_pair) {
             case COLOR_PAIR_DEFAULT:
             case COLOR_PAIR_FOREGROUND:
-                prefix_pair = NCURSES_PAIR_FOREGROUND;
+                mapped_pair = NCURSES_PAIR_FOREGROUND;
                 break;
             case COLOR_PAIR_USER:
-                prefix_pair = NCURSES_PAIR_USER;
+                mapped_pair = NCURSES_PAIR_USER;
                 break;
             case COLOR_PAIR_ASSISTANT:
-                prefix_pair = NCURSES_PAIR_ASSISTANT;
+                mapped_pair = NCURSES_PAIR_ASSISTANT;
                 break;
             case COLOR_PAIR_TOOL:
             case COLOR_PAIR_STATUS:
-                prefix_pair = NCURSES_PAIR_STATUS;
+                mapped_pair = NCURSES_PAIR_STATUS;
                 break;
             case COLOR_PAIR_ERROR:
-                prefix_pair = NCURSES_PAIR_ERROR;
+                mapped_pair = NCURSES_PAIR_ERROR;
                 break;
             case COLOR_PAIR_PROMPT:
-                prefix_pair = NCURSES_PAIR_PROMPT;
+                mapped_pair = NCURSES_PAIR_PROMPT;
                 break;
+        }
+
+        const int prefix_pair = mapped_pair;
+        int text_pair = NCURSES_PAIR_FOREGROUND;
+        int prefix_has_text = entry->prefix && entry->prefix[0] != '\0';
+
+        if (!prefix_has_text &&
+            entry->color_pair != COLOR_PAIR_DEFAULT &&
+            entry->color_pair != COLOR_PAIR_FOREGROUND) {
+            text_pair = mapped_pair;
         }
 
         // Move to start of line
         wmove(tui->conv_win, y, 0);
         
         // Print prefix with color
-        if (entry->prefix) {
+        if (prefix_has_text) {
             if (has_colors()) {
                 wattron(tui->conv_win, COLOR_PAIR(prefix_pair) | A_BOLD);
             }
@@ -288,16 +298,16 @@ static void render_conversation_window(TUIState *tui) {
         // Print text with foreground color
         if (entry->text) {
             if (has_colors()) {
-                wattron(tui->conv_win, COLOR_PAIR(NCURSES_PAIR_FOREGROUND));
+                wattron(tui->conv_win, COLOR_PAIR(text_pair));
             }
             
             // Add space between prefix and text if both exist
-            if (entry->prefix) {
+            if (prefix_has_text) {
                 wprintw(tui->conv_win, " ");
             }
             
             // Print text, truncating if too long
-            int remaining = max_x - (entry->prefix ? (int)strlen(entry->prefix) + 1 : 0);
+            int remaining = max_x - (prefix_has_text ? (int)strlen(entry->prefix) + 1 : 0);
             if (remaining > 0) {
                 // Simple truncation - print up to remaining chars
                 int text_len = (int)strlen(entry->text);
@@ -318,7 +328,7 @@ static void render_conversation_window(TUIState *tui) {
             }
             
             if (has_colors()) {
-                wattroff(tui->conv_win, COLOR_PAIR(NCURSES_PAIR_FOREGROUND));
+                wattroff(tui->conv_win, COLOR_PAIR(text_pair));
             }
         }
 
@@ -1165,12 +1175,6 @@ void tui_show_startup_banner(TUIState *tui, const char *version, const char *mod
     tui_add_conversation_line(tui, NULL, "", COLOR_PAIR_FOREGROUND);  // Blank line
 }
 
-void tui_render_todo_list(TUIState *tui, const TodoList *todo_list) {
-    if (!tui || !tui->is_initialized || !todo_list) return;
-
-    // Call todo_render function which handles the formatting
-    todo_render(todo_list);
-}
 
 void tui_scroll_conversation(TUIState *tui, int direction) {
     if (!tui || !tui->is_initialized || !tui->conv_win) return;

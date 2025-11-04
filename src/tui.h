@@ -100,9 +100,7 @@ void tui_clear_resize_flag(void);
 // working_dir: Current working directory
 void tui_show_startup_banner(TUIState *tui, const char *version, const char *model, const char *working_dir);
 
-// Render TODO list panel
-// Shows task list with visual indicators (✓ completed, ⋯ in progress, ○ pending)
-void tui_render_todo_list(TUIState *tui, const TodoList *todo_list);
+
 
 // Scroll conversation window
 // direction: positive to scroll down, negative to scroll up
