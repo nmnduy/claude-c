@@ -1102,6 +1102,7 @@ void tui_handle_resize(TUIState *tui) {
         if (tui->conv_win) {
             scrollok(tui->conv_win, TRUE);
             render_conversation_window(tui);
+            wrefresh(tui->conv_win);  // Force refresh after render
         }
     }
 
@@ -1121,10 +1122,16 @@ void tui_handle_resize(TUIState *tui) {
             g_input_state.win_width = w - 2;
             g_input_state.win_height = h - 2;
             g_input_state.win = tui->input_win;
+            
+            // Force redraw of input window
+            touchwin(tui->input_win);
+            wrefresh(tui->input_win);
         }
     }
 
+    // Final refresh to ensure everything is visible
     refresh();
+    doupdate();  // Update physical screen
 }
 
 void tui_show_startup_banner(TUIState *tui, const char *version, const char *model, const char *working_dir) {
