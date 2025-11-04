@@ -1171,7 +1171,7 @@ void tui_show_startup_banner(TUIState *tui, const char *version, const char *mod
     // Add banner lines to conversation window
     tui_add_conversation_line(tui, NULL, line1, COLOR_PAIR_ASSISTANT);
     tui_add_conversation_line(tui, NULL, line2, COLOR_PAIR_ASSISTANT);
-    tui_add_conversation_line(tui, NULL, line3, COLOR_PAIR_FOREGROUND);
+    tui_add_conversation_line(tui, NULL, line3, COLOR_PAIR_ASSISTANT);
     tui_add_conversation_line(tui, NULL, "", COLOR_PAIR_FOREGROUND);  // Blank line
 }
 
