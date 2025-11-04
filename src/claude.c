@@ -3677,23 +3677,6 @@ static int submit_input_callback(const char *input, void *user_data) {
 
 // Advanced input handler with readline-like keybindings, driven by non-blocking event loop
 static void interactive_mode(ConversationState *state) {
-    // Display startup banner with theme colors (colorscheme already initialized in main())
-    char color_code[32];
-    const char *banner_color;
-    if (get_colorscheme_color(COLORSCHEME_ASSISTANT, color_code, sizeof(color_code)) == 0) {
-        banner_color = color_code;
-    } else {
-        LOG_WARN("Using fallback ANSI color for ASSISTANT (banner)");
-        banner_color = ANSI_FALLBACK_BOLD_BLUE;  // Bold blue fallback from centralized system
-    }
-
-    printf("%s", banner_color);
-    printf(" ▐▛███▜▌   claude-c v%s\n", VERSION);
-    printf("▝▜█████▛▘  %s\n", state->model);
-    printf("  ▘▘ ▝▝    %s\n", state->working_dir);
-    printf(ANSI_RESET "\n");  // Reset color and add blank line
-    fflush(stdout);
-
     const char *prompt = ">";
 
     // Initialize TUI
