@@ -1233,6 +1233,8 @@ int tui_process_input_char(TUIState *tui, int ch, const char *prompt) {
     // Handle special keys
     if (ch == KEY_RESIZE) {
         tui_handle_resize(tui);
+        render_conversation_window(tui);
+        render_status_window(tui);
         input_redraw(tui, prompt);
         return 0;
     } else if (ch == 1) {  // Ctrl+A: beginning of line
@@ -1501,7 +1503,9 @@ int tui_event_loop(TUIState *tui, const char *prompt,
     // Clear input buffer at start
     tui_clear_input_buffer(tui);
     
-    // Initial draw
+    // Initial draw (ensure all windows reflect current size)
+    render_conversation_window(tui);
+    render_status_window(tui);
     tui_redraw_input(tui, prompt);
     
     while (running) {
@@ -1512,6 +1516,8 @@ int tui_event_loop(TUIState *tui, const char *prompt,
         if (g_resize_flag) {
             g_resize_flag = 0;
             tui_handle_resize(tui);
+            render_conversation_window(tui);
+            render_status_window(tui);
             tui_redraw_input(tui, prompt);
         }
         
