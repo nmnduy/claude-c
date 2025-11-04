@@ -2,7 +2,7 @@
 
 **Goal**: Make the TUI always responsive by moving API calls and tool execution to background threads, allowing the input box to accept commands while AI processes requests.
 
-**Status**: Phase 3 Complete ✅ - Ready for Phase 4
+**Status**: Phase 4 Complete ✅ - Ready for Phase 5
 **Priority**: High
 **Estimated Effort**: 3-5 days (Phase 1: ~1 day completed)
 
@@ -15,7 +15,7 @@
 | Phase 1 | ✅ Complete | Message queue infrastructure (TUI + AI queues) |
 | Phase 2 | ✅ Complete | Non-blocking input and TUI event loop |
 | Phase 3 | ✅ Complete | Worker thread for API calls |
-| Phase 4 | ⏳ Pending | Async tool execution |
+| Phase 4 | ✅ Complete | Async tool execution |
 | Phase 5 | ⏳ Pending | Full integration |
 | Phase 6 | ⏳ Pending | Testing and polish |
 
@@ -27,9 +27,9 @@
 - ✅ Background worker thread handles API calls + TUI message dispatch
 
 **Next Steps**:
-- Begin Phase 4: Move tool execution off blocking path (condition variable / callbacks)
-- Stream fine-grained tool progress through TUI queue helpers
-- Add worker-side cancellation and error surfacing for long-running tools
+- Kick off Phase 5: Main-thread message dispatch integration
+- Audit TUI updates to ensure all ncurses calls stay on UI thread
+- Verify message queue batching and backpressure handling
 
 ---
 
@@ -215,27 +215,27 @@
 
 ---
 
-### Phase 4: Async Tool Execution ⏳
+### Phase 4: Async Tool Execution ✅
 
 **Goal**: Remove blocking wait for tool threads
 
 #### Tasks
-- [ ] Modify `process_response()` to be async-friendly
-  - [ ] Remove `while (!all_tools_done)` busy loop
-  - [ ] Use condition variable to signal completion
-  - [ ] Worker waits on condition instead of polling
-- [ ] Create tool completion callback system
-  - [ ] Define `ToolCompletion` struct: `{tool_name, result, is_error}`
-  - [ ] Each tool thread signals completion via callback
-  - [ ] Callback posts status to TUI queue
-- [ ] Refactor tool monitoring
-  - [ ] Replace monitor thread with condition variable
-  - [ ] Worker thread waits: `pthread_cond_wait(&tools_done_cond, &lock)`
-  - [ ] Last tool to complete signals: `pthread_cond_broadcast(&tools_done_cond)`
-- [ ] Handle ESC interrupt gracefully
-  - [ ] Check interrupt flag in worker thread
-  - [ ] Cancel tool threads if needed
-  - [ ] Post cancellation message to TUI
+- [x] Modify `process_response()` to be async-friendly
+  - [x] Remove `while (!all_tools_done)` busy loop
+  - [x] Use condition variable to signal completion
+  - [x] Worker waits on condition instead of polling
+- [x] Create tool completion callback system
+  - [x] Define `ToolCompletion` struct: `{tool_name, result, is_error}`
+  - [x] Each tool thread signals completion via callback
+  - [x] Callback posts status to TUI queue
+- [x] Refactor tool monitoring
+  - [x] Replace monitor thread with condition variable
+  - [x] Worker thread waits: `pthread_cond_wait(&tools_done_cond, &lock)`
+  - [x] Last tool to complete signals: `pthread_cond_broadcast(&tools_done_cond)`
+- [x] Handle ESC interrupt gracefully
+  - [x] Check interrupt flag in worker thread
+  - [x] Cancel tool threads if needed
+  - [x] Post cancellation message to TUI
 
 **Files to modify**:
 - `src/claude.c` - Refactor `process_response()` and tool execution

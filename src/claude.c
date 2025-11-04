@@ -1099,13 +1099,138 @@ STATIC cJSON* tool_write(cJSON *params, ConversationState *state) {
 // Forward declaration
 static cJSON* execute_tool(const char *tool_name, cJSON *input, ConversationState *state);
 
+typedef void (*ToolCompletionCallback)(const ToolCompletion *completion, void *user_data);
+
+typedef struct {
+    pthread_mutex_t mutex;
+    pthread_cond_t cond;
+    int total;
+    int completed;
+    int error_count;
+    int cancelled;
+    ToolCompletionCallback callback;
+    void *callback_user_data;
+} ToolExecutionTracker;
+
+typedef struct {
+    TUIState *tui;
+    TUIMessageQueue *queue;
+    Spinner *spinner;
+    AIWorkerContext *worker_ctx;
+} ToolCallbackContext;
+
 typedef struct {
     char *tool_use_id;            // duplicated tool_call id
     const char *tool_name;        // name of the tool
     cJSON *input;                 // arguments for tool
     ConversationState *state;     // conversation state
     InternalContent *result_block;   // pointer to results array slot
+    ToolExecutionTracker *tracker;  // shared tracker for completion signaling
+    int notified;                  // guard against double notification
 } ToolThreadArg;
+
+static int tool_tracker_init(ToolExecutionTracker *tracker,
+                             int total,
+                             ToolCompletionCallback callback,
+                             void *user_data) {
+    if (!tracker) {
+        return -1;
+    }
+
+    if (pthread_mutex_init(&tracker->mutex, NULL) != 0) {
+        return -1;
+    }
+    if (pthread_cond_init(&tracker->cond, NULL) != 0) {
+        pthread_mutex_destroy(&tracker->mutex);
+        return -1;
+    }
+
+    tracker->total = total;
+    tracker->completed = 0;
+    tracker->error_count = 0;
+    tracker->cancelled = 0;
+    tracker->callback = callback;
+    tracker->callback_user_data = user_data;
+    return 0;
+}
+
+static void tool_tracker_destroy(ToolExecutionTracker *tracker) {
+    if (!tracker) {
+        return;
+    }
+    pthread_cond_destroy(&tracker->cond);
+    pthread_mutex_destroy(&tracker->mutex);
+}
+
+static void tool_tracker_notify_completion(ToolThreadArg *arg) {
+    if (!arg || !arg->tracker) {
+        return;
+    }
+
+    ToolExecutionTracker *tracker = arg->tracker;
+    ToolCompletion completion = {0};
+    ToolCompletionCallback cb = NULL;
+    void *cb_data = NULL;
+
+    pthread_mutex_lock(&tracker->mutex);
+    if (!arg->notified) {
+        arg->notified = 1;
+        tracker->completed++;
+        if (arg->result_block && arg->result_block->is_error) {
+            tracker->error_count++;
+        }
+
+        completion.tool_name = arg->tool_name;
+        completion.result = arg->result_block ? arg->result_block->tool_output : NULL;
+        completion.is_error = arg->result_block ? arg->result_block->is_error : 1;
+        completion.completed = tracker->completed;
+        completion.total = tracker->total;
+        cb = tracker->callback;
+        cb_data = tracker->callback_user_data;
+
+        pthread_cond_broadcast(&tracker->cond);
+    }
+    pthread_mutex_unlock(&tracker->mutex);
+
+    if (cb) {
+        cb(&completion, cb_data);
+    }
+}
+
+static void tool_progress_callback(const ToolCompletion *completion, void *user_data) {
+    if (!completion || !user_data) {
+        return;
+    }
+
+    ToolCallbackContext *ctx = (ToolCallbackContext *)user_data;
+    const char *tool_name = completion->tool_name ? completion->tool_name : "tool";
+    const char *status_word = completion->is_error ? "failed" : "completed";
+
+    char status[256];
+    if (completion->total > 0) {
+        snprintf(status, sizeof(status),
+                 "Tool %s %s (%d/%d)",
+                 tool_name,
+                 status_word,
+                 completion->completed,
+                 completion->total);
+    } else {
+        snprintf(status, sizeof(status),
+                 "Tool %s %s",
+                 tool_name,
+                 status_word);
+    }
+
+    if (ctx->spinner) {
+        spinner_update(ctx->spinner, status);
+    }
+
+    if (ctx->worker_ctx) {
+        ai_worker_handle_tool_completion(ctx->worker_ctx, completion);
+    } else {
+        ui_set_status(ctx->tui, ctx->queue, status);
+    }
+}
 
 // Cleanup handler for tool thread cancellation
 static void tool_thread_cleanup(void *arg) {
@@ -1123,6 +1248,8 @@ static void tool_thread_cleanup(void *arg) {
     cJSON_AddStringToObject(error, "error", "Tool execution cancelled by user");
     t->result_block->tool_output = error;
     t->result_block->is_error = 1;
+
+    tool_tracker_notify_completion(t);
 }
 
 static void *tool_thread_func(void *arg) {
@@ -1145,7 +1272,9 @@ static void *tool_thread_func(void *arg) {
     t->result_block->tool_id = t->tool_use_id;
     t->result_block->tool_name = strdup(t->tool_name);  // Store tool name for error reporting
     t->result_block->tool_output = res;
-    t->result_block->is_error = cJSON_HasObjectItem(res, "error");
+   t->result_block->is_error = cJSON_HasObjectItem(res, "error");
+
+    tool_tracker_notify_completion(t);
 
     // Pop cleanup handler (execute=0 means don't run it on normal exit)
     pthread_cleanup_pop(0);
@@ -1642,22 +1771,6 @@ static Tool tools[] = {
 };
 
 static const int num_tools = sizeof(tools) / sizeof(Tool);
-
-// Thread monitor for ESC checking during tool execution
-typedef struct {
-    pthread_t *threads;
-    int thread_count;
-    volatile int *done_flag;
-} MonitorArg;
-
-static void *tool_monitor_func(void *arg) {
-    MonitorArg *ma = (MonitorArg *)arg;
-    for (int i = 0; i < ma->thread_count; i++) {
-        pthread_join(ma->threads[i], NULL);
-    }
-    *ma->done_flag = 1;
-    return NULL;
-}
 
 static cJSON* execute_tool(const char *tool_name, cJSON *input, ConversationState *state) {
     // Time the tool execution
@@ -3020,7 +3133,8 @@ void conversation_free(ConversationState *state) {
 static void process_response(ConversationState *state,
                              ApiResponse *response,
                              TUIState *tui,
-                             TUIMessageQueue *queue) {
+                             TUIMessageQueue *queue,
+                             AIWorkerContext *worker_ctx) {
     // Time the entire response processing
     struct timespec proc_start, proc_end;
     clock_gettime(CLOCK_MONOTONIC, &proc_start);
@@ -3055,113 +3169,229 @@ static void process_response(ConversationState *state,
 
         LOG_INFO("Processing %d tool call(s)", tool_count);
 
-        // Time tool execution phase
         struct timespec tool_start, tool_end;
         clock_gettime(CLOCK_MONOTONIC, &tool_start);
 
-        // Parallel tool execution
         InternalContent *results = calloc((size_t)tool_count, sizeof(InternalContent));
-        // results will be owned by ConversationState after add_tool_results().
-        // Use free_internal_contents() to free in early exits.
-        pthread_t *threads = malloc((size_t)tool_count * sizeof(pthread_t));
-        ToolThreadArg *args = malloc((size_t)tool_count * sizeof(ToolThreadArg));
-        int thread_count = 0;
-
-        // Launch tool execution threads
-        for (int i = 0; i < tool_count; i++) {
-            ToolCall *tool = &tool_calls_array[i];
-
-            if (!tool->name || !tool->id) {
-                // This should never happen - provider should sanitize responses
-                LOG_ERROR("Tool call missing name or id (provider validation failed)");
-                continue;
-            }
-
-            // Use parameters directly (already parsed by provider)
-            // Duplicate parameters for thread to own and delete
-            cJSON *input;
-            if (tool->parameters) {
-                input = cJSON_Duplicate(tool->parameters, /*recurse*/1);
-            } else {
-                input = cJSON_CreateObject();
-            }
-
-            char *tool_details = get_tool_details(tool->name, input);
-
-            char prefix_with_tool[128];
-            snprintf(prefix_with_tool, sizeof(prefix_with_tool), "[Tool: %s]", tool->name);
-            ui_append_line(tui, queue, prefix_with_tool, tool_details, COLOR_PAIR_TOOL);
-
-            // Prepare thread arguments
-            args[thread_count].tool_use_id = strdup(tool->id);
-            args[thread_count].tool_name = tool->name;
-            args[thread_count].input = input;
-            args[thread_count].state = state;
-            args[thread_count].result_block = &results[i];
-
-            // Create thread
-            pthread_create(&threads[thread_count], NULL, tool_thread_func, &args[thread_count]);
-            thread_count++;
+        if (!results) {
+            ui_show_error(tui, queue, "Failed to allocate tool result buffer");
+            return;
         }
 
-        // Show spinner or status while waiting for tools to complete
+        int valid_tool_calls = 0;
+        for (int i = 0; i < tool_count; i++) {
+            ToolCall *tool = &tool_calls_array[i];
+            if (tool->name && tool->id) {
+                valid_tool_calls++;
+            }
+        }
+
+        pthread_t *threads = NULL;
+        ToolThreadArg *args = NULL;
+        if (valid_tool_calls > 0) {
+            threads = calloc((size_t)valid_tool_calls, sizeof(pthread_t));
+            args = calloc((size_t)valid_tool_calls, sizeof(ToolThreadArg));
+            if (!threads || !args) {
+                ui_show_error(tui, queue, "Failed to allocate tool thread structures");
+                free(threads);
+                free(args);
+                free_internal_contents(results, tool_count);
+                return;
+            }
+        }
+
+        ToolCallbackContext callback_ctx = {
+            .tui = tui,
+            .queue = queue,
+            .spinner = NULL,
+            .worker_ctx = worker_ctx
+        };
+
         Spinner *tool_spinner = NULL;
         if (!tui && !queue) {
             char spinner_msg[128];
             snprintf(spinner_msg, sizeof(spinner_msg), "Running %d tool%s...",
-                     thread_count, thread_count > 1 ? "s" : "");
+                     valid_tool_calls, valid_tool_calls == 1 ? "" : "s");
             tool_spinner = spinner_start(spinner_msg, SPINNER_YELLOW);
         } else {
             char status_msg[128];
             snprintf(status_msg, sizeof(status_msg), "Running %d tool%s...",
-                     thread_count, thread_count > 1 ? "s" : "");
+                     valid_tool_calls, valid_tool_calls == 1 ? "" : "s");
             ui_set_status(tui, queue, status_msg);
         }
+        callback_ctx.spinner = tool_spinner;
 
-        // Wait for all tool threads to complete, checking for ESC periodically
-        // Use a helper thread to monitor tool completion
-        int interrupted = 0;
-        volatile int all_tools_done = 0;
-
-        // Create a monitor thread that joins all tool threads
-        pthread_t monitor_thread;
-        MonitorArg monitor_arg = {threads, thread_count, &all_tools_done};
-        pthread_create(&monitor_thread, NULL, tool_monitor_func, &monitor_arg);
-
-        // Now check for ESC while waiting for tools to complete
-        while (!all_tools_done) {
-            if (check_for_esc()) {
-                LOG_INFO("Tool execution interrupted by user (ESC pressed) - cancelling threads");
-                interrupted = 1;
-
-                // Cancel all tool threads immediately
-                for (int i = 0; i < thread_count; i++) {
-                    pthread_cancel(threads[i]);
+        ToolExecutionTracker tracker;
+        int tracker_initialized = 0;
+        if (valid_tool_calls > 0) {
+            if (tool_tracker_init(&tracker, valid_tool_calls, tool_progress_callback, &callback_ctx) != 0) {
+                ui_show_error(tui, queue, "Failed to initialize tool tracker");
+                if (tool_spinner) {
+                    spinner_stop(tool_spinner, "Tool execution failed to start", 0);
                 }
-
-                // Update status to show immediate termination
-                if (!tui && !queue) {
-                    if (tool_spinner) {
-                        spinner_update(tool_spinner, "Interrupted (ESC) - terminating tools...");
-                    }
-                } else {
-                    ui_set_status(tui, queue, "Interrupted (ESC) - terminating tools...");
-                }
-                break;
+                free(threads);
+                free(args);
+                free_internal_contents(results, tool_count);
+                return;
             }
-            usleep(50000);  // Check every 50ms
+            tracker_initialized = 1;
         }
 
-        // Wait for monitor thread to complete (this ensures all tool threads are joined)
-        // If interrupted, threads are cancelled; otherwise wait for normal completion
-        pthread_join(monitor_thread, NULL);
+        int started_threads = 0;
+
+        for (int i = 0; i < tool_count; i++) {
+            ToolCall *tool = &tool_calls_array[i];
+            InternalContent *result_slot = &results[i];
+            result_slot->type = INTERNAL_TOOL_RESPONSE;
+
+            if (!tool->name || !tool->id) {
+                LOG_ERROR("Tool call missing name or id (provider validation failed)");
+                result_slot->tool_id = tool->id ? strdup(tool->id) : strdup("unknown");
+                result_slot->tool_name = tool->name ? strdup(tool->name) : strdup("tool");
+                cJSON *error = cJSON_CreateObject();
+                cJSON_AddStringToObject(error, "error", "Tool call missing name or id");
+                result_slot->tool_output = error;
+                result_slot->is_error = 1;
+                continue;
+            }
+
+            cJSON *input = tool->parameters
+                ? cJSON_Duplicate(tool->parameters, /*recurse*/1)
+                : cJSON_CreateObject();
+
+            char *tool_details = get_tool_details(tool->name, input);
+            char prefix_with_tool[128];
+            snprintf(prefix_with_tool, sizeof(prefix_with_tool), "[Tool: %s]", tool->name);
+            ui_append_line(tui, queue, prefix_with_tool, tool_details, COLOR_PAIR_TOOL);
+
+            if (!tracker_initialized) {
+                cJSON *error = cJSON_CreateObject();
+                cJSON_AddStringToObject(error, "error", "Internal error initializing tool tracker");
+                result_slot->tool_id = strdup(tool->id);
+                result_slot->tool_name = strdup(tool->name);
+                result_slot->tool_output = error;
+                result_slot->is_error = 1;
+                cJSON_Delete(input);
+                continue;
+            }
+
+            ToolThreadArg *current = &args[started_threads];
+            current->tool_use_id = strdup(tool->id);
+            current->tool_name = tool->name;
+            current->input = input;
+            current->state = state;
+            current->result_block = result_slot;
+            current->tracker = &tracker;
+            current->notified = 0;
+
+            int rc = pthread_create(&threads[started_threads], NULL, tool_thread_func, current);
+            if (rc != 0) {
+                LOG_ERROR("Failed to create tool thread for %s (rc=%d)", tool->name, rc);
+                cJSON_Delete(input);
+                current->input = NULL;
+
+                result_slot->tool_id = current->tool_use_id;
+                result_slot->tool_name = strdup(tool->name);
+                cJSON *error = cJSON_CreateObject();
+                cJSON_AddStringToObject(error, "error", "Failed to start tool thread");
+                result_slot->tool_output = error;
+                result_slot->is_error = 1;
+                tool_tracker_notify_completion(current);
+                current->tool_use_id = NULL;
+                continue;
+            }
+
+            started_threads++;
+        }
+
+        int interrupted = 0;
+        if (tracker_initialized && started_threads > 0) {
+            while (1) {
+                int done = 0;
+                int cancelled = 0;
+
+                pthread_mutex_lock(&tracker.mutex);
+                if (tracker.cancelled || tracker.completed >= tracker.total) {
+                    done = tracker.completed >= tracker.total;
+                    cancelled = tracker.cancelled;
+                    pthread_mutex_unlock(&tracker.mutex);
+                    break;
+                }
+
+                struct timespec deadline;
+                clock_gettime(CLOCK_REALTIME, &deadline);
+                deadline.tv_nsec += 100000000L;
+                if (deadline.tv_nsec >= 1000000000L) {
+                    deadline.tv_sec += 1;
+                    deadline.tv_nsec -= 1000000000L;
+                }
+
+                int wait_rc = pthread_cond_timedwait(&tracker.cond, &tracker.mutex, &deadline);
+                done = tracker.completed >= tracker.total;
+                cancelled = tracker.cancelled;
+                pthread_mutex_unlock(&tracker.mutex);
+
+                if (done || cancelled) {
+                    break;
+                }
+
+                if (wait_rc == ETIMEDOUT && check_for_esc()) {
+                    LOG_INFO("Tool execution interrupted by user (ESC pressed) - cancelling threads");
+                    interrupted = 1;
+
+                    if (!tui && !queue) {
+                        if (tool_spinner) {
+                            spinner_update(tool_spinner, "Interrupted (ESC) - terminating tools...");
+                        }
+                    } else {
+                        ui_set_status(tui, queue, "Interrupted (ESC) - terminating tools...");
+                    }
+
+                    pthread_mutex_lock(&tracker.mutex);
+                    tracker.cancelled = 1;
+                    pthread_cond_broadcast(&tracker.cond);
+                    pthread_mutex_unlock(&tracker.mutex);
+
+                    for (int t = 0; t < started_threads; t++) {
+                        pthread_cancel(threads[t]);
+                    }
+                    break;
+                }
+            }
+        }
+
+        for (int t = 0; t < started_threads; t++) {
+            pthread_join(threads[t], NULL);
+        }
 
         clock_gettime(CLOCK_MONOTONIC, &tool_end);
         long tool_exec_ms = (tool_end.tv_sec - tool_start.tv_sec) * 1000 +
                             (tool_end.tv_nsec - tool_start.tv_nsec) / 1000000;
-        LOG_INFO("All %d tool(s) completed in %ld ms", thread_count, tool_exec_ms);
+        LOG_INFO("All %d tool(s) processed in %ld ms", started_threads, tool_exec_ms);
 
-        // If interrupted, clean up and return
+        if (tracker_initialized) {
+            tool_tracker_destroy(&tracker);
+        }
+
+        int has_error = 0;
+        for (int i = 0; i < tool_count; i++) {
+            if (results[i].is_error) {
+                has_error = 1;
+
+                cJSON *error_obj = results[i].tool_output
+                    ? cJSON_GetObjectItem(results[i].tool_output, "error")
+                    : NULL;
+                const char *error_msg = (error_obj && cJSON_IsString(error_obj))
+                    ? error_obj->valuestring
+                    : "Unknown error";
+                const char *tool_name = results[i].tool_name ? results[i].tool_name : "tool";
+
+                char error_display[512];
+                snprintf(error_display, sizeof(error_display), "%s failed: %s", tool_name, error_msg);
+                ui_show_error(tui, queue, error_display);
+            }
+        }
+
         if (interrupted) {
             if (!tui && !queue) {
                 if (tool_spinner) {
@@ -3173,52 +3403,29 @@ static void process_response(ConversationState *state,
 
             free(threads);
             free(args);
-            // results will be freed when conversation state is cleaned up
-            return;  // Exit without continuing conversation
+            free_internal_contents(results, tool_count);
+            return;
         }
 
-        // Check if any tools had errors and display error messages
-        int has_error = 0;
-        for (int i = 0; i < tool_count; i++) {
-            if (results[i].is_error) {
-                has_error = 1;
-
-                // Extract and display the error message
-                cJSON *error_obj = cJSON_GetObjectItem(results[i].tool_output, "error");
-                const char *error_msg = error_obj && cJSON_IsString(error_obj)
-                    ? error_obj->valuestring
-                    : "Unknown error";
-
-                // Get tool name for better context
-                const char *tool_name = results[i].tool_name ? results[i].tool_name : "tool";
-
-                // Display error next to/below the tool execution
-                char error_display[512];
-                snprintf(error_display, sizeof(error_display), "%s failed: %s", tool_name, error_msg);
-                ui_show_error(tui, queue, error_display);
-            }
-        }
-
-        // Clear status on success, show message on error
         if (!tui && !queue) {
-            printf("DEBUG: has_error = %d\n", has_error);
-            if (has_error) {
-                spinner_stop(tool_spinner, "Tool execution completed with errors", 0);
-            } else {
-                printf("DEBUG: Stopping tool spinner with success message\n");
-                spinner_stop(tool_spinner, "Tool execution completed successfully", 1);
+            if (tool_spinner) {
+                if (has_error) {
+                    spinner_stop(tool_spinner, "Tool execution completed with errors", 0);
+                } else {
+                    spinner_stop(tool_spinner, "Tool execution completed successfully", 1);
+                }
             }
         } else {
             if (has_error) {
                 ui_set_status(tui, queue, "Tool execution completed with errors");
             } else {
-                ui_set_status(tui, queue, "");  // Clear status on success
+                ui_set_status(tui, queue, "");
             }
         }
+
         free(threads);
         free(args);
 
-        // Add tool results and continue conversation
         add_tool_results(state, results, tool_count);
 
         Spinner *followup_spinner = NULL;
@@ -3228,23 +3435,20 @@ static void process_response(ConversationState *state,
             ui_set_status(tui, queue, "Processing tool results...");
         }
         ApiResponse *next_response = call_api(state);
-        // Clear status after API call completes
         if (!tui && !queue) {
-            spinner_stop(followup_spinner, NULL, 1);  // Clear without message
+            spinner_stop(followup_spinner, NULL, 1);
         } else {
-            ui_set_status(tui, queue, "");  // Clear status
+            ui_set_status(tui, queue, "");
         }
+
         if (next_response) {
-            process_response(state, next_response, tui, queue);
+            process_response(state, next_response, tui, queue, worker_ctx);
             api_response_free(next_response);
         } else {
-            // API call failed - show error to user
             const char *error_msg = "API call failed after executing tools. Check logs for details.";
             ui_show_error(tui, queue, error_msg);
             LOG_ERROR("API call returned NULL after tool execution");
         }
-
-        // results is now owned by the conversation state and will be freed upon state cleanup
 
         clock_gettime(CLOCK_MONOTONIC, &proc_end);
         long proc_ms = (proc_end.tv_sec - proc_start.tv_sec) * 1000 +
@@ -3286,7 +3490,7 @@ static void ai_worker_handle_instruction(AIWorkerContext *ctx, const AIInstructi
         return;
     }
 
-    process_response(ctx->state, response, NULL, ctx->tui_queue);
+    process_response(ctx->state, response, NULL, ctx->tui_queue, ctx);
     api_response_free(response);
 }
 
@@ -3417,7 +3621,7 @@ static int submit_input_callback(const char *input, void *user_data) {
             return 0;
         }
 
-        process_response(state, response, tui, queue);
+        process_response(state, response, tui, queue, NULL);
         api_response_free(response);
     }
 

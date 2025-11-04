@@ -35,6 +35,18 @@ struct AIWorkerContext {
 };
 
 /**
+ * Information about a completed tool execution.
+ * Used to stream progress updates back to the TUI.
+ */
+typedef struct {
+    const char *tool_name;      /* Tool identifier (not owned) */
+    const cJSON *result;        /* Tool result payload (not owned) */
+    int is_error;               /* Non-zero if tool completed with error */
+    int completed;              /* Number of tools finished so far */
+    int total;                  /* Total number of tools launched */
+} ToolCompletion;
+
+/**
  * Start the worker thread.
  *
  * @param ctx           Context structure to initialize
@@ -64,5 +76,13 @@ void ai_worker_stop(AIWorkerContext *ctx);
  * @return 0 on success, -1 on error
  */
 int ai_worker_submit(AIWorkerContext *ctx, const char *text);
+
+/**
+ * Post a status update for a completed tool.
+ *
+ * @param ctx          Worker context (must own a valid TUI queue)
+ * @param completion   Completion details (fields are not copied)
+ */
+void ai_worker_handle_tool_completion(AIWorkerContext *ctx, const ToolCompletion *completion);
 
 #endif /* AI_WORKER_H */

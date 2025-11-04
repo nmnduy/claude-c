@@ -5,6 +5,7 @@
 #include "ai_worker.h"
 #include "logger.h"
 #include <stdlib.h>
+#include <stdio.h>
 
 static void* ai_worker_thread_main(void *arg) {
     AIWorkerContext *ctx = (AIWorkerContext *)arg;
@@ -86,4 +87,33 @@ int ai_worker_submit(AIWorkerContext *ctx, const char *text) {
         return -1;
     }
     return enqueue_instruction(ctx->instruction_queue, text, ctx->state);
+}
+
+void ai_worker_handle_tool_completion(AIWorkerContext *ctx, const ToolCompletion *completion) {
+    if (!ctx || !completion) {
+        return;
+    }
+    if (!ctx->tui_queue) {
+        return;
+    }
+
+    const char *tool_name = completion->tool_name ? completion->tool_name : "tool";
+    const char *status_word = completion->is_error ? "failed" : "completed";
+
+    char status[256];
+    if (completion->total > 0) {
+        snprintf(status, sizeof(status),
+                 "Tool %s %s (%d/%d)",
+                 tool_name,
+                 status_word,
+                 completion->completed,
+                 completion->total);
+    } else {
+        snprintf(status, sizeof(status),
+                 "Tool %s %s",
+                 tool_name,
+                 status_word);
+    }
+
+    post_tui_message(ctx->tui_queue, TUI_MSG_STATUS, status);
 }
