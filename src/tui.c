@@ -690,6 +690,12 @@ struct TUIInputBuffer {
     int paste_mode;          // 1 when in bracketed paste, 0 otherwise
     struct timespec last_input_time;  // Track timing for paste detection
     int rapid_input_count;   // Count of rapid inputs (heuristic for paste)
+    // Paste content tracking
+    char *paste_content;     // Actual pasted content (kept separate from visible buffer)
+    size_t paste_capacity;   // Capacity of paste buffer
+    size_t paste_content_len; // Length of pasted content
+    int paste_start_pos;     // Position where paste started in buffer
+    int paste_placeholder_len; // Length of placeholder in buffer
 };
 
 // Calculate how many visual lines are needed for the current buffer
@@ -842,6 +848,13 @@ static int input_init(TUIState *tui) {
     input->paste_mode = 0;
     input->rapid_input_count = 0;
     clock_gettime(CLOCK_MONOTONIC, &input->last_input_time);
+    
+    // Initialize paste tracking
+    input->paste_content = NULL;
+    input->paste_capacity = 0;
+    input->paste_content_len = 0;
+    input->paste_start_pos = 0;
+    input->paste_placeholder_len = 0;
 
     // Get window dimensions
     int h, w;
@@ -864,6 +877,11 @@ static void input_free(TUIState *tui) {
     tui->input_buffer->capacity = 0;
     tui->input_buffer->length = 0;
     tui->input_buffer->cursor = 0;
+    
+    free(tui->input_buffer->paste_content);
+    tui->input_buffer->paste_content = NULL;
+    tui->input_buffer->paste_capacity = 0;
+    tui->input_buffer->paste_content_len = 0;
 
     free(tui->input_buffer);
     tui->input_buffer = NULL;
@@ -873,6 +891,29 @@ static void input_free(TUIState *tui) {
 static int input_insert_char(TUIInputBuffer *input, const unsigned char *utf8_char, int char_bytes) {
     if (!input) {
         return -1;
+    }
+
+    // If in paste mode, accumulate in paste buffer
+    if (input->paste_mode && input->paste_content) {
+        // Expand paste buffer if needed
+        if (input->paste_content_len + (size_t)char_bytes >= input->paste_capacity) {
+            size_t new_capacity = input->paste_capacity * 2;
+            char *new_buffer = realloc(input->paste_content, new_capacity);
+            if (!new_buffer) {
+                LOG_ERROR("[TUI] Failed to expand paste buffer");
+                return -1;
+            }
+            input->paste_content = new_buffer;
+            input->paste_capacity = new_capacity;
+        }
+        
+        // Append to paste buffer
+        for (int i = 0; i < char_bytes; i++) {
+            input->paste_content[input->paste_content_len++] = (char)utf8_char[i];
+        }
+        
+        // Don't insert into visible buffer during paste - we'll add placeholder at end
+        return 0;
     }
 
     if (input->length + char_bytes >= (int)input->capacity - 1) {
@@ -972,6 +1013,76 @@ static int input_delete_word_forward(TUIInputBuffer *input) {
     }
 
     return delete_count;
+}
+
+// Threshold for when to use placeholder vs direct insertion (characters)
+#define PASTE_PLACEHOLDER_THRESHOLD 200
+
+// Insert paste content or placeholder into visible buffer
+static void input_finalize_paste(TUIInputBuffer *input) {
+    if (!input || !input->paste_content || input->paste_content_len == 0) {
+        return;
+    }
+    
+    int insert_pos = input->paste_start_pos;
+    
+    // For small pastes, insert directly without placeholder
+    if (input->paste_content_len < PASTE_PLACEHOLDER_THRESHOLD) {
+        // Check if we have space in buffer
+        if (input->length + (int)input->paste_content_len >= (int)input->capacity - 1) {
+            LOG_WARN("[TUI] Not enough space for pasted content (%zu chars)", input->paste_content_len);
+            return;
+        }
+        
+        int paste_len = (int)input->paste_content_len;
+        
+        // Make space for paste content
+        memmove(&input->buffer[insert_pos + paste_len],
+                &input->buffer[insert_pos],
+                (size_t)(input->length - insert_pos + 1));
+        
+        // Copy paste content directly
+        memcpy(&input->buffer[insert_pos], input->paste_content, input->paste_content_len);
+        
+        input->length += paste_len;
+        input->cursor = insert_pos + paste_len;
+        input->paste_placeholder_len = 0;  // No placeholder used
+        
+        LOG_DEBUG("[TUI] Inserted paste content directly at position %d (%zu chars)", 
+                  insert_pos, input->paste_content_len);
+        return;
+    }
+    
+    // For large pastes, use placeholder
+    char placeholder[128];
+    int placeholder_len = snprintf(placeholder, sizeof(placeholder), 
+                                   "[%zu characters pasted]", 
+                                   input->paste_content_len);
+    
+    if (placeholder_len >= (int)sizeof(placeholder)) {
+        placeholder_len = sizeof(placeholder) - 1;
+    }
+    
+    // Check if we have space in buffer
+    if (input->length + placeholder_len >= (int)input->capacity - 1) {
+        LOG_WARN("[TUI] Not enough space for paste placeholder");
+        return;
+    }
+    
+    // Make space for placeholder
+    memmove(&input->buffer[insert_pos + placeholder_len],
+            &input->buffer[insert_pos],
+            (size_t)(input->length - insert_pos + 1));
+    
+    // Copy placeholder
+    memcpy(&input->buffer[insert_pos], placeholder, (size_t)placeholder_len);
+    
+    input->length += placeholder_len;
+    input->cursor = insert_pos + placeholder_len;
+    input->paste_placeholder_len = placeholder_len;
+    
+    LOG_DEBUG("[TUI] Inserted paste placeholder at position %d: %s", 
+              insert_pos, placeholder);
 }
 
 // Redraw the input window
@@ -1564,6 +1675,52 @@ int tui_poll_input(TUIState *tui) {
     return ch;
 }
 
+// Check if paste mode should be exited due to timeout
+// Returns 1 if paste ended, 0 otherwise
+static int check_paste_timeout(TUIState *tui, const char *prompt) {
+    if (!tui || !tui->input_buffer) {
+        return 0;
+    }
+    
+    TUIInputBuffer *input = tui->input_buffer;
+    
+    // Only check if we're in paste mode
+    if (!input->paste_mode || input->rapid_input_count == 0) {
+        return 0;
+    }
+    
+    struct timespec current_time;
+    clock_gettime(CLOCK_MONOTONIC, &current_time);
+    
+    long elapsed_ms = (current_time.tv_sec - input->last_input_time.tv_sec) * 1000 +
+                      (current_time.tv_nsec - input->last_input_time.tv_nsec) / 1000000;
+    
+    // Exit paste mode if there's been a 500ms pause
+    if (elapsed_ms > 500) {
+        input->paste_mode = 0;
+        input->rapid_input_count = 0;
+        LOG_DEBUG("[TUI] Paste timeout detected - exiting paste mode (heuristic), pasted %zu characters", 
+                 input->paste_content_len);
+        
+        // For heuristic mode, remove the already-inserted characters
+        int chars_to_remove = input->cursor - input->paste_start_pos;
+        if (chars_to_remove > 0) {
+            memmove(&input->buffer[input->paste_start_pos],
+                    &input->buffer[input->cursor],
+                    (size_t)(input->length - input->cursor + 1));
+            input->length -= chars_to_remove;
+            input->cursor = input->paste_start_pos;
+        }
+        
+        // Insert placeholder or content directly
+        input_finalize_paste(input);
+        input_redraw(tui, prompt);
+        return 1;
+    }
+    
+    return 0;
+}
+
 int tui_process_input_char(TUIState *tui, int ch, const char *prompt) {
     if (!tui || !tui->is_initialized || !tui->input_win) {
         return -1;
@@ -1586,17 +1743,41 @@ int tui_process_input_char(TUIState *tui, int ch, const char *prompt) {
         input->rapid_input_count++;
         if (input->rapid_input_count >= 5 && !input->paste_mode) {
             input->paste_mode = 1;
-            LOG_DEBUG("[TUI] Rapid input detected - entering paste mode (heuristic)");
+            
+            // For heuristic mode, we've already inserted some characters
+            // Need to capture what we've inserted so far
+            int chars_already_inserted = input->rapid_input_count;
+            input->paste_start_pos = input->cursor - chars_already_inserted;
+            if (input->paste_start_pos < 0) input->paste_start_pos = 0;
+            
+            // Allocate paste buffer if not already allocated
+            if (!input->paste_content) {
+                input->paste_capacity = 4096;
+                input->paste_content = malloc(input->paste_capacity);
+                if (!input->paste_content) {
+                    LOG_ERROR("[TUI] Failed to allocate paste buffer");
+                    input->paste_mode = 0;
+                    return 0;
+                }
+            }
+            
+            // Copy the already-inserted characters to paste buffer
+            input->paste_content_len = (size_t)chars_already_inserted;
+            if (input->paste_content_len > 0) {
+                memcpy(input->paste_content, 
+                       &input->buffer[input->paste_start_pos], 
+                       input->paste_content_len);
+            }
+            
+            LOG_DEBUG("[TUI] Rapid input detected - entering paste mode (heuristic) at position %d, captured %d chars", 
+                     input->paste_start_pos, chars_already_inserted);
         }
     } else if (elapsed_ms > 500) {
-        // Reset if there's a pause
-        if (input->paste_mode && input->rapid_input_count > 0) {
-            input->paste_mode = 0;
-            input->rapid_input_count = 0;
-            LOG_DEBUG("[TUI] Pause detected - exiting paste mode (heuristic)");
-        } else {
+        // Reset rapid input counter if there's a pause (but not in paste mode)
+        if (!input->paste_mode) {
             input->rapid_input_count = 0;
         }
+        // Paste mode timeout is handled in check_paste_timeout() called from main loop
     }
     
     input->last_input_time = current_time;
@@ -1675,14 +1856,21 @@ int tui_process_input_char(TUIState *tui, int ch, const char *prompt) {
     } else if (ch == 10) {  // Ctrl+J: insert newline
         unsigned char newline = '\n';
         if (input_insert_char(input, &newline, 1) == 0) {
-            input_redraw(tui, prompt);
+            // Skip redraw during paste mode - will redraw once at end
+            if (!input->paste_mode) {
+                input_redraw(tui, prompt);
+            }
         }
     } else if (ch == 13) {  // Enter: submit or newline
         if (input->paste_mode) {
             // In paste mode, Enter inserts newline instead of submitting
             unsigned char newline = '\n';
             if (input_insert_char(input, &newline, 1) == 0) {
-                input_redraw(tui, prompt);
+                // Skip redraw during paste mode - will redraw once at end
+                // (This shouldn't happen since we're in paste mode, but defensive)
+                if (!input->paste_mode) {
+                    input_redraw(tui, prompt);
+                }
             }
             return 0;
         } else {
@@ -1719,13 +1907,29 @@ int tui_process_input_char(TUIState *tui, int ch, const char *prompt) {
             if (ch1 == '2' && ch2 == '0' && ch3 == '0' && ch4 == '~') {
                 // Bracketed paste start
                 input->paste_mode = 1;
-                LOG_DEBUG("[TUI] Bracketed paste mode started");
+                input->paste_start_pos = input->cursor;
+                input->paste_content_len = 0;
+                // Allocate paste buffer if not already allocated
+                if (!input->paste_content) {
+                    input->paste_capacity = 4096;
+                    input->paste_content = malloc(input->paste_capacity);
+                    if (!input->paste_content) {
+                        LOG_ERROR("[TUI] Failed to allocate paste buffer");
+                        input->paste_mode = 0;
+                        return 0;
+                    }
+                }
+                LOG_DEBUG("[TUI] Bracketed paste mode started at position %d", input->paste_start_pos);
                 return 0;
             } else if (ch1 == '2' && ch2 == '0' && ch3 == '1' && ch4 == '~') {
                 // Bracketed paste end
                 input->paste_mode = 0;
-                LOG_DEBUG("[TUI] Bracketed paste mode ended");
-                input_redraw(tui, prompt);  // Redraw to show all pasted content
+                LOG_DEBUG("[TUI] Bracketed paste mode ended, pasted %zu characters", 
+                         input->paste_content_len);
+                
+                // Insert placeholder or content directly
+                input_finalize_paste(input);
+                input_redraw(tui, prompt);
                 return 0;
             }
             // Other CSI sequences - ignore
@@ -1755,12 +1959,18 @@ int tui_process_input_char(TUIState *tui, int ch, const char *prompt) {
     } else if (ch >= 32 && ch < 127) {  // Printable ASCII
         unsigned char c = (unsigned char)ch;
         if (input_insert_char(input, &c, 1) == 0) {
-            input_redraw(tui, prompt);
+            // Skip redraw during paste mode - will redraw once at end
+            if (!input->paste_mode) {
+                input_redraw(tui, prompt);
+            }
         }
     } else if (ch >= 128) {  // UTF-8 multibyte character (basic support)
         unsigned char c = (unsigned char)ch;
         if (input_insert_char(input, &c, 1) == 0) {
-            input_redraw(tui, prompt);
+            // Skip redraw during paste mode - will redraw once at end
+            if (!input->paste_mode) {
+                input_redraw(tui, prompt);
+            }
         }
     }
 
@@ -1771,7 +1981,60 @@ const char* tui_get_input_buffer(TUIState *tui) {
     if (!tui || !tui->input_buffer || tui->input_buffer->length == 0) {
         return NULL;
     }
-    return tui->input_buffer->buffer;
+    
+    TUIInputBuffer *input = tui->input_buffer;
+    
+    // If there's no paste content, return buffer as-is
+    if (!input->paste_content || input->paste_content_len == 0 || 
+        input->paste_placeholder_len == 0) {
+        return input->buffer;
+    }
+    
+    // We have paste content that needs to be reconstructed
+    // Buffer structure: [text before placeholder][placeholder][text after placeholder]
+    // We need: [text before placeholder][actual paste content][text after placeholder]
+    
+    // Calculate sizes
+    size_t before_len = (size_t)input->paste_start_pos;
+    size_t after_start = (size_t)(input->paste_start_pos + input->paste_placeholder_len);
+    size_t after_len = (size_t)input->length - after_start;
+    size_t total_len = before_len + input->paste_content_len + after_len;
+    
+    // Allocate temporary buffer for reconstruction
+    // Use a static buffer that grows as needed (freed on next call or cleanup)
+    static char *reconstructed = NULL;
+    static size_t reconstructed_capacity = 0;
+    
+    if (total_len + 1 > reconstructed_capacity) {
+        reconstructed_capacity = total_len + 1024;  // Extra space
+        char *new_buf = realloc(reconstructed, reconstructed_capacity);
+        if (!new_buf) {
+            LOG_ERROR("[TUI] Failed to allocate buffer for paste reconstruction");
+            return input->buffer;  // Fallback to placeholder version
+        }
+        reconstructed = new_buf;
+    }
+    
+    // Reconstruct: before + paste_content + after
+    char *dest = reconstructed;
+    if (before_len > 0) {
+        memcpy(dest, input->buffer, before_len);
+        dest += before_len;
+    }
+    if (input->paste_content_len > 0) {
+        memcpy(dest, input->paste_content, input->paste_content_len);
+        dest += input->paste_content_len;
+    }
+    if (after_len > 0) {
+        memcpy(dest, &input->buffer[after_start], after_len);
+        dest += after_len;
+    }
+    *dest = '\0';
+    
+    LOG_DEBUG("[TUI] Reconstructed input with paste: before=%zu, paste=%zu, after=%zu, total=%zu",
+              before_len, input->paste_content_len, after_len, total_len);
+    
+    return reconstructed;
 }
 
 void tui_clear_input_buffer(TUIState *tui) {
@@ -1786,6 +2049,11 @@ void tui_clear_input_buffer(TUIState *tui) {
     tui->input_buffer->line_scroll_offset = 0;
     tui->input_buffer->paste_mode = 0;  // Reset paste mode on clear
     tui->input_buffer->rapid_input_count = 0;
+    
+    // Clear paste tracking
+    tui->input_buffer->paste_content_len = 0;
+    tui->input_buffer->paste_start_pos = 0;
+    tui->input_buffer->paste_placeholder_len = 0;
 }
 
 void tui_redraw_input(TUIState *tui, const char *prompt) {
@@ -1960,9 +2228,21 @@ int tui_event_loop(TUIState *tui, const char *prompt,
             tui_redraw_input(tui, prompt);
         }
         
-        // 2. Poll for input (non-blocking)
-        int ch = tui_poll_input(tui);
-        if (ch != ERR) {
+        // 2. Check for paste timeout (even when no input arrives)
+        check_paste_timeout(tui, prompt);
+        
+        // 3. Poll for input (non-blocking)
+        // If in paste mode, drain all available input quickly
+        int chars_processed = 0;
+        int max_chars_per_frame = tui->input_buffer && tui->input_buffer->paste_mode ? 10000 : 1;
+        
+        while (chars_processed < max_chars_per_frame) {
+            int ch = tui_poll_input(tui);
+            if (ch == ERR) {
+                break;  // No more input available
+            }
+            
+            chars_processed++;
             int result = tui_process_input_char(tui, ch, prompt);
             if (result == 1) {
                 // Enter pressed - submit input
@@ -1982,14 +2262,25 @@ int tui_event_loop(TUIState *tui, const char *prompt,
                         running = 0;
                     }
                 }
+                break;  // Stop processing after submission
             } else if (result == -1) {
                 // EOF/quit signal
                 LOG_DEBUG("[TUI] Input processing returned EOF/quit");
                 running = 0;
+                break;
+            }
+            
+            // If not in paste mode anymore, stop draining and process one char per frame
+            if (tui->input_buffer && !tui->input_buffer->paste_mode) {
+                break;
             }
         }
         
-        // 3. Process TUI message queue (if provided)
+        if (chars_processed > 1) {
+            LOG_DEBUG("[TUI] Fast-drained %d characters in paste mode", chars_processed);
+        }
+        
+        // 4. Process TUI message queue (if provided)
         if (msg_queue) {
             int messages_processed = process_tui_messages(tui, msg_queue, TUI_MAX_MESSAGES_PER_FRAME);
             if (messages_processed > 0) {
@@ -2001,7 +2292,7 @@ int tui_event_loop(TUIState *tui, const char *prompt,
         // Update spinner animation if active
         status_spinner_tick(tui);
 
-        // 4. Sleep to maintain frame rate
+        // 5. Sleep to maintain frame rate
         struct timespec frame_end;
         clock_gettime(CLOCK_MONOTONIC, &frame_end);
         
