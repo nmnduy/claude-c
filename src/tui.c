@@ -464,9 +464,9 @@ static void input_redraw(const char *prompt) {
     
     // Draw box with accent color if colors are available
     if (has_colors()) {
-        wattron(win, COLOR_PAIR(NCURSES_PAIR_PROMPT));
+        wattron(win, COLOR_PAIR(NCURSES_PAIR_ASSISTANT));
         box(win, 0, 0);
-        wattroff(win, COLOR_PAIR(NCURSES_PAIR_PROMPT));
+        wattroff(win, COLOR_PAIR(NCURSES_PAIR_ASSISTANT));
     } else {
         box(win, 0, 0);
     }
