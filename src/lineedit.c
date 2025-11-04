@@ -445,10 +445,10 @@ static void redraw_input_line_internal(const char *prompt, const char *buffer, i
     // Clear from here down and move to start of line
     printf("\r\033[J");
 
-    // Print prompt and entire buffer once
+    // Print prompt and entire buffer once (using fwrite for performance with large pastes)
     printf("%s", prompt);
-    for (int i = 0; i < buffer_len; i++) {
-        putchar(buffer[i]);  // Prints \n naturally
+    if (buffer_len > 0) {
+        fwrite(buffer, 1, (size_t)buffer_len, stdout);
     }
 
     // Calculate cursor position accounting for wrapping
