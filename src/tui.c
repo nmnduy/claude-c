@@ -28,6 +28,7 @@
 #define INPUT_BUFFER_SIZE 8192
 #define INPUT_WIN_MIN_HEIGHT 3  // Min height for input window (1 line + 2 borders)
 #define INPUT_WIN_MAX_HEIGHT 5  // Max height for input window (3 lines + 2 borders)
+#define CONV_WIN_PADDING 1      // Lines of padding between conv window and input window
 
 // Global spinner for TUI status updates
 static Spinner *g_tui_spinner = NULL;
@@ -148,6 +149,154 @@ void tui_clear_resize_flag(void) {
     g_resize_flag = 0;
 }
 
+// Helper: Add a conversation entry to the TUI state
+static int add_conversation_entry(TUIState *tui, const char *prefix, const char *text, TUIColorPair color_pair) {
+    if (!tui) return -1;
+
+    // Ensure capacity
+    if (tui->entries_count >= tui->entries_capacity) {
+        int new_capacity = tui->entries_capacity == 0 ? INITIAL_CONV_CAPACITY : tui->entries_capacity * 2;
+        ConversationEntry *new_entries = realloc(tui->entries, (size_t)new_capacity * sizeof(ConversationEntry));
+        if (!new_entries) {
+            LOG_ERROR("[TUI] Failed to allocate memory for conversation entries");
+            return -1;
+        }
+        tui->entries = new_entries;
+        tui->entries_capacity = new_capacity;
+    }
+
+    // Allocate and copy strings
+    ConversationEntry *entry = &tui->entries[tui->entries_count];
+    entry->prefix = prefix ? strdup(prefix) : NULL;
+    entry->text = text ? strdup(text) : NULL;
+    entry->color_pair = color_pair;
+
+    if ((prefix && !entry->prefix) || (text && !entry->text)) {
+        free(entry->prefix);
+        free(entry->text);
+        LOG_ERROR("[TUI] Failed to allocate memory for conversation entry strings");
+        return -1;
+    }
+
+    tui->entries_count++;
+    return 0;
+}
+
+// Helper: Free all conversation entries
+static void free_conversation_entries(TUIState *tui) {
+    if (!tui || !tui->entries) return;
+
+    for (int i = 0; i < tui->entries_count; i++) {
+        free(tui->entries[i].prefix);
+        free(tui->entries[i].text);
+    }
+    free(tui->entries);
+    tui->entries = NULL;
+    tui->entries_count = 0;
+    tui->entries_capacity = 0;
+}
+
+// Helper: Render conversation window (simple version - one entry per line)
+static void render_conversation_window(TUIState *tui) {
+    if (!tui || !tui->conv_win) return;
+
+    werase(tui->conv_win);
+
+    int max_y, max_x;
+    getmaxyx(tui->conv_win, max_y, max_x);
+
+    // Simple rendering: display entries from scroll offset
+    int start_entry = tui->conv_scroll_offset;
+    if (start_entry < 0) start_entry = 0;
+    if (start_entry >= tui->entries_count) start_entry = tui->entries_count - max_y;
+    if (start_entry < 0) start_entry = 0;
+
+    int y = 0;
+    for (int i = start_entry; i < tui->entries_count && y < max_y; i++) {
+        ConversationEntry *entry = &tui->entries[i];
+        
+        // Map TUIColorPair to ncurses color pair
+        int prefix_pair = NCURSES_PAIR_FOREGROUND;
+        switch (entry->color_pair) {
+            case COLOR_PAIR_DEFAULT:
+            case COLOR_PAIR_FOREGROUND:
+                prefix_pair = NCURSES_PAIR_FOREGROUND;
+                break;
+            case COLOR_PAIR_USER:
+                prefix_pair = NCURSES_PAIR_USER;
+                break;
+            case COLOR_PAIR_ASSISTANT:
+                prefix_pair = NCURSES_PAIR_ASSISTANT;
+                break;
+            case COLOR_PAIR_TOOL:
+            case COLOR_PAIR_STATUS:
+                prefix_pair = NCURSES_PAIR_STATUS;
+                break;
+            case COLOR_PAIR_ERROR:
+                prefix_pair = NCURSES_PAIR_ERROR;
+                break;
+            case COLOR_PAIR_PROMPT:
+                prefix_pair = NCURSES_PAIR_PROMPT;
+                break;
+        }
+
+        // Move to start of line
+        wmove(tui->conv_win, y, 0);
+        
+        // Print prefix with color
+        if (entry->prefix) {
+            if (has_colors()) {
+                wattron(tui->conv_win, COLOR_PAIR(prefix_pair) | A_BOLD);
+            }
+            wprintw(tui->conv_win, "%s", entry->prefix);
+            if (has_colors()) {
+                wattroff(tui->conv_win, COLOR_PAIR(prefix_pair) | A_BOLD);
+            }
+        }
+
+        // Print text with foreground color
+        if (entry->text) {
+            if (has_colors()) {
+                wattron(tui->conv_win, COLOR_PAIR(NCURSES_PAIR_FOREGROUND));
+            }
+            
+            // Add space between prefix and text if both exist
+            if (entry->prefix) {
+                wprintw(tui->conv_win, " ");
+            }
+            
+            // Print text, truncating if too long
+            int remaining = max_x - (entry->prefix ? (int)strlen(entry->prefix) + 1 : 0);
+            if (remaining > 0) {
+                // Simple truncation - print up to remaining chars
+                int text_len = (int)strlen(entry->text);
+                if (text_len <= remaining) {
+                    wprintw(tui->conv_win, "%s", entry->text);
+                } else {
+                    // Print truncated with ellipsis
+                    char truncated[4096];
+                    int copy_len = remaining - 3;  // Leave room for "..."
+                    if (copy_len < 0) copy_len = 0;
+                    if (copy_len > (int)sizeof(truncated) - 4) copy_len = (int)sizeof(truncated) - 4;
+                    
+                    strncpy(truncated, entry->text, (size_t)copy_len);
+                    truncated[copy_len] = '\0';
+                    strcat(truncated, "...");
+                    wprintw(tui->conv_win, "%s", truncated);
+                }
+            }
+            
+            if (has_colors()) {
+                wattroff(tui->conv_win, COLOR_PAIR(NCURSES_PAIR_FOREGROUND));
+            }
+        }
+
+        y++;
+    }
+
+    wrefresh(tui->conv_win);
+}
+
 // UTF-8 helper functions (from lineedit.c)
 static int utf8_char_length(unsigned char first_byte) {
     if ((first_byte & 0x80) == 0) return 1;  // 0xxxxxxx
@@ -248,15 +397,36 @@ static int resize_input_window(TUIState *tui, int desired_lines) {
         return 0;
     }
 
-    // Delete old window
+    // Get screen dimensions
+    int max_y, max_x;
+    getmaxyx(stdscr, max_y, max_x);
+    
+    // Update input height
+    tui->input_height = new_window_height;
+    
+    // Recalculate conversation window height
+    int new_conv_height = max_y - new_window_height - CONV_WIN_PADDING;
+    if (new_conv_height < 5) new_conv_height = 5;
+
+    // Resize conversation window if height changed
+    if (new_conv_height != tui->conv_height) {
+        tui->conv_height = new_conv_height;
+        if (tui->conv_win) {
+            delwin(tui->conv_win);
+            tui->conv_win = newwin(new_conv_height, max_x, 0, 0);
+            if (tui->conv_win) {
+                scrollok(tui->conv_win, TRUE);
+                render_conversation_window(tui);
+            }
+        }
+    }
+
+    // Delete old input window
     if (tui->input_win) {
         delwin(tui->input_win);
     }
 
-    // Create new window with adjusted height
-    int max_y, max_x;
-    getmaxyx(stdscr, max_y, max_x);
-    tui->input_height = new_window_height;
+    // Create new input window with adjusted height
     tui->input_win = newwin(new_window_height, max_x, max_y - new_window_height, 0);
 
     if (!tui->input_win) {
@@ -589,7 +759,7 @@ int tui_init(TUIState *tui) {
     // Initialize colors from colorscheme
     init_ncurses_colors();
 
-    // Create input window at bottom of screen
+    // Get screen dimensions
     int max_y, max_x;
     getmaxyx(stdscr, max_y, max_x);
 
@@ -597,15 +767,35 @@ int tui_init(TUIState *tui) {
     tui->screen_width = max_x;
     tui->input_height = INPUT_WIN_MIN_HEIGHT;  // Start with minimum height
 
-    // Create input window (start with minimum height)
+    // Calculate conversation window height (screen - input - padding)
+    tui->conv_height = max_y - INPUT_WIN_MIN_HEIGHT - CONV_WIN_PADDING;
+    if (tui->conv_height < 5) tui->conv_height = 5;  // Minimum height
+
+    // Create conversation window (top of screen)
+    tui->conv_win = newwin(tui->conv_height, max_x, 0, 0);
+    if (!tui->conv_win) {
+        endwin();
+        return -1;
+    }
+    scrollok(tui->conv_win, TRUE);
+
+    // Create input window (bottom of screen)
     tui->input_win = newwin(INPUT_WIN_MIN_HEIGHT, max_x, max_y - INPUT_WIN_MIN_HEIGHT, 0);
     if (!tui->input_win) {
+        delwin(tui->conv_win);
         endwin();
         return -1;
     }
 
+    // Initialize conversation entries
+    tui->entries = NULL;
+    tui->entries_count = 0;
+    tui->entries_capacity = 0;
+    tui->conv_scroll_offset = 0;
+
     // Initialize input buffer
     if (input_init(tui->input_win) != 0) {
+        delwin(tui->conv_win);
         delwin(tui->input_win);
         endwin();
         return -1;
@@ -634,10 +824,17 @@ void tui_cleanup(TUIState *tui) {
         g_tui_spinner = NULL;
     }
 
+    // Free conversation entries
+    free_conversation_entries(tui);
+
     // Free input state
     input_free();
 
     // Destroy windows
+    if (tui->conv_win) {
+        delwin(tui->conv_win);
+        tui->conv_win = NULL;
+    }
     if (tui->input_win) {
         delwin(tui->input_win);
         tui->input_win = NULL;
@@ -656,127 +853,26 @@ void tui_cleanup(TUIState *tui) {
 void tui_add_conversation_line(TUIState *tui, const char *prefix, const char *text, TUIColorPair color_pair) {
     if (!tui || !tui->is_initialized) return;
 
-    // Stop any running spinner before printing conversation lines
+    // Stop any running spinner before adding conversation lines
     if (g_tui_spinner) {
         spinner_stop(g_tui_spinner, NULL, 1);
         g_tui_spinner = NULL;
     }
 
-    // Move to main screen (above input window)
-    // We'll just print to stdout, letting it scroll naturally
-    // This preserves terminal scrollback
-
-    // Get colors from colorscheme or fall back to centralized defaults
-    const char *prefix_color_start = "";
-    const char *text_color_start = "";
-    const char *color_end = ANSI_RESET;
-    char prefix_color_code[32];
-    char text_color_code[32];
-
-    // Use foreground color for main text, accent colors only for role names/prefixes
-    switch (color_pair) {
-        case COLOR_PAIR_DEFAULT:
-        case COLOR_PAIR_FOREGROUND:
-            if (get_colorscheme_color(COLORSCHEME_FOREGROUND, text_color_code, sizeof(text_color_code)) == 0) {
-                text_color_start = text_color_code;
-            } else {
-                text_color_start = ANSI_FALLBACK_FOREGROUND;
-            }
-            prefix_color_start = text_color_start;
-            break;
-
-        case COLOR_PAIR_USER:
-            if (get_colorscheme_color(COLORSCHEME_USER, prefix_color_code, sizeof(prefix_color_code)) == 0) {
-                prefix_color_start = prefix_color_code;
-            } else {
-                prefix_color_start = ANSI_FALLBACK_USER;
-            }
-            if (get_colorscheme_color(COLORSCHEME_FOREGROUND, text_color_code, sizeof(text_color_code)) == 0) {
-                text_color_start = text_color_code;
-            } else {
-                text_color_start = ANSI_FALLBACK_FOREGROUND;
-            }
-            break;
-
-        case COLOR_PAIR_ASSISTANT:
-            if (get_colorscheme_color(COLORSCHEME_ASSISTANT, prefix_color_code, sizeof(prefix_color_code)) == 0) {
-                prefix_color_start = prefix_color_code;
-            } else {
-                prefix_color_start = ANSI_FALLBACK_ASSISTANT;
-            }
-            if (get_colorscheme_color(COLORSCHEME_FOREGROUND, text_color_code, sizeof(text_color_code)) == 0) {
-                text_color_start = text_color_code;
-            } else {
-                text_color_start = ANSI_FALLBACK_FOREGROUND;
-            }
-            break;
-
-        case COLOR_PAIR_TOOL:
-            if (get_colorscheme_color(COLORSCHEME_TOOL, prefix_color_code, sizeof(prefix_color_code)) == 0) {
-                prefix_color_start = prefix_color_code;
-            } else {
-                prefix_color_start = ANSI_FALLBACK_TOOL;
-            }
-            if (get_colorscheme_color(COLORSCHEME_FOREGROUND, text_color_code, sizeof(text_color_code)) == 0) {
-                text_color_start = text_color_code;
-            } else {
-                text_color_start = ANSI_FALLBACK_FOREGROUND;
-            }
-            break;
-
-        case COLOR_PAIR_ERROR:
-            if (get_colorscheme_color(COLORSCHEME_ERROR, prefix_color_code, sizeof(prefix_color_code)) == 0) {
-                prefix_color_start = prefix_color_code;
-            } else {
-                prefix_color_start = ANSI_FALLBACK_ERROR;
-            }
-            if (get_colorscheme_color(COLORSCHEME_FOREGROUND, text_color_code, sizeof(text_color_code)) == 0) {
-                text_color_start = text_color_code;
-            } else {
-                text_color_start = ANSI_FALLBACK_FOREGROUND;
-            }
-            break;
-
-        case COLOR_PAIR_STATUS:
-            if (get_colorscheme_color(COLORSCHEME_STATUS, prefix_color_code, sizeof(prefix_color_code)) == 0) {
-                prefix_color_start = prefix_color_code;
-            } else {
-                prefix_color_start = ANSI_FALLBACK_STATUS;
-            }
-            if (get_colorscheme_color(COLORSCHEME_FOREGROUND, text_color_code, sizeof(text_color_code)) == 0) {
-                text_color_start = text_color_code;
-            } else {
-                text_color_start = ANSI_FALLBACK_FOREGROUND;
-            }
-            break;
-
-        case COLOR_PAIR_PROMPT:
-            if (get_colorscheme_color(COLORSCHEME_USER, prefix_color_code, sizeof(prefix_color_code)) == 0) {
-                prefix_color_start = prefix_color_code;
-            } else {
-                prefix_color_start = ANSI_FALLBACK_USER;
-            }
-            if (get_colorscheme_color(COLORSCHEME_FOREGROUND, text_color_code, sizeof(text_color_code)) == 0) {
-                text_color_start = text_color_code;
-            } else {
-                text_color_start = ANSI_FALLBACK_FOREGROUND;
-            }
-            break;
-
-        default:
-            prefix_color_start = "";
-            text_color_start = "";
-            color_end = "";
-            break;
+    // Add entry to conversation history
+    if (add_conversation_entry(tui, prefix, text, color_pair) != 0) {
+        LOG_ERROR("[TUI] Failed to add conversation entry");
+        return;
     }
 
-    // Print with separate colors for prefix and text (to stdout, above ncurses window)
-    if (prefix) {
-        printf("%s%s%s %s%s%s\n", prefix_color_start, prefix, color_end, text_color_start, text, color_end);
-    } else {
-        printf("%s%s%s\n", text_color_start, text, color_end);
+    // Auto-scroll to bottom (show latest messages)
+    tui->conv_scroll_offset = tui->entries_count - tui->conv_height;
+    if (tui->conv_scroll_offset < 0) {
+        tui->conv_scroll_offset = 0;
     }
-    fflush(stdout);
+
+    // Render the conversation window
+    render_conversation_window(tui);
 
     // Redraw input window to ensure it stays visible
     if (tui->input_win) {
@@ -890,6 +986,18 @@ char* tui_read_input(TUIState *tui, const char *prompt) {
         } else if (ch == KEY_END) {  // End
             g_input_state.cursor = g_input_state.length;
             input_redraw(prompt);
+        } else if (ch == KEY_PPAGE) {  // Page Up: scroll conversation up
+            tui_scroll_conversation(tui, -10);  // Scroll up by 10 lines
+            input_redraw(prompt);
+        } else if (ch == KEY_NPAGE) {  // Page Down: scroll conversation down
+            tui_scroll_conversation(tui, 10);  // Scroll down by 10 lines
+            input_redraw(prompt);
+        } else if (ch == KEY_UP) {  // Up arrow: scroll conversation up (1 line)
+            tui_scroll_conversation(tui, -1);
+            input_redraw(prompt);
+        } else if (ch == KEY_DOWN) {  // Down arrow: scroll conversation down (1 line)
+            tui_scroll_conversation(tui, 1);
+            input_redraw(prompt);
         } else if (ch == 10) {  // Ctrl+J: insert newline
             unsigned char newline = '\n';
             if (input_insert_char(&newline, 1) == 0) {
@@ -952,27 +1060,20 @@ void tui_refresh(TUIState *tui) {
 void tui_clear_conversation(TUIState *tui) {
     if (!tui || !tui->is_initialized) return;
 
-    // Get accent color for status indicator
-    char status_color_code[32];
-    char text_color_code[32];
-    const char *status_color_start;
-    const char *text_color_start;
+    // Free all conversation entries
+    free_conversation_entries(tui);
+    
+    // Reset scroll offset
+    tui->conv_scroll_offset = 0;
 
-    if (get_colorscheme_color(COLORSCHEME_STATUS, status_color_code, sizeof(status_color_code)) == 0) {
-        status_color_start = status_color_code;
-    } else {
-        status_color_start = ANSI_FALLBACK_STATUS;
+    // Clear and refresh the conversation window
+    if (tui->conv_win) {
+        werase(tui->conv_win);
+        wrefresh(tui->conv_win);
     }
 
-    if (get_colorscheme_color(COLORSCHEME_FOREGROUND, text_color_code, sizeof(text_color_code)) == 0) {
-        text_color_start = text_color_code;
-    } else {
-        text_color_start = ANSI_FALLBACK_FOREGROUND;
-    }
-
-    printf("%s[System]%s %sConversation history cleared (kept in terminal scrollback)%s\n",
-           status_color_start, ANSI_RESET, text_color_start, ANSI_RESET);
-    fflush(stdout);
+    // Add a system message indicating the clear
+    tui_add_conversation_line(tui, "[System]", "Conversation history cleared", COLOR_PAIR_STATUS);
 }
 
 void tui_handle_resize(TUIState *tui) {
@@ -989,6 +1090,20 @@ void tui_handle_resize(TUIState *tui) {
     getmaxyx(stdscr, max_y, max_x);
     tui->screen_height = max_y;
     tui->screen_width = max_x;
+
+    // Recalculate conversation window height
+    tui->conv_height = max_y - tui->input_height - CONV_WIN_PADDING;
+    if (tui->conv_height < 5) tui->conv_height = 5;
+
+    // Resize and reposition conversation window
+    if (tui->conv_win) {
+        delwin(tui->conv_win);
+        tui->conv_win = newwin(tui->conv_height, max_x, 0, 0);
+        if (tui->conv_win) {
+            scrollok(tui->conv_win, TRUE);
+            render_conversation_window(tui);
+        }
+    }
 
     // Resize and reposition input window
     if (tui->input_win) {
@@ -1015,32 +1130,20 @@ void tui_handle_resize(TUIState *tui) {
 void tui_show_startup_banner(TUIState *tui, const char *version, const char *model, const char *working_dir) {
     if (!tui || !tui->is_initialized) return;
 
-    // Get accent color for the Claude mascot (assistant color)
-    char mascot_color_code[32];
-    char text_color_code[32];
-    const char *mascot_color_start;
-    const char *text_color_start;
+    // Format banner lines
+    char line1[256];
+    char line2[256];
+    char line3[256];
+    
+    snprintf(line1, sizeof(line1), " ▐▛███▜▌   claude-c v%s", version);
+    snprintf(line2, sizeof(line2), "▝▜█████▛▘  %s", model);
+    snprintf(line3, sizeof(line3), "  ▘▘ ▝▝    %s", working_dir);
 
-    if (get_colorscheme_color(COLORSCHEME_ASSISTANT, mascot_color_code, sizeof(mascot_color_code)) == 0) {
-        mascot_color_start = mascot_color_code;
-    } else {
-        mascot_color_start = ANSI_FALLBACK_BOLD_CYAN;
-    }
-
-    if (get_colorscheme_color(COLORSCHEME_FOREGROUND, text_color_code, sizeof(text_color_code)) == 0) {
-        text_color_start = text_color_code;
-    } else {
-        text_color_start = ANSI_FALLBACK_FOREGROUND;
-    }
-
-    // Print banner (to stdout, above ncurses window)
-    printf("%s", mascot_color_start);
-    printf(" ▐▛███▜▌");
-    printf("%s   claude-c v%s\n", text_color_start, version);
-    printf("%s▝▜█████▛▘%s  %s\n", mascot_color_start, text_color_start, model);
-    printf("%s  ▘▘ ▝▝%s    %s\n", mascot_color_start, text_color_start, working_dir);
-    printf(ANSI_RESET "\n");
-    fflush(stdout);
+    // Add banner lines to conversation window
+    tui_add_conversation_line(tui, NULL, line1, COLOR_PAIR_ASSISTANT);
+    tui_add_conversation_line(tui, NULL, line2, COLOR_PAIR_ASSISTANT);
+    tui_add_conversation_line(tui, NULL, line3, COLOR_PAIR_FOREGROUND);
+    tui_add_conversation_line(tui, NULL, "", COLOR_PAIR_FOREGROUND);  // Blank line
 }
 
 void tui_render_todo_list(TUIState *tui, const TodoList *todo_list) {
@@ -1054,4 +1157,31 @@ void tui_render_todo_list(TUIState *tui, const TodoList *todo_list) {
 
     // Call todo_render function which handles the formatting
     todo_render(todo_list);
+}
+
+void tui_scroll_conversation(TUIState *tui, int direction) {
+    if (!tui || !tui->is_initialized || !tui->conv_win) return;
+
+    // Calculate max scroll offset
+    int max_offset = tui->entries_count - tui->conv_height;
+    if (max_offset < 0) max_offset = 0;
+
+    // Update scroll offset
+    tui->conv_scroll_offset += direction;
+
+    // Clamp to valid range
+    if (tui->conv_scroll_offset < 0) {
+        tui->conv_scroll_offset = 0;
+    } else if (tui->conv_scroll_offset > max_offset) {
+        tui->conv_scroll_offset = max_offset;
+    }
+
+    // Re-render conversation window
+    render_conversation_window(tui);
+
+    // Refresh input window to keep cursor visible
+    if (tui->input_win) {
+        touchwin(tui->input_win);
+        wrefresh(tui->input_win);
+    }
 }

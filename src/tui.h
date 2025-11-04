@@ -28,22 +28,29 @@ typedef enum {
     COLOR_PAIR_PROMPT = 8      // Green for input prompt
 } TUIColorPair;
 
+// Conversation message entry
+typedef struct {
+    char *prefix;            // Role prefix (e.g., "[User]", "[Assistant]")
+    char *text;              // Message text
+    TUIColorPair color_pair; // Color for display
+} ConversationEntry;
+
 // TUI State
 typedef struct {
-    WINDOW *conv_win;        // Unused (kept for compatibility)
+    WINDOW *conv_win;        // Conversation window (top of screen)
     WINDOW *status_win;      // Unused (kept for compatibility)
     WINDOW *input_win;       // Input window at bottom
 
     int screen_height;       // Terminal height
     int screen_width;        // Terminal width
 
-    int conv_height;         // Unused (kept for compatibility)
-    int input_height;        // Height of input window (fixed at 3 lines)
+    int conv_height;         // Height of conversation window
+    int input_height;        // Height of input window (dynamic 3-5 lines)
 
-    char **conv_lines;       // Unused (kept for compatibility)
-    int conv_lines_count;    // Unused (kept for compatibility)
-    int conv_lines_capacity; // Unused (kept for compatibility)
-    int conv_scroll_offset;  // Unused (kept for compatibility)
+    ConversationEntry *entries;    // Array of conversation entries
+    int entries_count;             // Number of entries
+    int entries_capacity;          // Capacity of entries array
+    int conv_scroll_offset;        // Scroll offset (lines from top)
 
     int is_initialized;      // Whether TUI has been set up
 } TUIState;
@@ -94,5 +101,9 @@ void tui_show_startup_banner(TUIState *tui, const char *version, const char *mod
 // Render TODO list panel
 // Shows task list with visual indicators (✓ completed, ⋯ in progress, ○ pending)
 void tui_render_todo_list(TUIState *tui, const TodoList *todo_list);
+
+// Scroll conversation window
+// direction: positive to scroll down, negative to scroll up
+void tui_scroll_conversation(TUIState *tui, int direction);
 
 #endif // TUI_H
