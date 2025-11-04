@@ -202,11 +202,6 @@ static void ui_append_line(TUIState *tui,
     const char *safe_text = text ? text : "";
     const char *safe_prefix = prefix ? prefix : "";
 
-    if (tui) {
-        tui_add_conversation_line(tui, safe_prefix, safe_text, color);
-        return;
-    }
-
     if (queue) {
         size_t prefix_len = safe_prefix[0] ? strlen(safe_prefix) : 0;
         size_t text_len = strlen(safe_text);
@@ -216,80 +211,89 @@ static void ui_append_line(TUIState *tui,
         char *formatted = malloc(total);
         if (!formatted) {
             LOG_ERROR("Failed to allocate memory for TUI message");
-            return;
-        }
-
-        if (prefix_len > 0 && text_len > 0) {
-            snprintf(formatted, total, "%s %s", safe_prefix, safe_text);
-        } else if (prefix_len > 0) {
-            snprintf(formatted, total, "%s", safe_prefix);
+            // Fall through to direct UI/console output
         } else {
-            snprintf(formatted, total, "%s", safe_text);
-        }
-
-        post_tui_message(queue, TUI_MSG_ADD_LINE, formatted);
-        free(formatted);
-        return;
-    }
-
-    if (!tui && !queue) {
-        if (strcmp(safe_prefix, "[Assistant]") == 0) {
-            print_assistant(safe_text);
-            return;
-        }
-
-        if (strncmp(safe_prefix, "[Tool", 5) == 0) {
-            const char *colon = strchr(safe_prefix, ':');
-            const char *close = strrchr(safe_prefix, ']');
-            const char *name_start = NULL;
-            size_t name_len = 0;
-            if (colon) {
-                name_start = colon + 1;
-                if (*name_start == ' ') {
-                    name_start++;
-                }
-                if (close && close > name_start) {
-                    name_len = (size_t)(close - name_start);
-                }
-            }
-
-            char tool_name[128];
-            if (name_len == 0 || name_len >= sizeof(tool_name)) {
-                snprintf(tool_name, sizeof(tool_name), "tool");
+            if (prefix_len > 0 && text_len > 0) {
+                snprintf(formatted, total, "%s %s", safe_prefix, safe_text);
+            } else if (prefix_len > 0) {
+                snprintf(formatted, total, "%s", safe_prefix);
             } else {
-                memcpy(tool_name, name_start, name_len);
-                tool_name[name_len] = '\0';
+                snprintf(formatted, total, "%s", safe_text);
             }
-            print_tool(tool_name, safe_text);
-            return;
-        }
 
-        if (strcmp(safe_prefix, "[Error]") == 0) {
-            print_error(safe_text);
-            return;
-        }
+            if (post_tui_message(queue, TUI_MSG_ADD_LINE, formatted) == 0) {
+                free(formatted);
+                return;
+            }
 
-        if (safe_prefix[0]) {
-            printf("%s %s\n", safe_prefix, safe_text);
-        } else {
-            printf("%s\n", safe_text);
+            LOG_WARN("Failed to enqueue TUI message, falling back to direct render");
+            free(formatted);
         }
-        fflush(stdout);
+    }
+
+    if (tui) {
+        tui_add_conversation_line(tui, safe_prefix, safe_text, color);
         return;
     }
 
+    if (strcmp(safe_prefix, "[Assistant]") == 0) {
+        print_assistant(safe_text);
+        return;
+    }
+
+    if (strncmp(safe_prefix, "[Tool", 5) == 0) {
+        const char *colon = strchr(safe_prefix, ':');
+        const char *close = strrchr(safe_prefix, ']');
+        const char *name_start = NULL;
+        size_t name_len = 0;
+        if (colon) {
+            name_start = colon + 1;
+            if (*name_start == ' ') {
+                name_start++;
+            }
+            if (close && close > name_start) {
+                name_len = (size_t)(close - name_start);
+            }
+        }
+
+        char tool_name[128];
+        if (name_len == 0 || name_len >= sizeof(tool_name)) {
+            snprintf(tool_name, sizeof(tool_name), "tool");
+        } else {
+            memcpy(tool_name, name_start, name_len);
+            tool_name[name_len] = '\0';
+        }
+        print_tool(tool_name, safe_text);
+        return;
+    }
+
+    if (strcmp(safe_prefix, "[Error]") == 0) {
+        print_error(safe_text);
+        return;
+    }
+
+    if (safe_prefix[0]) {
+        printf("%s %s\n", safe_prefix, safe_text);
+    } else {
+        printf("%s\n", safe_text);
+    }
+    fflush(stdout);
+    return;
 }
 
 static void ui_set_status(TUIState *tui,
                           TUIMessageQueue *queue,
                           const char *status_text) {
     const char *safe = status_text ? status_text : "";
+    if (queue) {
+        if (post_tui_message(queue, TUI_MSG_STATUS, safe) == 0) {
+            return;
+        }
+        LOG_WARN("Failed to enqueue status update, falling back to direct render");
+    }
+
     if (tui) {
         tui_update_status(tui, safe);
-        return;
-    }
-    if (queue) {
-        post_tui_message(queue, TUI_MSG_STATUS, safe);
         return;
     }
     if (safe[0] != '\0') {
@@ -301,12 +305,14 @@ static void ui_show_error(TUIState *tui,
                           TUIMessageQueue *queue,
                           const char *error_text) {
     const char *safe = error_text ? error_text : "";
+    if (queue) {
+        if (post_tui_message(queue, TUI_MSG_ERROR, safe) == 0) {
+            return;
+        }
+        LOG_WARN("Failed to enqueue error message, falling back to direct render");
+    }
     if (tui) {
         tui_add_conversation_line(tui, "[Error]", safe, COLOR_PAIR_ERROR);
-        return;
-    }
-    if (queue) {
-        post_tui_message(queue, TUI_MSG_ERROR, safe);
         return;
     }
     print_error(safe);
@@ -3516,6 +3522,7 @@ typedef struct {
     AIWorkerContext *worker;
     AIInstructionQueue *instruction_queue;
     TUIMessageQueue *tui_queue;
+    int instruction_queue_capacity;
 } InteractiveContext;
 
 // Submit callback invoked by the TUI event loop when the user presses Enter
@@ -3598,7 +3605,26 @@ static int submit_input_callback(const char *input, void *user_data) {
         if (ai_worker_submit(worker, input_copy) != 0) {
             ui_show_error(tui, queue, "Failed to queue instruction for processing");
         } else {
-            ui_set_status(tui, queue, "Instruction queued for processing...");
+            if (ctx->instruction_queue) {
+                int depth = ai_queue_depth(ctx->instruction_queue);
+                if (depth > 0) {
+                    char status[128];
+                    if (ctx->instruction_queue_capacity > 0) {
+                        snprintf(status, sizeof(status),
+                                 "Instruction queued (%d/%d pending)",
+                                 depth,
+                                 ctx->instruction_queue_capacity);
+                    } else {
+                        snprintf(status, sizeof(status),
+                                 "Instruction queued (%d pending)", depth);
+                    }
+                    ui_set_status(tui, queue, status);
+                } else {
+                    ui_set_status(tui, queue, "Instruction submitted (processing...)");
+                }
+            } else {
+                ui_set_status(tui, queue, "Instruction queued for processing...");
+            }
         }
     } else {
         ui_set_status(tui, queue, "Waiting for API response...");
@@ -3647,6 +3673,8 @@ static void interactive_mode(ConversationState *state) {
     printf("  ▘▘ ▝▝    %s\n", state->working_dir);
     printf(ANSI_RESET "\n");  // Reset color and add blank line
     fflush(stdout);
+
+    const char *prompt = ">";
 
     // Initialize TUI
     TUIState tui = {0};
@@ -3721,13 +3749,17 @@ static void interactive_mode(ConversationState *state) {
         .worker = worker_started ? &worker_ctx : NULL,
         .instruction_queue = instruction_queue_initialized ? &instruction_queue : NULL,
         .tui_queue = tui_queue_initialized ? &tui_queue : NULL,
+        .instruction_queue_capacity = instruction_queue_initialized ? (int)AI_QUEUE_CAPACITY : 0,
     };
 
     void *event_loop_queue = tui_queue_initialized ? (void *)&tui_queue : NULL;
-    tui_event_loop(&tui, ">", submit_input_callback, &ctx, event_loop_queue);
+    tui_event_loop(&tui, prompt, submit_input_callback, &ctx, event_loop_queue);
 
     if (worker_started) {
         ai_worker_stop(&worker_ctx);
+    }
+    if (tui_queue_initialized) {
+        tui_drain_message_queue(&tui, prompt, &tui_queue);
     }
     if (instruction_queue_initialized) {
         ai_queue_free(&instruction_queue);

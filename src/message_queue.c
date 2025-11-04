@@ -3,6 +3,7 @@
  */
 
 #include "message_queue.h"
+#include "logger.h"
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
@@ -62,7 +63,11 @@ int post_tui_message(TUIMessageQueue *queue, TUIMessageType type, const char *te
     /* If queue is full, drop oldest message (FIFO eviction) */
     if (queue->count == queue->capacity) {
         TUIMessage *oldest = &queue->messages[queue->tail];
+        LOG_DEBUG("[TUI] Message queue at capacity (%zu) - dropping oldest message (type=%d)",
+                  queue->capacity,
+                  oldest->type);
         free(oldest->text);
+        oldest->text = NULL;
         queue->tail = (queue->tail + 1) % queue->capacity;
         queue->count--;
     }

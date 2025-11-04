@@ -147,4 +147,7 @@ int tui_event_loop(TUIState *tui, const char *prompt,
                    InputSubmitCallback callback, void *user_data,
                    void *msg_queue);
 
+// Drain any remaining messages after the event loop stops
+void tui_drain_message_queue(TUIState *tui, const char *prompt, void *msg_queue);
+
 #endif // TUI_H

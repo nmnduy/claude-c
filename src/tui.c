@@ -33,6 +33,7 @@
 #define INPUT_WIN_MAX_HEIGHT 5  // Max height for input window (3 lines + 2 borders)
 #define CONV_WIN_PADDING 1      // Lines of padding between conv window and input window
 #define STATUS_WIN_HEIGHT 1     // Single-line status window
+#define TUI_MAX_MESSAGES_PER_FRAME 10  // Max messages processed per frame
 
 // Global flag to detect terminal resize
 static volatile sig_atomic_t g_resize_flag = 0;
@@ -1361,6 +1362,127 @@ void tui_redraw_input(TUIState *tui, const char *prompt) {
     input_redraw(tui, prompt);
 }
 
+static TUIColorPair infer_color_from_prefix(const char *prefix) {
+    if (!prefix) {
+        return COLOR_PAIR_DEFAULT;
+    }
+    if (strstr(prefix, "User")) {
+        return COLOR_PAIR_USER;
+    }
+    if (strstr(prefix, "Assistant")) {
+        return COLOR_PAIR_ASSISTANT;
+    }
+    if (strstr(prefix, "Tool")) {
+        return COLOR_PAIR_TOOL;
+    }
+    if (strstr(prefix, "Error")) {
+        return COLOR_PAIR_ERROR;
+    }
+    if (strstr(prefix, "System")) {
+        return COLOR_PAIR_STATUS;
+    }
+    if (strstr(prefix, "Prompt")) {
+        return COLOR_PAIR_PROMPT;
+    }
+    return COLOR_PAIR_DEFAULT;
+}
+
+static void dispatch_tui_message(TUIState *tui, TUIMessage *msg) {
+    if (!tui || !msg) {
+        return;
+    }
+
+    switch (msg->type) {
+        case TUI_MSG_ADD_LINE: {
+            if (!msg->text) {
+                tui_add_conversation_line(tui, "", "", COLOR_PAIR_DEFAULT);
+                break;
+            }
+
+            char *mutable_text = msg->text;
+            const char *content = mutable_text;
+
+            if (mutable_text[0] == '[') {
+                char *close = strchr(mutable_text, ']');
+                if (close) {
+                    size_t prefix_len = (size_t)(close - mutable_text + 1);
+                    char *prefix = malloc(prefix_len + 1);
+                    if (prefix) {
+                        memcpy(prefix, mutable_text, prefix_len);
+                        prefix[prefix_len] = '\0';
+                    }
+
+                    const char *content_start = close + 1;
+                    while (*content_start == ' ') {
+                        content_start++;
+                    }
+
+                    const char *color_source = prefix ? prefix : mutable_text;
+                    tui_add_conversation_line(
+                        tui,
+                        prefix ? prefix : "",
+                        content_start,
+                        infer_color_from_prefix(color_source));
+
+                    free(prefix);
+                    break;
+                }
+            }
+
+            tui_add_conversation_line(tui, "", content, COLOR_PAIR_DEFAULT);
+            break;
+        }
+
+        case TUI_MSG_STATUS:
+            tui_update_status(tui, msg->text ? msg->text : "");
+            break;
+
+        case TUI_MSG_CLEAR:
+            tui_clear_conversation(tui);
+            break;
+
+        case TUI_MSG_ERROR:
+            tui_add_conversation_line(
+                tui,
+                "[Error]",
+                msg->text ? msg->text : "Unknown error",
+                COLOR_PAIR_ERROR);
+            break;
+
+        case TUI_MSG_TODO_UPDATE:
+            // Placeholder for future TODO list integration
+            break;
+    }
+}
+
+static int process_tui_messages(TUIState *tui,
+                                TUIMessageQueue *msg_queue,
+                                int max_messages) {
+    if (!tui || !msg_queue || max_messages <= 0) {
+        return 0;
+    }
+
+    int processed = 0;
+    TUIMessage msg = {0};
+
+    while (processed < max_messages) {
+        int rc = poll_tui_message(msg_queue, &msg);
+        if (rc <= 0) {
+            if (rc < 0) {
+                LOG_WARN("[TUI] Failed to poll message queue");
+            }
+            break;
+        }
+
+        dispatch_tui_message(tui, &msg);
+        free(msg.text);
+        msg.text = NULL;
+        processed++;
+    }
+
+    return processed;
+}
+
 int tui_event_loop(TUIState *tui, const char *prompt, 
                    InputSubmitCallback callback, void *user_data,
                    void *msg_queue_ptr) {
@@ -1420,75 +1542,7 @@ int tui_event_loop(TUIState *tui, const char *prompt,
         
         // 3. Process TUI message queue (if provided)
         if (msg_queue) {
-            TUIMessage msg;
-            int messages_processed = 0;
-            const int max_messages_per_frame = 10;  // Rate limiting
-            
-            while (messages_processed < max_messages_per_frame && 
-                   poll_tui_message(msg_queue, &msg) == 1) {
-                
-                switch (msg.type) {
-                    case TUI_MSG_ADD_LINE:
-                        // Parse prefix and text from message
-                        // Format: "[Prefix] text"
-                        if (msg.text) {
-                            char *bracket_end = strchr(msg.text, ']');
-                            if (bracket_end && msg.text[0] == '[') {
-                                size_t prefix_len = (size_t)(bracket_end - msg.text + 1);
-                                char *prefix = strndup(msg.text, prefix_len);
-                                char *text = bracket_end + 1;
-                                if (*text == ' ') text++;  // Skip space after bracket
-                                
-                                // Determine color based on prefix
-                                TUIColorPair color = COLOR_PAIR_DEFAULT;
-                                if (strstr(prefix, "User")) {
-                                    color = COLOR_PAIR_USER;
-                                } else if (strstr(prefix, "Assistant")) {
-                                    color = COLOR_PAIR_ASSISTANT;
-                                } else if (strstr(prefix, "Tool")) {
-                                    color = COLOR_PAIR_TOOL;
-                                } else if (strstr(prefix, "Error")) {
-                                    color = COLOR_PAIR_ERROR;
-                                } else if (strstr(prefix, "System")) {
-                                    color = COLOR_PAIR_STATUS;
-                                }
-                                
-                                tui_add_conversation_line(tui, prefix, text, color);
-                                free(prefix);
-                            } else {
-                                // No prefix, just add as is
-                                tui_add_conversation_line(tui, "", msg.text, COLOR_PAIR_DEFAULT);
-                            }
-                        }
-                        break;
-                        
-                    case TUI_MSG_STATUS:
-                        if (msg.text) {
-                            tui_update_status(tui, msg.text);
-                        }
-                        break;
-                        
-                    case TUI_MSG_CLEAR:
-                        tui_clear_conversation(tui);
-                        break;
-                        
-                    case TUI_MSG_ERROR:
-                        if (msg.text) {
-                            tui_add_conversation_line(tui, "[Error]", msg.text, COLOR_PAIR_ERROR);
-                        }
-                        break;
-                        
-                    case TUI_MSG_TODO_UPDATE:
-                        // TODO: Implement TODO list update when integrated
-                        break;
-                }
-                
-                // Free message text (allocated by queue)
-                free(msg.text);
-                messages_processed++;
-            }
-            
-            // Redraw input if we processed messages
+            int messages_processed = process_tui_messages(tui, msg_queue, TUI_MAX_MESSAGES_PER_FRAME);
             if (messages_processed > 0) {
                 LOG_DEBUG("[TUI] Processed %d queued message(s)", messages_processed);
                 tui_redraw_input(tui, prompt);
@@ -1509,4 +1563,24 @@ int tui_event_loop(TUIState *tui, const char *prompt,
     }
     
     return 0;
+}
+
+void tui_drain_message_queue(TUIState *tui, const char *prompt, void *msg_queue_ptr) {
+    if (!tui || !msg_queue_ptr) {
+        return;
+    }
+
+    TUIMessageQueue *msg_queue = (TUIMessageQueue *)msg_queue_ptr;
+    int processed = 0;
+
+    do {
+        processed = process_tui_messages(tui, msg_queue, TUI_MAX_MESSAGES_PER_FRAME);
+        if (processed > 0) {
+            if (prompt) {
+                tui_redraw_input(tui, prompt);
+            } else {
+                tui_refresh(tui);
+            }
+        }
+    } while (processed > 0);
 }

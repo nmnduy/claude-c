@@ -249,34 +249,34 @@
 
 ---
 
-### Phase 5: Full Integration ⏳
+### Phase 5: Full Integration ✅
 
 **Goal**: Wire everything together and test end-to-end
 
 #### Tasks
-- [ ] Update all TUI update calls
-  - [ ] Replace direct `tui_add_conversation_line()` with `post_tui_message()`
-  - [ ] Replace `tui_update_status()` with queue posts
-  - [ ] Ensure only main thread calls ncurses functions
-- [ ] Implement TUI message processing
-  - [ ] `process_tui_message_queue()` in event loop
-  - [ ] Dispatch messages: add line, update status, clear, error
-  - [ ] Batch process multiple messages per frame (rate limiting)
-- [ ] Handle edge cases
-  - [ ] Worker queue full - block or notify user?
-  - [ ] TUI queue full - drop oldest messages
-  - [ ] API error during processing - show in TUI
-  - [ ] Multiple resize events - coalesce
-- [ ] Add graceful shutdown
-  - [ ] Signal worker to stop
-  - [ ] Wait for current instruction to complete
-  - [ ] Drain message queues
-  - [ ] Clean up all resources
-- [ ] Memory ownership rules
-  - [ ] Document who owns what in ASYNC_DESIGN.md
-  - [ ] Worker owns instruction after dequeue
-  - [ ] TUI owns messages after poll
-  - [ ] ConversationState shared with mutex
+- [x] Update all TUI update calls
+  - [x] Replace direct `tui_add_conversation_line()` with `post_tui_message()`
+  - [x] Replace `tui_update_status()` with queue posts
+  - [x] Ensure only main thread calls ncurses functions
+- [x] Implement TUI message processing
+  - [x] `process_tui_message_queue()` in event loop
+  - [x] Dispatch messages: add line, update status, clear, error
+  - [x] Batch process multiple messages per frame (rate limiting)
+- [x] Handle edge cases
+  - [x] Worker queue full - block or notify user?
+  - [x] TUI queue full - drop oldest messages
+  - [x] API error during processing - show in TUI
+  - [x] Multiple resize events - coalesce
+- [x] Add graceful shutdown
+  - [x] Signal worker to stop
+  - [x] Wait for current instruction to complete
+  - [x] Drain message queues
+  - [x] Clean up all resources
+- [x] Memory ownership rules
+  - [x] Document who owns what in ASYNC_DESIGN.md
+  - [x] Worker owns instruction after dequeue
+  - [x] TUI owns messages after poll
+  - [x] ConversationState shared with mutex
 
 **Files to modify**:
 - `src/tui.c` - Message queue processing
