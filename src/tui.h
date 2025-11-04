@@ -10,6 +10,7 @@
 #ifndef TUI_H
 #define TUI_H
 
+#include <stdint.h>
 #include "claude_internal.h"
 #include "todo.h"
 
@@ -58,6 +59,9 @@ typedef struct {
 
     char *status_message;    // Current status text (owned by TUI)
     int status_visible;      // Whether status should be shown
+    int status_spinner_active;        // Spinner animation active flag
+    int status_spinner_frame;         // Current spinner frame index
+    uint64_t status_spinner_last_update_ns; // Last spinner frame update timestamp
 
     int is_initialized;      // Whether TUI has been set up
 } TUIState;

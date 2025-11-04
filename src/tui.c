@@ -16,6 +16,7 @@
 #include "colorscheme.h"
 #include "fallback_colors.h"
 #include "logger.h"
+#include "indicators.h"
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
@@ -66,6 +67,19 @@ static short rgb_to_ncurses(int value) {
 }
 
 // Render the status window based on current state
+static const spinner_variant_t* status_spinner_variant(void) {
+    init_global_spinner_variant();
+    if (GLOBAL_SPINNER_VARIANT.frames && GLOBAL_SPINNER_VARIANT.count > 0) {
+        return &GLOBAL_SPINNER_VARIANT;
+    }
+    static const spinner_variant_t fallback_variant = { SPINNER_FRAMES, SPINNER_FRAME_COUNT };
+    return &fallback_variant;
+}
+
+static uint64_t status_spinner_interval_ns(void) {
+    return (uint64_t)SPINNER_DELAY_MS * 1000000ULL;
+}
+
 static void render_status_window(TUIState *tui) {
     if (!tui || !tui->status_win) {
         return;
@@ -84,8 +98,29 @@ static void render_status_window(TUIState *tui) {
             wattron(tui->status_win, A_BOLD);
         }
 
-        // Trim message to window width
-        mvwaddnstr(tui->status_win, 0, 0, tui->status_message, width);
+        int col = 0;
+        if (tui->status_spinner_active) {
+            const spinner_variant_t *variant = status_spinner_variant();
+            int frame_count = variant->count;
+            const char **frames = variant->frames;
+            if (!frames || frame_count <= 0) {
+                frames = SPINNER_FRAMES;
+                frame_count = SPINNER_FRAME_COUNT;
+            }
+            const char *frame = frames[tui->status_spinner_frame % frame_count];
+            if (width > 0) {
+                mvwaddnstr(tui->status_win, 0, col, frame, width - col);
+                col += 1;
+            }
+            if (col < width) {
+                mvwaddch(tui->status_win, 0, col, ' ');
+                col += 1;
+            }
+        }
+
+        if (col < width) {
+            mvwaddnstr(tui->status_win, 0, col, tui->status_message, width - col);
+        }
 
         if (has_colors()) {
             wattroff(tui->status_win, COLOR_PAIR(NCURSES_PAIR_STATUS) | A_BOLD);
@@ -95,6 +130,80 @@ static void render_status_window(TUIState *tui) {
     }
 
     wrefresh(tui->status_win);
+}
+
+static uint64_t monotonic_time_ns(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
+}
+
+static int status_message_wants_spinner(const char *message) {
+    if (!message) {
+        return 0;
+    }
+    if (strstr(message, "...")) {
+        return 1;
+    }
+    if (strstr(message, "\xE2\x80\xA6")) { // Unicode ellipsis
+        return 1;
+    }
+    return 0;
+}
+
+static void status_spinner_start(TUIState *tui) {
+    if (!tui) {
+        return;
+    }
+    if (!tui->status_spinner_active) {
+        tui->status_spinner_frame = 0;
+    }
+    tui->status_spinner_active = 1;
+    tui->status_spinner_last_update_ns = monotonic_time_ns();
+}
+
+static void status_spinner_stop(TUIState *tui) {
+    if (!tui) {
+        return;
+    }
+    tui->status_spinner_active = 0;
+    tui->status_spinner_frame = 0;
+    tui->status_spinner_last_update_ns = 0;
+}
+
+static void status_spinner_tick(TUIState *tui) {
+    if (!tui || !tui->status_spinner_active || !tui->status_visible) {
+        return;
+    }
+    if (tui->status_height <= 0 || !tui->status_win) {
+        return;
+    }
+
+    uint64_t now = monotonic_time_ns();
+    if (tui->status_spinner_last_update_ns == 0) {
+        tui->status_spinner_last_update_ns = now;
+        return;
+    }
+
+    uint64_t delta = now - tui->status_spinner_last_update_ns;
+    uint64_t interval_ns = status_spinner_interval_ns();
+    if (delta < interval_ns) {
+        return;
+    }
+
+    uint64_t steps = interval_ns ? delta / interval_ns : 1;
+    if (steps == 0) {
+        steps = 1;
+    }
+
+    const spinner_variant_t *variant = status_spinner_variant();
+    int frame_count = (variant->count > 0) ? variant->count : SPINNER_FRAME_COUNT;
+    if (frame_count <= 0) {
+        return;
+    }
+    tui->status_spinner_frame = (tui->status_spinner_frame + (int)steps) % frame_count;
+    tui->status_spinner_last_update_ns = now;
+    render_status_window(tui);
 }
 
 // Initialize ncurses color pairs from our colorscheme
@@ -907,6 +1016,9 @@ int tui_init(TUIState *tui) {
     tui->conv_scroll_offset = 0;
     tui->status_message = NULL;
     tui->status_visible = 0;
+    tui->status_spinner_active = 0;
+    tui->status_spinner_frame = 0;
+    tui->status_spinner_last_update_ns = 0;
 
     // Initialize input buffer
     if (input_init(tui) != 0) {
@@ -1015,6 +1127,7 @@ void tui_update_status(TUIState *tui, const char *status_text) {
     LOG_DEBUG("[TUI] Status update requested: '%s'", message[0] ? message : "(clear)");
 
     if (message[0] == '\0') {
+        status_spinner_stop(tui);
         tui->status_visible = 0;
         free(tui->status_message);
         tui->status_message = NULL;
@@ -1032,6 +1145,12 @@ void tui_update_status(TUIState *tui, const char *status_text) {
         }
         free(tui->status_message);
         tui->status_message = copy;
+    }
+
+    if (status_message_wants_spinner(message)) {
+        status_spinner_start(tui);
+    } else {
+        status_spinner_stop(tui);
     }
 
     tui->status_visible = 1;
@@ -1574,6 +1693,9 @@ int tui_event_loop(TUIState *tui, const char *prompt,
             }
         }
         
+        // Update spinner animation if active
+        status_spinner_tick(tui);
+
         // 4. Sleep to maintain frame rate
         struct timespec frame_end;
         clock_gettime(CLOCK_MONOTONIC, &frame_end);
