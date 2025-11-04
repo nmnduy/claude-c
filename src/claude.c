@@ -1714,15 +1714,18 @@ STATIC cJSON* tool_todo_write(cJSON *params, ConversationState *state) {
         }
     }
 
-    // Render the updated todo list to terminal
-    if (added > 0) {
-        todo_render(state->todo_list);
-    }
-
     cJSON *result = cJSON_CreateObject();
     cJSON_AddStringToObject(result, "status", "success");
     cJSON_AddNumberToObject(result, "added", added);
     cJSON_AddNumberToObject(result, "total", total);
+
+    if (state->todo_list && state->todo_list->count > 0) {
+        char *rendered = todo_render_to_string(state->todo_list);
+        if (rendered) {
+            cJSON_AddStringToObject(result, "rendered", rendered);
+            free(rendered);
+        }
+    }
 
     return result;
 }
