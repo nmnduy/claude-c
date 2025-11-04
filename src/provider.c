@@ -67,7 +67,29 @@ void provider_init(const char *model,
 
     // Bedrock provider selection
     if (is_bedrock_enabled()) {
+        const char *use_bedrock_env = getenv("CLAUDE_CODE_USE_BEDROCK");
+        const char *aws_profile = getenv("AWS_PROFILE");
+        const char *aws_region = getenv("AWS_REGION");
+        const char *aws_config_file = getenv("AWS_CONFIG_FILE");
+        const char *aws_shared_creds = getenv("AWS_SHARED_CREDENTIALS_FILE");
+        const char *aws_access_key = getenv("AWS_ACCESS_KEY_ID");
+        const char *aws_secret_key = getenv("AWS_SECRET_ACCESS_KEY");
+        const char *aws_session_token = getenv("AWS_SESSION_TOKEN");
+
         LOG_INFO("Bedrock mode is enabled, creating Bedrock provider...");
+        LOG_INFO("Bedrock env summary: CLAUDE_CODE_USE_BEDROCK=%s",
+                 use_bedrock_env ? use_bedrock_env : "(not set)");
+        LOG_INFO("Bedrock env summary: AWS_PROFILE=%s, AWS_REGION=%s",
+                 aws_profile ? aws_profile : "(not set)",
+                 aws_region ? aws_region : "(not set)");
+        LOG_INFO("Bedrock env summary: AWS_CONFIG_FILE=%s, AWS_SHARED_CREDENTIALS_FILE=%s",
+                 aws_config_file ? aws_config_file : "(not set)",
+                 aws_shared_creds ? aws_shared_creds : "(not set)");
+        LOG_INFO("Bedrock env summary: Credentials present? access_key=%s secret_key=%s session_token=%s",
+                 aws_access_key ? "yes" : "no",
+                 aws_secret_key ? "yes" : "no",
+                 aws_session_token ? "yes" : "no");
+
         Provider *prov = bedrock_provider_create(model);
         if (!prov) {
             result->error_message = strdup(

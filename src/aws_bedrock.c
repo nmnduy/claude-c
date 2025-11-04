@@ -175,7 +175,12 @@ int bedrock_is_enabled(void) {
 }
 
 BedrockConfig* bedrock_config_init(const char *model_id) {
+    LOG_INFO("Bedrock config init requested (model=%s)",
+             model_id ? model_id : "(null)");
+
     if (!bedrock_is_enabled()) {
+        LOG_INFO("Bedrock config init aborted: %s is not enabled",
+                 ENV_USE_BEDROCK);
         return NULL;
     }
 
@@ -192,12 +197,16 @@ BedrockConfig* bedrock_config_init(const char *model_id) {
     if (!region) {
         region = "us-west-2";  // Default region
         LOG_WARN("AWS_REGION not set, using default: %s", region);
+    } else {
+        LOG_INFO("Bedrock config: using AWS region from %s=%s",
+                 ENV_AWS_REGION, region);
     }
     config->region = strdup(region);
 
     // Get model ID
     if (model_id) {
         config->model_id = strdup(model_id);
+        LOG_INFO("Bedrock config: model id set to %s", config->model_id);
     } else {
         LOG_ERROR("Model ID is required for Bedrock");
         bedrock_config_free(config);
@@ -211,9 +220,12 @@ BedrockConfig* bedrock_config_init(const char *model_id) {
         bedrock_config_free(config);
         return NULL;
     }
+    LOG_INFO("Bedrock config: computed endpoint %s", config->endpoint);
 
     // Load credentials
     const char *profile = getenv(ENV_AWS_PROFILE);
+    LOG_INFO("Bedrock config: loading credentials (profile=%s)",
+             profile ? profile : "default");
     config->creds = bedrock_load_credentials(profile, region);
     if (!config->creds) {
         LOG_ERROR("Failed to load AWS credentials");
@@ -249,6 +261,10 @@ static AWSCredentials* bedrock_load_credentials_internal(const char *profile, co
         return NULL;
     }
 
+    LOG_INFO("AWS credential load starting (depth=%d, profile=%s, region=%s)",
+             depth,
+             profile ? profile : "default",
+             region ? region : "default");
     LOG_DEBUG("=== AWS CREDENTIAL LOADING START (depth=%d) ===", depth);
     LOG_DEBUG("Requested profile: %s, region: %s", profile ? profile : "default", region ? region : "default");
 
@@ -264,6 +280,10 @@ static AWSCredentials* bedrock_load_credentials_internal(const char *profile, co
     const char *access_key = getenv(ENV_AWS_ACCESS_KEY_ID);
     const char *secret_key = getenv(ENV_AWS_SECRET_ACCESS_KEY);
     const char *session_token = getenv(ENV_AWS_SESSION_TOKEN);
+    LOG_INFO("Credential source env: access_key=%s secret_key=%s session_token=%s",
+             access_key ? "present" : "missing",
+             secret_key ? "present" : "missing",
+             session_token ? "present" : "missing");
 
     LOG_DEBUG("  AWS_ACCESS_KEY_ID: %s", access_key ? "found" : "not found");
     LOG_DEBUG("  AWS_SECRET_ACCESS_KEY: %s", secret_key ? "found" : "not found");
@@ -297,6 +317,7 @@ static AWSCredentials* bedrock_load_credentials_internal(const char *profile, co
             // Fall through to try other methods
         }
     } else {
+        LOG_INFO("Credential source env: required keys not both present, trying next source");
         LOG_DEBUG("✗ No credentials found in environment variables");
         if (!access_key) LOG_DEBUG("  Missing: AWS_ACCESS_KEY_ID");
         if (!secret_key) LOG_DEBUG("  Missing: AWS_SECRET_ACCESS_KEY");
@@ -314,16 +335,19 @@ static AWSCredentials* bedrock_load_credentials_internal(const char *profile, co
     LOG_DEBUG("=== CREDENTIAL SOURCE 2: AWS CLI EXPORT-CREDENTIALS ===");
     char command[512];
     const char *profile_arg = profile ? profile : "default";
+    LOG_INFO("Credential source aws-cli export-credentials: profile=%s", profile_arg);
     LOG_DEBUG("Using profile: %s", profile_arg);
 
     // First try export-credentials which handles temporary credentials properly
     snprintf(command, sizeof(command),
              "aws configure export-credentials --profile %s --format env 2>/dev/null",
              profile_arg);
+    LOG_INFO("Executing aws configure export-credentials for profile=%s", profile_arg);
     LOG_DEBUG("Executing command: %s", command);
     char *export_output = exec_command(command);
 
     if (export_output && strlen(export_output) > 0) {
+        LOG_INFO("aws configure export-credentials returned data (length=%zu)", strlen(export_output));
         LOG_DEBUG("✓ Got output from export-credentials (length: %zu bytes)", strlen(export_output));
         LOG_DEBUG("  Output (first 200 chars): %.200s", export_output);
 
@@ -383,17 +407,20 @@ static AWSCredentials* bedrock_load_credentials_internal(const char *profile, co
                 // Fall through to try other methods
             }
         } else {
+            LOG_INFO("aws configure export-credentials did not return a full credential set");
             LOG_DEBUG("✗ Incomplete credentials from export-credentials");
             if (!creds->access_key_id) LOG_DEBUG("  Missing: AWS_ACCESS_KEY_ID");
             if (!creds->secret_access_key) LOG_DEBUG("  Missing: AWS_SECRET_ACCESS_KEY");
         }
     } else {
+        LOG_INFO("aws configure export-credentials returned no output; falling back to other sources");
         LOG_DEBUG("✗ No output from export-credentials command");
         free(export_output);
     }
 
     // Fallback: Try aws configure get for static credentials
     LOG_DEBUG("=== CREDENTIAL SOURCE 3: AWS CLI CONFIGURE GET ===");
+    LOG_INFO("Credential source aws-cli configure get: profile=%s", profile_arg);
     LOG_DEBUG("Using profile: %s", profile_arg);
 
     snprintf(command, sizeof(command),
@@ -430,7 +457,7 @@ static AWSCredentials* bedrock_load_credentials_internal(const char *profile, co
             return creds;
         } else {
             LOG_WARN("✗ AWS credentials from config are invalid or expired");
-            LOG_DEBUG("Falling back to SSO credential source...");
+            LOG_WARN("Falling back to SSO credential source...");
             bedrock_creds_free(creds);
             creds = calloc(1, sizeof(AWSCredentials));
             if (!creds) {
@@ -440,6 +467,7 @@ static AWSCredentials* bedrock_load_credentials_internal(const char *profile, co
             // Fall through to try SSO
         }
     } else {
+        LOG_INFO("AWS CLI config did not provide complete static credentials");
         LOG_DEBUG("✗ No static credentials found in AWS config");
         if (!key_id || strlen(key_id) == 0) LOG_DEBUG("  Missing: aws_access_key_id");
         if (!secret || strlen(secret) == 0) LOG_DEBUG("  Missing: aws_secret_access_key");
@@ -450,6 +478,7 @@ static AWSCredentials* bedrock_load_credentials_internal(const char *profile, co
     // Try AWS SSO
     LOG_DEBUG("=== CREDENTIAL SOURCE 4: AWS SSO ===");
     LOG_DEBUG("Checking if profile uses SSO...");
+    LOG_INFO("Credential source AWS SSO: inspecting profile=%s", profile_arg);
 
     // Check if profile uses SSO
     snprintf(command, sizeof(command),
@@ -515,6 +544,7 @@ static AWSCredentials* bedrock_load_credentials_internal(const char *profile, co
                 } else {
                     LOG_WARN("✗ SSO credentials from cache are invalid or expired");
                     LOG_DEBUG("Triggering SSO authentication to refresh credentials...");
+                    LOG_INFO("Refreshing SSO credentials via aws sso login (profile=%s)", profile_arg);
                     bedrock_creds_free(creds);
 
                     // Credentials are invalid, authenticate and retry
@@ -532,8 +562,10 @@ static AWSCredentials* bedrock_load_credentials_internal(const char *profile, co
                 LOG_DEBUG("✗ Incomplete SSO credentials from cache");
                 if (!creds->access_key_id) LOG_DEBUG("  Missing: AWS_ACCESS_KEY_ID");
                 if (!creds->secret_access_key) LOG_DEBUG("  Missing: AWS_SECRET_ACCESS_KEY");
+                LOG_INFO("Cached SSO credentials were incomplete; will trigger authentication");
             }
         } else {
+            LOG_INFO("No cached SSO credentials available via export-credentials");
             LOG_DEBUG("✗ No SSO credentials in cache (empty output)");
             free(sso_export_output);
         }
@@ -541,6 +573,7 @@ static AWSCredentials* bedrock_load_credentials_internal(const char *profile, co
         // SSO credentials not found in cache, need to authenticate
         LOG_DEBUG("SSO credentials not in cache, authentication required");
         LOG_WARN("AWS SSO credentials not found in cache for profile: %s", profile_arg);
+        LOG_INFO("Invoking AWS SSO login to refresh credentials (profile=%s)", profile_arg);
         LOG_DEBUG("Calling bedrock_authenticate for initial SSO login...");
         if (bedrock_authenticate(profile_arg) == 0) {
             LOG_DEBUG("✓ SSO authentication successful, retrying credential load...");
@@ -551,10 +584,12 @@ static AWSCredentials* bedrock_load_credentials_internal(const char *profile, co
         }
     } else {
         LOG_DEBUG("✗ Profile %s does not use SSO (no sso_start_url)", profile_arg);
+        LOG_INFO("Profile %s does not have SSO configuration", profile_arg);
         free(sso_url);
     }
 
     LOG_ERROR("Failed to load AWS credentials from any source");
+    LOG_INFO("AWS credential loader exhausted all sources without success (profile=%s)", profile_arg);
 
     /* Attempt custom authentication command if set via AWS_AUTH_COMMAND */
     const char *custom_auth_cmd = getenv(ENV_AWS_AUTH_COMMAND);
