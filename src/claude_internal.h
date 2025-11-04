@@ -8,6 +8,7 @@
 #define CLAUDE_INTERNAL_H
 
 #include <cjson/cJSON.h>
+#include <pthread.h>
 #include "version.h"
 
 // ============================================================================
@@ -174,6 +175,8 @@ typedef struct ConversationState {
     struct TodoList *todo_list;     // Task tracking list
     Provider *provider;             // API provider abstraction (OpenAI, Bedrock, etc.)
     int max_retry_duration_ms;      // Maximum retry duration in milliseconds (configurable via env var)
+    pthread_mutex_t conv_mutex;     // Synchronize access to conversation data
+    int conv_mutex_initialized;     // Tracks mutex initialization
 } ConversationState;
 
 // ============================================================================
@@ -212,6 +215,30 @@ int check_for_esc(void);
  * Returns: Newly allocated JSON string (caller must free), or NULL on error
  */
 char* build_request_json_from_state(ConversationState *state);
+
+/**
+ * Initialize conversation state synchronization primitives.
+ * Must be called before using ConversationState from multiple threads.
+ * Returns 0 on success, -1 on failure.
+ */
+int conversation_state_init(ConversationState *state);
+
+/**
+ * Destroy synchronization primitives for a ConversationState.
+ * Safe to call on partially initialized structures.
+ */
+void conversation_state_destroy(ConversationState *state);
+
+/**
+ * Acquire the conversation mutex, initializing it if needed.
+ * Returns 0 on success, -1 on failure.
+ */
+int conversation_state_lock(ConversationState *state);
+
+/**
+ * Release the conversation mutex if initialized.
+ */
+void conversation_state_unlock(ConversationState *state);
 
 /**
  * Free an ApiResponse structure and all its owned resources

@@ -21,11 +21,18 @@ cJSON* build_openai_request(ConversationState *state, int enable_caching) {
         return NULL;
     }
 
+    if (conversation_state_lock(state) != 0) {
+        return NULL;
+    }
+
     LOG_DEBUG("Building OpenAI request (messages: %d, caching: %s)",
               state->count, enable_caching ? "enabled" : "disabled");
 
     cJSON *request = cJSON_CreateObject();
-    if (!request) return NULL;
+    if (!request) {
+        conversation_state_unlock(state);
+        return NULL;
+    }
 
     cJSON_AddStringToObject(request, "model", state->model);
     cJSON_AddNumberToObject(request, "max_completion_tokens", MAX_TOKENS);
@@ -33,6 +40,7 @@ cJSON* build_openai_request(ConversationState *state, int enable_caching) {
     cJSON *messages_array = cJSON_CreateArray();
     if (!messages_array) {
         cJSON_Delete(request);
+        conversation_state_unlock(state);
         return NULL;
     }
 
@@ -169,6 +177,7 @@ cJSON* build_openai_request(ConversationState *state, int enable_caching) {
     }
 
     cJSON_AddItemToObject(request, "messages", messages_array);
+    conversation_state_unlock(state);
 
     // Add tools with cache_control support
     cJSON *tool_defs = get_tool_definitions(enable_caching);

@@ -170,6 +170,10 @@ int main(void) {
 
     // Initialize state - zero out all fields first
     ConversationState state = {0};
+    if (conversation_state_init(&state) != 0) {
+        fprintf(stderr, "Failed to initialize conversation state\n");
+        return 1;
+    }
 
     // Use strdup to create a mutable copy for working_dir
     char *working_dir_copy = strdup("/tmp");
@@ -200,6 +204,7 @@ int main(void) {
 
     // Cleanup
     free(working_dir_copy);
+    conversation_state_destroy(&state);
 
     return tests_failed > 0 ? 1 : 0;
 }

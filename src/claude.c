@@ -115,6 +115,8 @@ static int bedrock_handle_auth_error(BedrockConfig *config, long http_status, co
 
 // TUI module
 #include "tui.h"
+#include "message_queue.h"
+#include "ai_worker.h"
 
 // AWS Bedrock support
 #ifndef TEST_BUILD
@@ -188,6 +190,126 @@ static void print_tool(const char *tool_name, const char *details) {
     }
     printf("\n");
     fflush(stdout);
+}
+
+static void print_error(const char *text);
+
+static void ui_append_line(TUIState *tui,
+                           TUIMessageQueue *queue,
+                           const char *prefix,
+                           const char *text,
+                           TUIColorPair color) {
+    const char *safe_text = text ? text : "";
+    const char *safe_prefix = prefix ? prefix : "";
+
+    if (tui) {
+        tui_add_conversation_line(tui, safe_prefix, safe_text, color);
+        return;
+    }
+
+    if (queue) {
+        size_t prefix_len = safe_prefix[0] ? strlen(safe_prefix) : 0;
+        size_t text_len = strlen(safe_text);
+        size_t extra_space = (prefix_len > 0 && text_len > 0) ? 1 : 0;
+        size_t total = prefix_len + extra_space + text_len + 1;
+
+        char *formatted = malloc(total);
+        if (!formatted) {
+            LOG_ERROR("Failed to allocate memory for TUI message");
+            return;
+        }
+
+        if (prefix_len > 0 && text_len > 0) {
+            snprintf(formatted, total, "%s %s", safe_prefix, safe_text);
+        } else if (prefix_len > 0) {
+            snprintf(formatted, total, "%s", safe_prefix);
+        } else {
+            snprintf(formatted, total, "%s", safe_text);
+        }
+
+        post_tui_message(queue, TUI_MSG_ADD_LINE, formatted);
+        free(formatted);
+        return;
+    }
+
+    if (!tui && !queue) {
+        if (strcmp(safe_prefix, "[Assistant]") == 0) {
+            print_assistant(safe_text);
+            return;
+        }
+
+        if (strncmp(safe_prefix, "[Tool", 5) == 0) {
+            const char *colon = strchr(safe_prefix, ':');
+            const char *close = strrchr(safe_prefix, ']');
+            const char *name_start = NULL;
+            size_t name_len = 0;
+            if (colon) {
+                name_start = colon + 1;
+                if (*name_start == ' ') {
+                    name_start++;
+                }
+                if (close && close > name_start) {
+                    name_len = (size_t)(close - name_start);
+                }
+            }
+
+            char tool_name[128];
+            if (name_len == 0 || name_len >= sizeof(tool_name)) {
+                snprintf(tool_name, sizeof(tool_name), "tool");
+            } else {
+                memcpy(tool_name, name_start, name_len);
+                tool_name[name_len] = '\0';
+            }
+            print_tool(tool_name, safe_text);
+            return;
+        }
+
+        if (strcmp(safe_prefix, "[Error]") == 0) {
+            print_error(safe_text);
+            return;
+        }
+
+        if (safe_prefix[0]) {
+            printf("%s %s\n", safe_prefix, safe_text);
+        } else {
+            printf("%s\n", safe_text);
+        }
+        fflush(stdout);
+        return;
+    }
+
+}
+
+static void ui_set_status(TUIState *tui,
+                          TUIMessageQueue *queue,
+                          const char *status_text) {
+    const char *safe = status_text ? status_text : "";
+    if (tui) {
+        tui_update_status(tui, safe);
+        return;
+    }
+    if (queue) {
+        post_tui_message(queue, TUI_MSG_STATUS, safe);
+        return;
+    }
+    if (safe[0] != '\0') {
+        printf("[Status] %s\n", safe);
+    }
+}
+
+static void ui_show_error(TUIState *tui,
+                          TUIMessageQueue *queue,
+                          const char *error_text) {
+    const char *safe = error_text ? error_text : "";
+    if (tui) {
+        tui_add_conversation_line(tui, "[Error]", safe, COLOR_PAIR_ERROR);
+        return;
+    }
+    if (queue) {
+        post_tui_message(queue, TUI_MSG_ERROR, safe);
+        return;
+    }
+    print_error(safe);
 }
 
 // Helper function to extract tool details from arguments
@@ -484,7 +606,16 @@ char* resolve_path(const char *path, const char *working_dir) {
 // Add a directory to the additional working directories list
 // Returns: 0 on success, -1 on error
 int add_directory(ConversationState *state, const char *path) {
+    if (!state || !path) {
+        return -1;
+    }
+
+    if (conversation_state_lock(state) != 0) {
+        return -1;
+    }
+
     // Validate that directory exists
+    int result = -1;
     struct stat st;
     char *resolved_path = NULL;
 
@@ -498,24 +629,24 @@ int add_directory(ConversationState *state, const char *path) {
     }
 
     if (!resolved_path) {
-        return -1;  // Path doesn't exist or can't be resolved
+        goto out;  // Path doesn't exist or can't be resolved
     }
 
     if (stat(resolved_path, &st) != 0 || !S_ISDIR(st.st_mode)) {
         free(resolved_path);
-        return -1;  // Not a directory
+        goto out;  // Not a directory
     }
 
     // Check if directory is already in the list (avoid duplicates)
     if (strcmp(resolved_path, state->working_dir) == 0) {
         free(resolved_path);
-        return -1;  // Already the main working directory
+        goto out;  // Already the main working directory
     }
 
     for (int i = 0; i < state->additional_dirs_count; i++) {
         if (strcmp(resolved_path, state->additional_dirs[i]) == 0) {
             free(resolved_path);
-            return -1;  // Already in additional directories
+            goto out;  // Already in additional directories
         }
     }
 
@@ -525,7 +656,7 @@ int add_directory(ConversationState *state, const char *path) {
         char **new_array = realloc(state->additional_dirs, (size_t)new_capacity * sizeof(char*));
         if (!new_array) {
             free(resolved_path);
-            return -1;  // Out of memory
+            goto out;  // Out of memory
         }
         state->additional_dirs = new_array;
         state->additional_dirs_capacity = new_capacity;
@@ -533,8 +664,13 @@ int add_directory(ConversationState *state, const char *path) {
 
     // Add directory to list
     state->additional_dirs[state->additional_dirs_count++] = resolved_path;
+    resolved_path = NULL;
+    result = 0;
 
-    return 0;
+out:
+    conversation_state_unlock(state);
+    free(resolved_path);
+    return result;
 }
 
 // ============================================================================
@@ -1852,6 +1988,12 @@ char* build_request_json_from_state(ConversationState *state) {
         return NULL;
     }
 
+    if (conversation_state_lock(state) != 0) {
+        return NULL;
+    }
+
+    char *json_str = NULL;
+
     // Check if prompt caching is enabled
     int enable_caching = is_prompt_caching_enabled();
     LOG_DEBUG("Building request (caching: %s, messages: %d)",
@@ -1859,13 +2001,26 @@ char* build_request_json_from_state(ConversationState *state) {
 
     // Build request body
     cJSON *request = cJSON_CreateObject();
+    if (!request) {
+        LOG_ERROR("Failed to allocate request object");
+        goto unlock;
+    }
+
     cJSON_AddStringToObject(request, "model", state->model);
     cJSON_AddNumberToObject(request, "max_completion_tokens", MAX_TOKENS);
 
     // Add messages in OpenAI format
     cJSON *messages_array = cJSON_CreateArray();
+    if (!messages_array) {
+        LOG_ERROR("Failed to allocate messages array");
+        goto unlock;
+    }
     for (int i = 0; i < state->count; i++) {
         cJSON *msg = cJSON_CreateObject();
+        if (!msg) {
+            LOG_ERROR("Failed to allocate message object");
+            goto unlock;
+        }
 
         // Determine role
         const char *role;
@@ -2004,11 +2159,21 @@ char* build_request_json_from_state(ConversationState *state) {
     cJSON *tool_defs = get_tool_definitions(enable_caching);
     cJSON_AddItemToObject(request, "tools", tool_defs);
 
-    char *json_str = cJSON_PrintUnformatted(request);
+    conversation_state_unlock(state);
+    state = NULL;
+
+    json_str = cJSON_PrintUnformatted(request);
     cJSON_Delete(request);
 
     LOG_DEBUG("Request built successfully (size: %zu bytes)", json_str ? strlen(json_str) : 0);
     return json_str;
+
+unlock:
+    conversation_state_unlock(state);
+    if (request) {
+        cJSON_Delete(request);
+    }
+    return NULL;
 }
 
 // ============================================================================
@@ -2472,13 +2637,70 @@ char* build_system_prompt(ConversationState *state) {
     return prompt;
 }
 
-// ============================================================================
+// ============================================================================ 
 // Message Management
 // ============================================================================
 
+int conversation_state_init(ConversationState *state) {
+    if (!state) {
+        return -1;
+    }
+
+    if (state->conv_mutex_initialized) {
+        return 0;
+    }
+
+    if (pthread_mutex_init(&state->conv_mutex, NULL) != 0) {
+        LOG_ERROR("Failed to initialize conversation mutex");
+        return -1;
+    }
+
+    state->conv_mutex_initialized = 1;
+    return 0;
+}
+
+void conversation_state_destroy(ConversationState *state) {
+    if (!state || !state->conv_mutex_initialized) {
+        return;
+    }
+
+    pthread_mutex_destroy(&state->conv_mutex);
+    state->conv_mutex_initialized = 0;
+}
+
+int conversation_state_lock(ConversationState *state) {
+    if (!state) {
+        return -1;
+    }
+
+    if (!state->conv_mutex_initialized) {
+        if (conversation_state_init(state) != 0) {
+            return -1;
+        }
+    }
+
+    if (pthread_mutex_lock(&state->conv_mutex) != 0) {
+        LOG_ERROR("Failed to lock conversation mutex");
+        return -1;
+    }
+    return 0;
+}
+
+void conversation_state_unlock(ConversationState *state) {
+    if (!state || !state->conv_mutex_initialized) {
+        return;
+    }
+    pthread_mutex_unlock(&state->conv_mutex);
+}
+
 static void add_system_message(ConversationState *state, const char *text) {
+    if (conversation_state_lock(state) != 0) {
+        return;
+    }
+
     if (state->count >= MAX_MESSAGES) {
         LOG_ERROR("Maximum message count reached");
+        conversation_state_unlock(state);
         return;
     }
 
@@ -2505,13 +2727,21 @@ static void add_system_message(ConversationState *state, const char *text) {
         free(msg->contents);
         msg->contents = NULL;
         state->count--;
+        conversation_state_unlock(state);
         return;
     }
+
+    conversation_state_unlock(state);
 }
 
 static void add_user_message(ConversationState *state, const char *text) {
+    if (conversation_state_lock(state) != 0) {
+        return;
+    }
+
     if (state->count >= MAX_MESSAGES) {
         LOG_ERROR("Maximum message count reached");
+        conversation_state_unlock(state);
         return;
     }
 
@@ -2538,14 +2768,22 @@ static void add_user_message(ConversationState *state, const char *text) {
         free(msg->contents);
         msg->contents = NULL;
         state->count--; // Rollback count increment
+        conversation_state_unlock(state);
         return;
     }
+
+    conversation_state_unlock(state);
 }
 
 // Parse OpenAI message format and add to conversation
 static void add_assistant_message_openai(ConversationState *state, cJSON *message) {
+    if (conversation_state_lock(state) != 0) {
+        return;
+    }
+
     if (state->count >= MAX_MESSAGES) {
         LOG_ERROR("Maximum message count reached");
+        conversation_state_unlock(state);
         return;
     }
 
@@ -2582,6 +2820,7 @@ static void add_assistant_message_openai(ConversationState *state, cJSON *messag
     if (content_count == 0) {
         LOG_WARN("Assistant message has no content");
         state->count--; // Rollback count increment
+        conversation_state_unlock(state);
         return;
     }
 
@@ -2589,6 +2828,7 @@ static void add_assistant_message_openai(ConversationState *state, cJSON *messag
     if (!msg->contents) {
         LOG_ERROR("Failed to allocate memory for message content");
         state->count--; // Rollback count increment
+        conversation_state_unlock(state);
         return;
     }
     msg->content_count = content_count;
@@ -2604,6 +2844,7 @@ static void add_assistant_message_openai(ConversationState *state, cJSON *messag
             free(msg->contents);
             msg->contents = NULL;
             state->count--;
+            conversation_state_unlock(state);
             return;
         }
         idx++;
@@ -2638,6 +2879,7 @@ static void add_assistant_message_openai(ConversationState *state, cJSON *messag
                 free(msg->contents);
                 msg->contents = NULL;
                 state->count--;
+                conversation_state_unlock(state);
                 return;
             }
             msg->contents[idx].tool_name = strdup(name->valuestring);
@@ -2653,6 +2895,7 @@ static void add_assistant_message_openai(ConversationState *state, cJSON *messag
                 free(msg->contents);
                 msg->contents = NULL;
                 state->count--;
+                conversation_state_unlock(state);
                 return;
             }
 
@@ -2665,6 +2908,8 @@ static void add_assistant_message_openai(ConversationState *state, cJSON *messag
             idx++;
         }
     }
+
+    conversation_state_unlock(state);
 }
 
 // Helper: Free an array of InternalContent and its internal allocations
@@ -2682,14 +2927,16 @@ static void free_internal_contents(InternalContent *results, int count) {
 }
 
 static void add_tool_results(ConversationState *state, InternalContent *results, int count) {
+    if (conversation_state_lock(state) != 0) {
+        free_internal_contents(results, count);
+        return;
+    }
+
     if (state->count >= MAX_MESSAGES) {
         LOG_ERROR("Maximum message count reached");
         // Free results since they won't be added to state
         free_internal_contents(results, count);
-        return;
-    }
-    if (state->count >= MAX_MESSAGES) {
-        LOG_ERROR("Maximum message count reached");
+        conversation_state_unlock(state);
         return;
     }
 
@@ -2697,6 +2944,8 @@ static void add_tool_results(ConversationState *state, InternalContent *results,
     msg->role = MSG_USER;
     msg->contents = results;
     msg->content_count = count;
+
+    conversation_state_unlock(state);
 }
 
 // ============================================================================
@@ -2704,6 +2953,10 @@ static void add_tool_results(ConversationState *state, InternalContent *results,
 // ============================================================================
 
 void clear_conversation(ConversationState *state) {
+    if (conversation_state_lock(state) != 0) {
+        return;
+    }
+
     // Keep the system message (first message)
     int system_msg_count = 0;
 
@@ -2734,10 +2987,16 @@ void clear_conversation(ConversationState *state) {
         todo_init(state->todo_list);
         LOG_DEBUG("Todo list cleared and reinitialized");
     }
+
+    conversation_state_unlock(state);
 }
 
 // Free all messages and their contents (including system message). Use at program shutdown.
 void conversation_free(ConversationState *state) {
+    if (conversation_state_lock(state) != 0) {
+        return;
+    }
+
     // Free all messages
     for (int i = 0; i < state->count; i++) {
         for (int j = 0; j < state->messages[i].content_count; j++) {
@@ -2754,9 +3013,14 @@ void conversation_free(ConversationState *state) {
 
     // Note: todo_list is freed separately in main cleanup
     // Do not call todo_free() here to avoid double-free
+
+    conversation_state_unlock(state);
 }
 
-static void process_response(ConversationState *state, ApiResponse *response, TUIState *tui) {
+static void process_response(ConversationState *state,
+                             ApiResponse *response,
+                             TUIState *tui,
+                             TUIMessageQueue *queue) {
     // Time the entire response processing
     struct timespec proc_start, proc_end;
     clock_gettime(CLOCK_MONOTONIC, &proc_start);
@@ -2768,11 +3032,7 @@ static void process_response(ConversationState *state, ApiResponse *response, TU
         while (*p && isspace((unsigned char)*p)) p++;
 
         if (*p != '\0') {  // Has non-whitespace content
-            if (tui) {
-                tui_add_conversation_line(tui, "[Assistant]", p, COLOR_PAIR_ASSISTANT);
-            } else {
-                print_assistant(p);
-            }
+            ui_append_line(tui, queue, "[Assistant]", p, COLOR_PAIR_ASSISTANT);
         }
     }
 
@@ -2828,15 +3088,9 @@ static void process_response(ConversationState *state, ApiResponse *response, TU
 
             char *tool_details = get_tool_details(tool->name, input);
 
-            if (tui) {
-                char prefix_with_tool[128];
-                snprintf(prefix_with_tool, sizeof(prefix_with_tool), "[Tool: %s]", tool->name);
-
-                // Pass NULL for text when there are no details to avoid extra space
-                tui_add_conversation_line(tui, prefix_with_tool, tool_details, COLOR_PAIR_TOOL);
-            } else {
-                print_tool(tool->name, tool_details);
-            }
+            char prefix_with_tool[128];
+            snprintf(prefix_with_tool, sizeof(prefix_with_tool), "[Tool: %s]", tool->name);
+            ui_append_line(tui, queue, prefix_with_tool, tool_details, COLOR_PAIR_TOOL);
 
             // Prepare thread arguments
             args[thread_count].tool_use_id = strdup(tool->id);
@@ -2852,7 +3106,7 @@ static void process_response(ConversationState *state, ApiResponse *response, TU
 
         // Show spinner or status while waiting for tools to complete
         Spinner *tool_spinner = NULL;
-        if (!tui) {
+        if (!tui && !queue) {
             char spinner_msg[128];
             snprintf(spinner_msg, sizeof(spinner_msg), "Running %d tool%s...",
                      thread_count, thread_count > 1 ? "s" : "");
@@ -2861,7 +3115,7 @@ static void process_response(ConversationState *state, ApiResponse *response, TU
             char status_msg[128];
             snprintf(status_msg, sizeof(status_msg), "Running %d tool%s...",
                      thread_count, thread_count > 1 ? "s" : "");
-            tui_update_status(tui, status_msg);
+            ui_set_status(tui, queue, status_msg);
         }
 
         // Wait for all tool threads to complete, checking for ESC periodically
@@ -2886,10 +3140,12 @@ static void process_response(ConversationState *state, ApiResponse *response, TU
                 }
 
                 // Update status to show immediate termination
-                if (!tui) {
-                    spinner_update(tool_spinner, "Interrupted (ESC) - terminating tools...");
+                if (!tui && !queue) {
+                    if (tool_spinner) {
+                        spinner_update(tool_spinner, "Interrupted (ESC) - terminating tools...");
+                    }
                 } else {
-                    tui_update_status(tui, "Interrupted (ESC) - terminating tools...");
+                    ui_set_status(tui, queue, "Interrupted (ESC) - terminating tools...");
                 }
                 break;
             }
@@ -2907,12 +3163,12 @@ static void process_response(ConversationState *state, ApiResponse *response, TU
 
         // If interrupted, clean up and return
         if (interrupted) {
-            if (!tui) {
+            if (!tui && !queue) {
                 if (tool_spinner) {
                     spinner_stop(tool_spinner, "Interrupted by user (ESC) - tools terminated", 0);
                 }
             } else {
-                tui_update_status(tui, "Interrupted by user (ESC) - tools terminated");
+                ui_set_status(tui, queue, "Interrupted by user (ESC) - tools terminated");
             }
 
             free(threads);
@@ -2937,30 +3193,14 @@ static void process_response(ConversationState *state, ApiResponse *response, TU
                 const char *tool_name = results[i].tool_name ? results[i].tool_name : "tool";
 
                 // Display error next to/below the tool execution
-                if (tui) {
-                    char error_display[512];
-                    snprintf(error_display, sizeof(error_display), "%s failed: %s", tool_name, error_msg);
-                    tui_add_conversation_line(tui, "[Error]", error_display, COLOR_PAIR_ERROR);
-                } else {
-                    char error_display[512];
-                    snprintf(error_display, sizeof(error_display), "[Error] %s failed: %s", tool_name, error_msg);
-                    // Try to get color from colorscheme, fall back to centralized ANSI color
-                    char color_code[32];
-                    const char *color_start;
-                    if (get_colorscheme_color(COLORSCHEME_ERROR, color_code, sizeof(color_code)) == 0) {
-                        color_start = color_code;
-                    } else {
-                        LOG_WARN("Using fallback ANSI color for ERROR");
-                        color_start = ANSI_FALLBACK_ERROR;
-                    }
-                    printf("%s%s%s\n", color_start, error_display, ANSI_RESET);
-                    fflush(stdout);
-                }
+                char error_display[512];
+                snprintf(error_display, sizeof(error_display), "%s failed: %s", tool_name, error_msg);
+                ui_show_error(tui, queue, error_display);
             }
         }
 
         // Clear status on success, show message on error
-        if (!tui) {
+        if (!tui && !queue) {
             printf("DEBUG: has_error = %d\n", has_error);
             if (has_error) {
                 spinner_stop(tool_spinner, "Tool execution completed with errors", 0);
@@ -2970,9 +3210,9 @@ static void process_response(ConversationState *state, ApiResponse *response, TU
             }
         } else {
             if (has_error) {
-                tui_update_status(tui, "Tool execution completed with errors");
+                ui_set_status(tui, queue, "Tool execution completed with errors");
             } else {
-                tui_update_status(tui, "");  // Clear status on success
+                ui_set_status(tui, queue, "");  // Clear status on success
             }
         }
         free(threads);
@@ -2982,29 +3222,25 @@ static void process_response(ConversationState *state, ApiResponse *response, TU
         add_tool_results(state, results, tool_count);
 
         Spinner *followup_spinner = NULL;
-        if (!tui) {
+        if (!tui && !queue) {
             followup_spinner = spinner_start("Processing tool results...", SPINNER_CYAN);
         } else {
-            tui_update_status(tui, "Processing tool results...");
+            ui_set_status(tui, queue, "Processing tool results...");
         }
         ApiResponse *next_response = call_api(state);
         // Clear status after API call completes
-        if (!tui) {
+        if (!tui && !queue) {
             spinner_stop(followup_spinner, NULL, 1);  // Clear without message
         } else {
-            tui_update_status(tui, "");  // Clear status
+            ui_set_status(tui, queue, "");  // Clear status
         }
         if (next_response) {
-            process_response(state, next_response, tui);
+            process_response(state, next_response, tui, queue);
             api_response_free(next_response);
         } else {
             // API call failed - show error to user
             const char *error_msg = "API call failed after executing tools. Check logs for details.";
-            if (tui) {
-                tui_add_conversation_line(tui, "[Error]", error_msg, COLOR_PAIR_ERROR);
-            } else {
-                print_error(error_msg);
-            }
+            ui_show_error(tui, queue, error_msg);
             LOG_ERROR("API call returned NULL after tool execution");
         }
 
@@ -3023,6 +3259,35 @@ static void process_response(ConversationState *state, ApiResponse *response, TU
     long proc_ms = (proc_end.tv_sec - proc_start.tv_sec) * 1000 +
                    (proc_end.tv_nsec - proc_start.tv_nsec) / 1000000;
     LOG_INFO("Response processing completed in %ld ms (no tools)", proc_ms);
+}
+
+static void ai_worker_handle_instruction(AIWorkerContext *ctx, const AIInstruction *instruction) {
+    if (!ctx || !instruction) {
+        return;
+    }
+
+    ui_set_status(NULL, ctx->tui_queue, "Waiting for API response...");
+
+    ApiResponse *response = call_api(ctx->state);
+
+    ui_set_status(NULL, ctx->tui_queue, "");
+
+    if (!response) {
+        ui_show_error(NULL, ctx->tui_queue, "Failed to get response from API");
+        return;
+    }
+
+    cJSON *error = cJSON_GetObjectItem(response->raw_response, "error");
+    if (error) {
+        cJSON *error_message = cJSON_GetObjectItem(error, "message");
+        const char *error_msg = error_message ? error_message->valuestring : "Unknown error";
+        ui_show_error(NULL, ctx->tui_queue, error_msg);
+        api_response_free(response);
+        return;
+    }
+
+    process_response(ctx->state, response, NULL, ctx->tui_queue);
+    api_response_free(response);
 }
 
 // ============================================================================
@@ -3044,6 +3309,9 @@ static void process_response(ConversationState *state, ApiResponse *response, TU
 typedef struct {
     ConversationState *state;
     TUIState *tui;
+    AIWorkerContext *worker;
+    AIInstructionQueue *instruction_queue;
+    TUIMessageQueue *tui_queue;
 } InteractiveContext;
 
 // Submit callback invoked by the TUI event loop when the user presses Enter
@@ -3053,39 +3321,40 @@ static int submit_input_callback(const char *input, void *user_data) {
         return 0;
     }
 
-    // Ignore empty submissions
     if (input[0] == '\0') {
         return 0;
     }
 
     TUIState *tui = ctx->tui;
     ConversationState *state = ctx->state;
+    AIWorkerContext *worker = ctx->worker;
+    TUIMessageQueue *queue = ctx->tui_queue;
 
     char *input_copy = strdup(input);
     if (!input_copy) {
-        tui_add_conversation_line(tui, "[Error]", "Memory allocation failed", COLOR_PAIR_ERROR);
+        ui_show_error(tui, queue, "Memory allocation failed");
         return 0;
     }
 
-    // Handle commands (prefixed with '/')
     if (input_copy[0] == '/') {
-        tui_add_conversation_line(tui, "[User]", input_copy, COLOR_PAIR_USER);
+        ui_append_line(tui, queue, "[User]", input_copy, COLOR_PAIR_USER);
 
         if (strcmp(input_copy, "/exit") == 0 || strcmp(input_copy, "/quit") == 0) {
             free(input_copy);
-            return 1;  // Signal event loop to exit
+            return 1;
         } else if (strcmp(input_copy, "/clear") == 0) {
             clear_conversation(state);
             tui_clear_conversation(tui);
-            tui_add_conversation_line(tui, "[System]", "Conversation cleared", COLOR_PAIR_STATUS);
+            ui_append_line(tui, queue, "[System]", "Conversation cleared", COLOR_PAIR_STATUS);
             free(input_copy);
             return 0;
         } else if (strncmp(input_copy, "/add-dir ", 9) == 0) {
             const char *path = input_copy + 9;
             if (add_directory(state, path) == 0) {
-                tui_add_conversation_line(tui, "[System]", "Directory added successfully", COLOR_PAIR_STATUS);
+                ui_append_line(tui, queue, "[System]", "Directory added successfully", COLOR_PAIR_STATUS);
                 char *new_system_prompt = build_system_prompt(state);
                 if (!new_system_prompt) {
+                    ui_show_error(tui, queue, "Failed to rebuild system prompt");
                     free(input_copy);
                     return 0;
                 }
@@ -3094,59 +3363,65 @@ static int submit_input_callback(const char *input, void *user_data) {
                     free(state->messages[0].contents[0].text);
                     state->messages[0].contents[0].text = strdup(new_system_prompt);
                     if (!state->messages[0].contents[0].text) {
-                        tui_add_conversation_line(tui, "[Error]", "Memory allocation failed", COLOR_PAIR_ERROR);
+                        ui_show_error(tui, queue, "Memory allocation failed");
                     }
                 }
                 free(new_system_prompt);
             } else {
-                tui_add_conversation_line(tui, "[Error]", "Failed to add directory", COLOR_PAIR_ERROR);
+                ui_show_error(tui, queue, "Failed to add directory");
             }
             free(input_copy);
             return 0;
         } else if (strcmp(input_copy, "/help") == 0) {
-            tui_add_conversation_line(tui, "[System]", "Available commands:", COLOR_PAIR_STATUS);
-            tui_add_conversation_line(tui, "[System]", "  /exit, /quit - Exit the program", COLOR_PAIR_STATUS);
-            tui_add_conversation_line(tui, "[System]", "  /clear - Clear conversation history", COLOR_PAIR_STATUS);
-            tui_add_conversation_line(tui, "[System]", "  /add-dir <path> - Add additional working directory", COLOR_PAIR_STATUS);
-            tui_add_conversation_line(tui, "[System]", "  /help - Show this help message", COLOR_PAIR_STATUS);
+            ui_append_line(tui, queue, "[System]", "Available commands:", COLOR_PAIR_STATUS);
+            ui_append_line(tui, queue, "[System]", "  /exit, /quit - Exit the program", COLOR_PAIR_STATUS);
+            ui_append_line(tui, queue, "[System]", "  /clear - Clear conversation history", COLOR_PAIR_STATUS);
+            ui_append_line(tui, queue, "[System]", "  /add-dir <path> - Add additional working directory", COLOR_PAIR_STATUS);
+            ui_append_line(tui, queue, "[System]", "  /help - Show this help message", COLOR_PAIR_STATUS);
             free(input_copy);
             return 0;
         } else {
-            tui_add_conversation_line(tui, "[Error]", "Unknown command. Type /help for available commands.", COLOR_PAIR_ERROR);
+            ui_show_error(tui, queue, "Unknown command. Type /help for available commands.");
             free(input_copy);
             return 0;
         }
     }
 
-    // Regular input: show user message in conversation
-    tui_add_conversation_line(tui, "[User]", input_copy, COLOR_PAIR_USER);
-
-    // Add message to conversation state (makes internal copy)
+    ui_append_line(tui, queue, "[User]", input_copy, COLOR_PAIR_USER);
     add_user_message(state, input_copy);
-    free(input_copy);
 
-    // Call API with status update
-    tui_update_status(tui, "Waiting for API response...");
-    ApiResponse *response = call_api(state);
-    tui_update_status(tui, "");  // Clear status after API response
+    if (worker) {
+        if (ai_worker_submit(worker, input_copy) != 0) {
+            ui_show_error(tui, queue, "Failed to queue instruction for processing");
+        } else {
+            ui_set_status(tui, queue, "Instruction queued for processing...");
+        }
+    } else {
+        ui_set_status(tui, queue, "Waiting for API response...");
+        ApiResponse *response = call_api(state);
+        ui_set_status(tui, queue, "");
 
-    if (!response) {
-        tui_add_conversation_line(tui, "[Error]", "Failed to get response from API", COLOR_PAIR_ERROR);
-        return 0;
-    }
+        if (!response) {
+            ui_show_error(tui, queue, "Failed to get response from API");
+            free(input_copy);
+            return 0;
+        }
 
-    // Check for errors in raw response
-    cJSON *error = cJSON_GetObjectItem(response->raw_response, "error");
-    if (error) {
-        cJSON *error_message = cJSON_GetObjectItem(error, "message");
-        const char *error_msg = error_message ? error_message->valuestring : "Unknown error";
-        tui_add_conversation_line(tui, "[Error]", error_msg, COLOR_PAIR_ERROR);
+        cJSON *error = cJSON_GetObjectItem(response->raw_response, "error");
+        if (error) {
+            cJSON *error_message = cJSON_GetObjectItem(error, "message");
+            const char *error_msg = error_message ? error_message->valuestring : "Unknown error";
+            ui_show_error(tui, queue, error_msg);
+            api_response_free(response);
+            free(input_copy);
+            return 0;
+        }
+
+        process_response(state, response, tui, queue);
         api_response_free(response);
-        return 0;
     }
 
-    process_response(state, response, tui);
-    api_response_free(response);
+    free(input_copy);
     return 0;
 }
 
@@ -3185,12 +3460,78 @@ static void interactive_mode(ConversationState *state) {
              state->model, state->session_id ? state->session_id : "none");
     tui_update_status(&tui, status_msg);
 
+    const size_t TUI_QUEUE_CAPACITY = 256;
+    const size_t AI_QUEUE_CAPACITY = 16;
+    TUIMessageQueue tui_queue;
+    AIInstructionQueue instruction_queue;
+    AIWorkerContext worker_ctx = {0};
+    int tui_queue_initialized = 0;
+    int instruction_queue_initialized = 0;
+    int worker_started = 0;
+    int async_enabled = 1;
+
+    if (tui_msg_queue_init(&tui_queue, TUI_QUEUE_CAPACITY) != 0) {
+        ui_show_error(&tui, NULL, "Failed to initialize TUI message queue; running in synchronous mode.");
+        async_enabled = 0;
+    } else {
+        tui_queue_initialized = 1;
+    }
+
+    if (async_enabled) {
+        if (ai_queue_init(&instruction_queue, AI_QUEUE_CAPACITY) != 0) {
+            ui_show_error(&tui, NULL, "Failed to initialize instruction queue; running in synchronous mode.");
+            async_enabled = 0;
+        } else {
+            instruction_queue_initialized = 1;
+        }
+    }
+
+    if (async_enabled) {
+        if (ai_worker_start(&worker_ctx, state, &instruction_queue, &tui_queue, ai_worker_handle_instruction) != 0) {
+            ui_show_error(&tui, NULL, "Failed to start AI worker thread; running in synchronous mode.");
+            async_enabled = 0;
+        } else {
+            worker_started = 1;
+        }
+    }
+
+    if (!async_enabled) {
+        if (worker_started) {
+            ai_worker_stop(&worker_ctx);
+            worker_started = 0;
+        }
+        if (instruction_queue_initialized) {
+            ai_queue_free(&instruction_queue);
+            instruction_queue_initialized = 0;
+        }
+        if (tui_queue_initialized) {
+            tui_msg_queue_shutdown(&tui_queue);
+            tui_msg_queue_free(&tui_queue);
+            tui_queue_initialized = 0;
+        }
+    }
+
     InteractiveContext ctx = {
         .state = state,
         .tui = &tui,
+        .worker = worker_started ? &worker_ctx : NULL,
+        .instruction_queue = instruction_queue_initialized ? &instruction_queue : NULL,
+        .tui_queue = tui_queue_initialized ? &tui_queue : NULL,
     };
 
-    tui_event_loop(&tui, ">", submit_input_callback, &ctx, NULL);
+    void *event_loop_queue = tui_queue_initialized ? (void *)&tui_queue : NULL;
+    tui_event_loop(&tui, ">", submit_input_callback, &ctx, event_loop_queue);
+
+    if (worker_started) {
+        ai_worker_stop(&worker_ctx);
+    }
+    if (instruction_queue_initialized) {
+        ai_queue_free(&instruction_queue);
+    }
+    if (tui_queue_initialized) {
+        tui_msg_queue_shutdown(&tui_queue);
+        tui_msg_queue_free(&tui_queue);
+    }
 
     // Cleanup TUI
     tui_cleanup(&tui);
@@ -3424,6 +3765,17 @@ int main(int argc, char *argv[]) {
 
     // Initialize conversation state
     ConversationState state = {0};
+    if (conversation_state_init(&state) != 0) {
+        LOG_ERROR("Failed to initialize conversation state synchronization");
+        fprintf(stderr, "Error: Unable to initialize conversation state\n");
+        free(session_id);
+        if (persistence_db) {
+            persistence_close(persistence_db);
+        }
+        curl_global_cleanup();
+        log_shutdown();
+        return 1;
+    }
     state.api_key = strdup(api_key);
     state.api_url = strdup(api_base);
     state.model = strdup(model);
@@ -3459,6 +3811,7 @@ int main(int argc, char *argv[]) {
         if (state.todo_list) {
             free(state.todo_list);
         }
+        conversation_state_destroy(&state);
         curl_global_cleanup();
         return 1;
     }
@@ -3485,6 +3838,7 @@ int main(int argc, char *argv[]) {
         if (state.todo_list) {
             free(state.todo_list);
         }
+        conversation_state_destroy(&state);
         curl_global_cleanup();
         return 1;
     }
@@ -3494,6 +3848,7 @@ int main(int argc, char *argv[]) {
         free(state.api_key);
         free(state.api_url);
         free(state.model);
+        conversation_state_destroy(&state);
         curl_global_cleanup();
         return 1;
     }
@@ -3549,6 +3904,7 @@ int main(int argc, char *argv[]) {
     free(state.model);
     free(state.working_dir);
     free(state.session_id);
+    conversation_state_destroy(&state);
 
     // Close persistence layer
     if (state.persistence_db) {

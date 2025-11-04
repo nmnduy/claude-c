@@ -63,6 +63,10 @@ static void test_write_with_diff(const char *test_name,
 
     // Create conversation state
     ConversationState state = {0};
+    if (conversation_state_init(&state) != 0) {
+        fprintf(stderr, "Failed to initialize conversation state\n");
+        exit(1);
+    }
     state.working_dir = strdup("/tmp");
 
     // Call the Write tool
@@ -81,6 +85,7 @@ static void test_write_with_diff(const char *test_name,
 
     cJSON_Delete(params);
     free(state.working_dir);
+    conversation_state_destroy(&state);
     printf("\n");
 
     // Clean up

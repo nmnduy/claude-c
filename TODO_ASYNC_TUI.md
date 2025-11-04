@@ -2,7 +2,7 @@
 
 **Goal**: Make the TUI always responsive by moving API calls and tool execution to background threads, allowing the input box to accept commands while AI processes requests.
 
-**Status**: Phase 2 Complete ✅ - Ready for Phase 3
+**Status**: Phase 3 Complete ✅ - Ready for Phase 4
 **Priority**: High
 **Estimated Effort**: 3-5 days (Phase 1: ~1 day completed)
 
@@ -14,7 +14,7 @@
 |-------|--------|-------------|
 | Phase 1 | ✅ Complete | Message queue infrastructure (TUI + AI queues) |
 | Phase 2 | ✅ Complete | Non-blocking input and TUI event loop |
-| Phase 3 | ⏳ Pending | Worker thread for API calls |
+| Phase 3 | ✅ Complete | Worker thread for API calls |
 | Phase 4 | ⏳ Pending | Async tool execution |
 | Phase 5 | ⏳ Pending | Full integration |
 | Phase 6 | ⏳ Pending | Testing and polish |
@@ -22,30 +22,29 @@
 **Key Achievements**:
 - ✅ Thread-safe circular buffer queues implemented
 - ✅ 14 unit tests passing (concurrent, overflow, shutdown)
-- ✅ Proper memory ownership and cleanup
-- ✅ Ready for integration into TUI
+- ✅ ConversationState now protected by mutex for multi-thread access
 - ✅ Non-blocking TUI event loop with persistent input buffer
+- ✅ Background worker thread handles API calls + TUI message dispatch
 
 **Next Steps**:
-- Begin Phase 3: Move API interactions to worker thread
-- Wire submit callback to AI instruction queue
-- Post incremental updates via TUI message queue during processing
+- Begin Phase 4: Move tool execution off blocking path (condition variable / callbacks)
+- Stream fine-grained tool progress through TUI queue helpers
+- Add worker-side cancellation and error surfacing for long-running tools
 
 ---
 
 ## Current Architecture Problems
 
 ### Blocking Points
-1. **Input Loop**: Callbacks still execute on main thread, so API/tool work blocks UI
-2. **API Calls**: `call_api()` blocks on network I/O with retry logic
-3. **Tool Execution**: `process_response()` blocks waiting for tool threads to complete
-4. **Recursive Processing**: Tool results trigger more API calls, creating nested blocking
+1. **Tool Execution**: `process_response()` still blocks the worker while tools run and poll via monitor thread
+2. **Recursive Processing**: Tool results trigger additional API calls serially on the same worker, delaying earlier updates
+3. **TUI Queue Backpressure**: Status spam during long tool runs may overflow FIFO queue without smarter batching
 
 ### User Experience Issues
-- Input box only active between AI responses
-- Cannot queue multiple instructions
-- No updates during long-running operations (except spinner)
-- Terminal resize only checked during input wait
+- Tool progress still surfaces as coarse status changes (no per-tool streaming updates)
+- Cancellation requires ESC polling inside worker; needs condition-based interrupt
+- Multiple queued instructions execute strictly serially; no visibility into backlog depth
+- Resize handling improved, but long tool phases still reuse last status message until completion
 
 ---
 
@@ -165,52 +164,54 @@
 
 ---
 
-### Phase 3: Worker Thread for API Calls ⏳
+### Phase 3: Worker Thread for API Calls ✅ COMPLETED
 
 **Goal**: Move API requests off main thread
 
 #### Tasks
-- [ ] Create `src/ai_worker.h` and `src/ai_worker.c`
-- [ ] Define `AIWorkerContext` struct
-  - [ ] Thread handle
-  - [ ] Instruction queue
-  - [ ] TUI message queue (for posting updates)
-  - [ ] Running flag
-  - [ ] ConversationState pointer (shared, needs mutex)
-- [ ] Implement worker thread function
-  - [ ] Main loop: `dequeue_instruction()` → process → repeat
-  - [ ] Post status updates: "Waiting for API...", "Processing tools...", etc.
-  - [ ] Call `call_api()` (still blocking, but OK in worker)
-  - [ ] Post assistant response to TUI
-  - [ ] Handle API errors gracefully
-- [ ] Add synchronization to `ConversationState`
-  - [ ] Add `pthread_mutex_t conv_mutex` to struct
-  - [ ] Lock when adding messages
-  - [ ] Lock when building API requests
-  - [ ] Document lock ordering to prevent deadlocks
-- [ ] Implement worker lifecycle
-  - [ ] `ai_worker_start()` - Create thread
-  - [ ] `ai_worker_stop()` - Signal shutdown + join
-  - [ ] `ai_worker_submit()` - Enqueue instruction
-- [ ] Update `interactive_mode()`
-  - [ ] Start worker thread at initialization
-  - [ ] On Enter key: call `ai_worker_submit()` instead of `call_api()`
-  - [ ] Stop worker thread at cleanup
+- [x] Create `src/ai_worker.h` and `src/ai_worker.c`
+- [x] Define `AIWorkerContext` struct
+  - [x] Thread handle
+  - [x] Instruction queue
+  - [x] TUI message queue (for posting updates)
+  - [x] Running flag
+  - [x] ConversationState pointer (shared, needs mutex)
+- [x] Implement worker thread function
+  - [x] Main loop: `dequeue_instruction()` → process → repeat
+  - [x] Post status updates: "Waiting for API...", "Processing tools...", etc.
+  - [x] Call `call_api()` (still blocking, but OK in worker)
+  - [x] Post assistant response to TUI
+  - [x] Handle API errors gracefully
+- [x] Add synchronization to `ConversationState`
+  - [x] Add `pthread_mutex_t conv_mutex` to struct
+  - [x] Lock when adding messages
+  - [x] Lock when building API requests
+  - [x] Document lock ordering to prevent deadlocks
+- [x] Implement worker lifecycle
+  - [x] `ai_worker_start()` - Create thread
+  - [x] `ai_worker_stop()` - Signal shutdown + join
+  - [x] `ai_worker_submit()` - Enqueue instruction
+- [x] Update `interactive_mode()`
+  - [x] Start worker thread at initialization
+  - [x] On Enter key: call `ai_worker_submit()` instead of `call_api()`
+  - [x] Stop worker thread at cleanup
 
-**Files to create**:
+**Files created**:
 - `src/ai_worker.h`
 - `src/ai_worker.c`
 
-**Files to modify**:
-- `src/claude_internal.h` - Add mutex to `ConversationState`
-- `src/claude.c` - Update `interactive_mode()`, `add_user_message()`, etc.
+**Files modified**:
+- `src/claude_internal.h` - Added mutex to `ConversationState`
+- `src/claude.c` - Worker integration, UI helpers, mutex usage
+- `src/openai_messages.c` - Request builder uses conversation lock
+- Tests updated to init/destroy conversation mutex
 
 **Success Criteria**:
-- API calls do not block TUI
-- User can type next instruction while API processes
-- Conversation history updates correctly
-- No data races (verified with `-fsanitize=thread`)
-- Worker thread cleans up properly on exit
+- ✅ API calls do not block TUI input/render loop
+- ✅ User can type next instruction while API processes
+- ✅ Conversation history updates correctly via worker
+- ⚠️ Need dedicated TSan run to confirm no data races
+- ✅ Worker thread cleans up properly on exit
 
 ---
 
