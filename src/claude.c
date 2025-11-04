@@ -3504,7 +3504,8 @@ static void process_response(ConversationState *state,
                     break;
                 }
 
-                if (wait_rc == ETIMEDOUT && check_for_esc()) {
+                // Only check for ESC in non-TUI mode (TUI mode handles keyboard via ncurses)
+                if (wait_rc == ETIMEDOUT && !tui && check_for_esc()) {
                     LOG_INFO("Tool execution interrupted by user (ESC pressed) - cancelling threads");
                     interrupted = 1;
 
