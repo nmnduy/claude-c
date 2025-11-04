@@ -1,3 +1,4 @@
+- [ ] if have `rg` then put that in the system prompt instead of `grep`. print warning when there is no `rg`
 - [x] why so many linse between [Assistant] and everything else?
 
 - [ ] plan mode
