@@ -318,6 +318,139 @@ static void ui_show_error(TUIState *tui,
     print_error(safe);
 }
 
+// =====================================================================
+// Tool Output Helpers
+// =====================================================================
+
+static _Thread_local TUIMessageQueue *g_active_tool_queue = NULL;
+
+static void tool_emit_line(const char *prefix, const char *text) {
+    const char *safe_prefix = prefix ? prefix : "";
+    const char *safe_text = text ? text : "";
+
+    if (g_active_tool_queue) {
+        size_t prefix_len = safe_prefix[0] ? strlen(safe_prefix) : 0;
+        size_t text_len = strlen(safe_text);
+        size_t extra = (prefix_len > 0 && text_len > 0) ? 1 : 0;
+        size_t total = prefix_len + extra + text_len + 1;
+
+        char *formatted = malloc(total);
+        if (!formatted) {
+            LOG_ERROR("Failed to allocate tool output buffer");
+            return;
+        }
+
+        if (prefix_len > 0 && text_len > 0) {
+            snprintf(formatted, total, "%s %s", safe_prefix, safe_text);
+        } else if (prefix_len > 0) {
+            snprintf(formatted, total, "%s", safe_prefix);
+        } else {
+            snprintf(formatted, total, "%s", safe_text);
+        }
+
+        if (post_tui_message(g_active_tool_queue, TUI_MSG_ADD_LINE, formatted) != 0) {
+            LOG_WARN("Failed to post tool output to TUI queue");
+        }
+        free(formatted);
+        return;
+    }
+
+    if (safe_prefix[0] && safe_text[0]) {
+        printf("%s %s\n", safe_prefix, safe_text);
+    } else if (safe_prefix[0]) {
+        printf("%s\n", safe_prefix);
+    } else {
+        printf("%s\n", safe_text);
+    }
+    fflush(stdout);
+}
+
+typedef enum {
+    DIFF_LINE_ADDED,
+    DIFF_LINE_REMOVED,
+    DIFF_LINE_CONTEXT,
+    DIFF_LINE_HEADER,
+    DIFF_LINE_OTHER
+} DiffLineType;
+
+static void emit_diff_line(DiffLineType type,
+                           const char *line,
+                           const char *add_color_start,
+                           const char *remove_color_start,
+                           const char *context_color_start,
+                           const char *header_color_start) {
+    if (!line) {
+        return;
+    }
+
+    if (g_active_tool_queue) {
+        size_t len = strlen(line);
+        while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r')) {
+            len--;
+        }
+
+        char *trimmed = strndup(line, len);
+        if (!trimmed) {
+            LOG_ERROR("Failed to allocate trimmed diff line");
+            return;
+        }
+
+        const char *prefix = "[Diff]";
+        switch (type) {
+            case DIFF_LINE_ADDED:
+                prefix = "[Diff +]";
+                break;
+            case DIFF_LINE_REMOVED:
+                prefix = "[Diff -]";
+                break;
+            case DIFF_LINE_CONTEXT:
+                prefix = "[Diff ~]";
+                break;
+            case DIFF_LINE_HEADER:
+                prefix = "[Diff @]";
+                break;
+            case DIFF_LINE_OTHER:
+            default:
+                prefix = "[Diff]";
+                break;
+        }
+
+        if (trimmed[0] != '\0') {
+            tool_emit_line(prefix, trimmed);
+        } else {
+            tool_emit_line(prefix, " ");
+        }
+        free(trimmed);
+        return;
+    }
+
+    const char *color = NULL;
+    switch (type) {
+        case DIFF_LINE_ADDED:
+            color = add_color_start;
+            break;
+        case DIFF_LINE_REMOVED:
+            color = remove_color_start;
+            break;
+        case DIFF_LINE_CONTEXT:
+            color = context_color_start;
+            break;
+        case DIFF_LINE_HEADER:
+            color = header_color_start;
+            break;
+        case DIFF_LINE_OTHER:
+        default:
+            color = NULL;
+            break;
+    }
+
+    if (color) {
+        printf("%s%s%s", color, line, ANSI_RESET);
+    } else {
+        printf("%s", line);
+    }
+}
+
 // Helper function to extract tool details from arguments
 static char* get_tool_details(const char *tool_name, cJSON *arguments) {
     if (!arguments || !cJSON_IsObject(arguments)) {
@@ -761,20 +894,40 @@ static int show_diff(const char *file_path, const char *original_content) {
 
         // Colorize based on line prefix
         if (line[0] == '+' && line[1] != '+') {
-            // Added line (but not +++ header)
-            printf("%s%s%s", add_color_start, line, ANSI_RESET);
+            emit_diff_line(DIFF_LINE_ADDED,
+                           line,
+                           add_color_start,
+                           remove_color_start,
+                           context_color_start,
+                           header_color_start);
         } else if (line[0] == '-' && line[1] != '-') {
-            // Removed line (but not --- header)
-            printf("%s%s%s", remove_color_start, line, ANSI_RESET);
+            emit_diff_line(DIFF_LINE_REMOVED,
+                           line,
+                           add_color_start,
+                           remove_color_start,
+                           context_color_start,
+                           header_color_start);
         } else if (strncmp(line, "@@", 2) == 0) {
-            // Line number context (@@ -line,count +line,count @@)
-            printf("%s%s%s", context_color_start, line, ANSI_RESET);
+            emit_diff_line(DIFF_LINE_CONTEXT,
+                           line,
+                           add_color_start,
+                           remove_color_start,
+                           context_color_start,
+                           header_color_start);
         } else if (strncmp(line, "---", 3) == 0 || strncmp(line, "+++", 3) == 0) {
-            // File headers
-            printf("%s%s%s", header_color_start, line, ANSI_RESET);
+            emit_diff_line(DIFF_LINE_HEADER,
+                           line,
+                           add_color_start,
+                           remove_color_start,
+                           context_color_start,
+                           header_color_start);
         } else {
-            // Context lines (no change)
-            printf("%s", line);
+            emit_diff_line(DIFF_LINE_OTHER,
+                           line,
+                           add_color_start,
+                           remove_color_start,
+                           context_color_start,
+                           header_color_start);
         }
     }
 
@@ -782,10 +935,10 @@ static int show_diff(const char *file_path, const char *original_content) {
     unlink(temp_path);
 
     if (!has_diff) {
-        printf("(No changes - files are identical)\n");
+        tool_emit_line("[Diff]", "(No changes - files are identical)");
     } else if (result == 0) {
         // diff exit code 0 means no differences found
-        printf("(No differences found)\n");
+        tool_emit_line("[Diff]", "(No differences found)");
     }
 
 
@@ -1074,8 +1227,10 @@ STATIC cJSON* tool_write(cJSON *params, ConversationState *state) {
             show_diff(resolved_path, original_content);
         } else {
             // New file creation
-            printf("\n--- Created new file: %s ---\n", resolved_path);
-            printf("(New file written - no previous content to compare)\n\n");
+            char header[PATH_MAX + 64];
+            snprintf(header, sizeof(header), "--- Created new file: %s ---", resolved_path);
+            tool_emit_line("[Diff]", header);
+            tool_emit_line("[Diff]", "New file written - no previous content to compare");
         }
     }
 
@@ -1133,6 +1288,7 @@ typedef struct {
     InternalContent *result_block;   // pointer to results array slot
     ToolExecutionTracker *tracker;  // shared tracker for completion signaling
     int notified;                  // guard against double notification
+    TUIMessageQueue *queue;        // active TUI queue for tool output
 } ToolThreadArg;
 
 static int tool_tracker_init(ToolExecutionTracker *tracker,
@@ -1269,7 +1425,10 @@ static void *tool_thread_func(void *arg) {
     pthread_cleanup_push(tool_thread_cleanup, arg);
 
     // Execute the tool
+    TUIMessageQueue *previous_queue = g_active_tool_queue;
+    g_active_tool_queue = t->queue;
     cJSON *res = execute_tool(t->tool_name, t->input, t->state);
+    g_active_tool_queue = previous_queue;
     // Free input JSON
     cJSON_Delete(t->input);
     t->input = NULL;  // Mark as freed for cleanup handler
@@ -3292,6 +3451,7 @@ static void process_response(ConversationState *state,
             current->result_block = result_slot;
             current->tracker = &tracker;
             current->notified = 0;
+            current->queue = queue;
 
             int rc = pthread_create(&threads[started_threads], NULL, tool_thread_func, current);
             if (rc != 0) {

@@ -1384,6 +1384,21 @@ static TUIColorPair infer_color_from_prefix(const char *prefix) {
     if (strstr(prefix, "Error")) {
         return COLOR_PAIR_ERROR;
     }
+    if (strstr(prefix, "Diff +")) {
+        return COLOR_PAIR_USER;
+    }
+    if (strstr(prefix, "Diff -")) {
+        return COLOR_PAIR_ERROR;
+    }
+    if (strstr(prefix, "Diff @")) {
+        return COLOR_PAIR_STATUS;
+    }
+    if (strstr(prefix, "Diff ~")) {
+        return COLOR_PAIR_FOREGROUND;
+    }
+    if (strstr(prefix, "Diff")) {
+        return COLOR_PAIR_STATUS;
+    }
     if (strstr(prefix, "System")) {
         return COLOR_PAIR_STATUS;
     }
