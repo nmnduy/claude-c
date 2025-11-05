@@ -363,90 +363,55 @@ static void tool_emit_line(const char *prefix, const char *text) {
     fflush(stdout);
 }
 
-typedef enum {
-    DIFF_LINE_ADDED,
-    DIFF_LINE_REMOVED,
-    DIFF_LINE_CONTEXT,
-    DIFF_LINE_HEADER,
-    DIFF_LINE_OTHER
-} DiffLineType;
-
-static void emit_diff_line(DiffLineType type,
-                           const char *line,
-                           const char *add_color_start,
-                           const char *remove_color_start,
-                           const char *context_color_start,
-                           const char *header_color_start) {
+static void emit_diff_line(const char *line,
+                           const char *add_color,
+                           const char *remove_color) {
     if (!line) {
         return;
     }
 
-    if (g_active_tool_queue) {
-        size_t len = strlen(line);
-        while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r')) {
-            len--;
-        }
+    // Trim trailing newlines
+    size_t len = strlen(line);
+    while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r')) {
+        len--;
+    }
 
-        char *trimmed = strndup(line, len);
-        if (!trimmed) {
-            LOG_ERROR("Failed to allocate trimmed diff line");
-            return;
-        }
-
-        const char *prefix = "[Diff]";
-        switch (type) {
-            case DIFF_LINE_ADDED:
-                prefix = "[Diff +]";
-                break;
-            case DIFF_LINE_REMOVED:
-                prefix = "[Diff -]";
-                break;
-            case DIFF_LINE_CONTEXT:
-                prefix = "[Diff ~]";
-                break;
-            case DIFF_LINE_HEADER:
-                prefix = "[Diff @]";
-                break;
-            case DIFF_LINE_OTHER:
-            default:
-                prefix = "[Diff]";
-                break;
-        }
-
-        if (trimmed[0] != '\0') {
-            tool_emit_line(prefix, trimmed);
-        } else {
-            tool_emit_line(prefix, " ");
-        }
-        free(trimmed);
+    if (len == 0) {
         return;
     }
 
-    const char *color = NULL;
-    switch (type) {
-        case DIFF_LINE_ADDED:
-            color = add_color_start;
-            break;
-        case DIFF_LINE_REMOVED:
-            color = remove_color_start;
-            break;
-        case DIFF_LINE_CONTEXT:
-            color = context_color_start;
-            break;
-        case DIFF_LINE_HEADER:
-            color = header_color_start;
-            break;
-        case DIFF_LINE_OTHER:
-        default:
-            color = NULL;
-            break;
+    char *trimmed = strndup(line, len);
+    if (!trimmed) {
+        LOG_ERROR("Failed to allocate trimmed diff line");
+        return;
     }
 
-    if (color) {
-        printf("%s%s%s", color, line, ANSI_RESET);
-    } else {
-        printf("%s", line);
+    // Determine color based on first character
+    const char *color = NULL;
+    if (trimmed[0] == '+' && trimmed[1] != '+') {
+        color = add_color;
+    } else if (trimmed[0] == '-' && trimmed[1] != '-') {
+        color = remove_color;
     }
+
+    // Print with indentation and color if applicable
+    if (g_active_tool_queue) {
+        if (color) {
+            char colored_line[2048];
+            snprintf(colored_line, sizeof(colored_line), "%s%s%s", color, trimmed, ANSI_RESET);
+            tool_emit_line("", colored_line);
+        } else {
+            tool_emit_line("", trimmed);
+        }
+    } else {
+        if (color) {
+            printf("  %s%s%s\n", color, trimmed, ANSI_RESET);
+        } else {
+            printf("  %s\n", trimmed);
+        }
+    }
+
+    free(trimmed);
 }
 
 // Helper function to extract tool details from arguments
@@ -797,84 +762,32 @@ static int show_diff(const char *file_path, const char *original_content) {
         return -1;
     }
 
-    // Get color codes for diff elements
-    char add_color[32], remove_color[32], header_color[32], context_color[32];
-    const char *add_color_start, *remove_color_start, *header_color_start, *context_color_start;
+    // Get color codes for added and removed lines
+    char add_color[32], remove_color[32];
+    const char *add_color_str, *remove_color_str;
 
     // Try to get colors from colorscheme, fall back to ANSI colors
     if (get_colorscheme_color(COLORSCHEME_DIFF_ADD, add_color, sizeof(add_color)) == 0) {
-        add_color_start = add_color;
+        add_color_str = add_color;
     } else {
         LOG_WARN("Using fallback ANSI color for DIFF_ADD");
-        add_color_start = ANSI_FALLBACK_DIFF_ADD;
+        add_color_str = ANSI_FALLBACK_DIFF_ADD;
     }
 
     if (get_colorscheme_color(COLORSCHEME_DIFF_REMOVE, remove_color, sizeof(remove_color)) == 0) {
-        remove_color_start = remove_color;
+        remove_color_str = remove_color;
     } else {
         LOG_WARN("Using fallback ANSI color for DIFF_REMOVE");
-        remove_color_start = ANSI_FALLBACK_DIFF_REMOVE;
+        remove_color_str = ANSI_FALLBACK_DIFF_REMOVE;
     }
 
-    if (get_colorscheme_color(COLORSCHEME_DIFF_HEADER, header_color, sizeof(header_color)) == 0) {
-        header_color_start = header_color;
-    } else {
-        LOG_WARN("Using fallback ANSI color for DIFF_HEADER");
-        header_color_start = ANSI_FALLBACK_DIFF_HEADER;
-    }
-
-    if (get_colorscheme_color(COLORSCHEME_DIFF_CONTEXT, context_color, sizeof(context_color)) == 0) {
-        context_color_start = context_color;
-    } else {
-        LOG_WARN("Using fallback ANSI color for DIFF_CONTEXT");
-        context_color_start = ANSI_FALLBACK_DIFF_CONTEXT;
-    }
-
-    // Read and display colorized diff output
-
+    // Read and display diff output with simple indentation
     char line[1024];
     int has_diff = 0;
 
     while (fgets(line, sizeof(line), pipe)) {
         has_diff = 1;
-
-        // Colorize based on line prefix
-        if (line[0] == '+' && line[1] != '+') {
-            emit_diff_line(DIFF_LINE_ADDED,
-                           line,
-                           add_color_start,
-                           remove_color_start,
-                           context_color_start,
-                           header_color_start);
-        } else if (line[0] == '-' && line[1] != '-') {
-            emit_diff_line(DIFF_LINE_REMOVED,
-                           line,
-                           add_color_start,
-                           remove_color_start,
-                           context_color_start,
-                           header_color_start);
-        } else if (strncmp(line, "@@", 2) == 0) {
-            emit_diff_line(DIFF_LINE_CONTEXT,
-                           line,
-                           add_color_start,
-                           remove_color_start,
-                           context_color_start,
-                           header_color_start);
-        } else if (strncmp(line, "---", 3) == 0 || strncmp(line, "+++", 3) == 0) {
-            emit_diff_line(DIFF_LINE_HEADER,
-                           line,
-                           add_color_start,
-                           remove_color_start,
-                           context_color_start,
-                           header_color_start);
-        } else {
-            emit_diff_line(DIFF_LINE_OTHER,
-                           line,
-                           add_color_start,
-                           remove_color_start,
-                           context_color_start,
-                           header_color_start);
-        }
+        emit_diff_line(line, add_color_str, remove_color_str);
     }
 
     int result = pclose(pipe);
