@@ -6,6 +6,7 @@
 #include "claude_internal.h"
 #include "logger.h"
 #include "fallback_colors.h"
+#include "voice_input.h"
 #define COLORSCHEME_EXTERN
 #include "colorscheme.h"
 #include <stdio.h>
@@ -105,6 +106,68 @@ static int cmd_add_dir(ConversationState *state, const char *args) {
     }
 }
 
+static int cmd_voice(ConversationState *state, const char *args) {
+    (void)state; (void)args;
+
+    // Check if voice input is available with detailed error reporting
+    const char *api_key = getenv("OPENAI_API_KEY");
+    if (!api_key || !*api_key) {
+        print_error("Voice input unavailable: OPENAI_API_KEY environment variable not set");
+        fprintf(stderr, "Set your API key with: export OPENAI_API_KEY=\"your-key-here\"\n");
+        printf("\n");
+        return -1;
+    }
+
+    if (!voice_input_available()) {
+        print_error("Voice input unavailable: PortAudio not installed or no microphone detected");
+        fprintf(stderr, "Install PortAudio:\n");
+        fprintf(stderr, "  macOS:         brew install portaudio\n");
+        fprintf(stderr, "  Ubuntu/Debian: sudo apt-get install portaudio19-dev\n");
+        fprintf(stderr, "  Fedora/RHEL:   sudo yum install portaudio-devel\n");
+        fprintf(stderr, "\nEnsure your system has a working microphone.\n");
+        printf("\n");
+        return -1;
+    }
+
+    char *transcription = NULL;
+    int result = voice_input_record_and_transcribe(&transcription);
+
+    if (result == 0 && transcription) {
+        printf("\n");
+        print_status("Transcription:");
+        printf("%s\n\n", transcription);
+
+        // Add transcription to conversation as user message
+        add_user_message(state, transcription);
+
+        free(transcription);
+        return 0;
+    } else if (result == -2) {
+        print_error("No audio recorded");
+        fprintf(stderr, "Make sure you speak into the microphone before pressing ENTER.\n");
+        printf("\n");
+        return -1;
+    } else if (result == -3) {
+        print_error("Recording was silent (no audio detected)");
+        fprintf(stderr, "Check that:\n");
+        fprintf(stderr, "  - Microphone is not muted\n");
+        fprintf(stderr, "  - Correct input device is selected in system settings\n");
+        fprintf(stderr, "  - Microphone volume is adequate\n");
+        fprintf(stderr, "  - Application has microphone permissions (macOS/Linux)\n");
+        printf("\n");
+        return -1;
+    } else {
+        print_error("Voice transcription failed");
+        fprintf(stderr, "This could be due to:\n");
+        fprintf(stderr, "  - Network connectivity issues\n");
+        fprintf(stderr, "  - OpenAI API service problems\n");
+        fprintf(stderr, "  - Invalid API key\n");
+        fprintf(stderr, "Check logs for more details.\n");
+        printf("\n");
+        return -1;
+    }
+}
+
 static int cmd_help(ConversationState *state, const char *args) {
     (void)state; (void)args;
     char color_buf[32];
@@ -168,6 +231,14 @@ static Command help_cmd = {
     .completer = commands_tab_completer
 };
 
+static Command voice_cmd = {
+    .name = "voice",
+    .usage = "/voice",
+    .description = "Record voice input and transcribe to text",
+    .handler = cmd_voice,
+    .completer = commands_tab_completer
+};
+
 // ============================================================================
 // API Implementation
 // ============================================================================
@@ -179,6 +250,7 @@ void commands_init(void) {
     commands_register(&clear_cmd);
     commands_register(&add_dir_cmd);
     commands_register(&help_cmd);
+    commands_register(&voice_cmd);
 }
 
 void commands_register(const Command *cmd) {
