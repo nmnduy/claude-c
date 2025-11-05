@@ -139,44 +139,27 @@ size_t todo_count_by_status(const TodoList *list, TodoStatus status) {
     return count;
 }
 
-void todo_render(const TodoList *list) {
+char* todo_render_to_string(const TodoList *list) {
     if (!list || list->count == 0) {
-        return;  // No todos to display
+        return NULL;  // No todos to display
     }
 
-    // ANSI colors - try to get from colorscheme, fall back to ANSI defaults
-    char green_buf[32], yellow_buf[32], cyan_buf[32];
-    const char *green, *yellow, *cyan;
-    const char *dim = ANSI_FALLBACK_DIM;
-    const char *reset = ANSI_RESET;
-    const char *bold = ANSI_FALLBACK_BOLD;
-    
-    // Green (for completed tasks) - maps to USER color
-    if (get_colorscheme_color(COLORSCHEME_USER, green_buf, sizeof(green_buf)) == 0) {
-        green = green_buf;
-    } else {
-        LOG_WARN("Using fallback ANSI color for USER (todo green)");
-        green = ANSI_FALLBACK_GREEN;
-    }
-    
-    // Yellow (for in-progress tasks) - maps to TOOL/STATUS color
-    if (get_colorscheme_color(COLORSCHEME_TOOL, yellow_buf, sizeof(yellow_buf)) == 0) {
-        yellow = yellow_buf;
-    } else {
-        LOG_WARN("Using fallback ANSI color for TOOL (todo yellow)");
-        yellow = ANSI_FALLBACK_YELLOW;
-    }
-    
-    // Cyan (for header) - maps to STATUS color
-    if (get_colorscheme_color(COLORSCHEME_STATUS, cyan_buf, sizeof(cyan_buf)) == 0) {
-        cyan = cyan_buf;
-    } else {
-        LOG_WARN("Using fallback ANSI color for STATUS (todo cyan)");
-        cyan = ANSI_FALLBACK_CYAN;
+    // Calculate approximate buffer size needed
+    size_t buffer_size = 256;  // Base size for intro text
+    for (size_t i = 0; i < list->count; i++) {
+        buffer_size += strlen(list->items[i].content) + strlen(list->items[i].active_form) + 50;
     }
 
-    // Print header
-    printf("\n%s%s━━━ Tasks ━━━%s\n", bold, cyan, reset);
+    char *result = malloc(buffer_size);
+    if (!result) {
+        LOG_ERROR("Failed to allocate memory for todo render string");
+        return NULL;
+    }
+
+    size_t offset = 0;
+
+    offset += (size_t)snprintf(result + offset, buffer_size - offset,
+                               "Here are the current tasks:\n");
 
     // Render each item with appropriate indicator
     for (size_t i = 0; i < list->count; i++) {
@@ -185,23 +168,47 @@ void todo_render(const TodoList *list) {
         switch (item->status) {
             default:
                 LOG_WARN("Unknown TODO status: %d", (int)item->status);
+                offset += (size_t)snprintf(result + offset, buffer_size - offset,
+                                 "• %s\n", item->content);
                 break;
             case TODO_COMPLETED:
-                printf("%s✓ %s%s\n", green, item->content, reset);
+                offset += (size_t)snprintf(result + offset, buffer_size - offset,
+                                 "✓ %s\n", item->content);
                 break;
 
             case TODO_IN_PROGRESS:
-                printf("%s⋯ %s%s\n", yellow, item->active_form, reset);
+                offset += (size_t)snprintf(result + offset, buffer_size - offset,
+                                 "⋯ %s\n", item->active_form);
                 break;
 
             case TODO_PENDING:
-                printf("%s○ %s%s\n", dim, item->content, reset);
+                offset += (size_t)snprintf(result + offset, buffer_size - offset,
+                                 "○ %s\n", item->content);
                 break;
         }
     }
 
-    printf("%s━━━━━━━━━━━━%s\n\n", dim, reset);
+    // Remove trailing newline if present
+    if (offset > 0 && offset <= buffer_size && result[offset - 1] == '\n') {
+        result[offset - 1] = '\0';
+    }
+
+    return result;
+}
+
+void todo_render(const TodoList *list) {
+    if (!list || list->count == 0) {
+        return;  // No todos to display
+    }
+
+    char *text = todo_render_to_string(list);
+    if (!text) {
+        return;
+    }
+
+    printf("%s\n", text);
     fflush(stdout);
+    free(text);
 }
 
 // Simple parser for TODO updates from text

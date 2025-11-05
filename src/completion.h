@@ -7,7 +7,7 @@
 #ifndef COMPLETION_H
 #define COMPLETION_H
 
-#include "lineedit.h"
+#include "ncurses_input.h"  // For CompletionResult and CompletionFn types
 
 /**
  * Complete file paths (files and directories)

@@ -181,6 +181,22 @@ static void test_apply_single_patch(void) {
 
     // Create a minimal conversation state
     ConversationState state = {0};
+    if (conversation_state_init(&state) != 0) {
+        fprintf(stderr, "Failed to initialize conversation state\n");
+        exit(1);
+    }
+    if (conversation_state_init(&state) != 0) {
+        fprintf(stderr, "Failed to initialize conversation state\n");
+        exit(1);
+    }
+    if (conversation_state_init(&state) != 0) {
+        fprintf(stderr, "Failed to initialize conversation state\n");
+        exit(1);
+    }
+    if (conversation_state_init(&state) != 0) {
+        fprintf(stderr, "Failed to initialize conversation state\n");
+        exit(1);
+    }
     state.working_dir = strdup(TEST_DIR);
 
     // Apply patch
@@ -198,6 +214,10 @@ static void test_apply_single_patch(void) {
     cJSON_Delete(result);
     free_parsed_patch(patch);
     free(state.working_dir);
+    conversation_state_destroy(&state);
+    conversation_state_destroy(&state);
+    conversation_state_destroy(&state);
+    conversation_state_destroy(&state);
     cleanup_test_dir();
 
     printf("PASSED\n");

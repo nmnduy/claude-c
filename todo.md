@@ -1,5 +1,7 @@
+- [ ] if have `rg` then put that in the system prompt instead of `grep`. print warning when there is no `rg`
 - [x] why so many linse between [Assistant] and everything else?
 
+- [ ] use this pattern for `timeout`: Ran (./mvnw quarkus:dev & pid=$!; sleep 30; kill $pid; wait $pid) 
 - [ ] plan mode
 - [ ] remove ANTHROPIC_MODEL env var usage. its confusing
 - [ ] doesn't handle SIGHUP?
@@ -16,7 +18,7 @@
 - [x] rotation for api call db files
 - [x] pasting still fucks up the terminal
 - [x] add retries to falied API calls
-- [ ] implement instruction queue. so user can keep typing
+- [x] implement instruction queue. so user can keep typing (Phase 1: message queues complete, see TODO_ASYNC_TUI.md)
 - [ ] run memory analyzers
 
 - [x]

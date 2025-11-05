@@ -30,7 +30,6 @@
 #include <limits.h>
 #include <libgen.h>
 #include <dirent.h>
-#include <termios.h>
 #include <ctype.h>
 #include <signal.h>
 #include "colorscheme.h"
@@ -109,12 +108,13 @@ static int bedrock_handle_auth_error(BedrockConfig *config, long http_status, co
 #include "provider.h"  // For ApiCallResult and Provider definitions
 #include "todo.h"
 
-// New input system modules
-#include "lineedit.h"
+// Commands module
 #include "commands.h"
 
 // TUI module
 #include "tui.h"
+#include "message_queue.h"
+#include "ai_worker.h"
 
 // AWS Bedrock support
 #ifndef TEST_BUILD
@@ -188,6 +188,265 @@ static void print_tool(const char *tool_name, const char *details) {
     }
     printf("\n");
     fflush(stdout);
+}
+
+static void print_error(const char *text);
+
+static void ui_append_line(TUIState *tui,
+                           TUIMessageQueue *queue,
+                           const char *prefix,
+                           const char *text,
+                           TUIColorPair color) {
+    const char *safe_text = text ? text : "";
+    const char *safe_prefix = prefix ? prefix : "";
+
+    if (queue) {
+        size_t prefix_len = safe_prefix[0] ? strlen(safe_prefix) : 0;
+        size_t text_len = strlen(safe_text);
+        size_t extra_space = (prefix_len > 0 && text_len > 0) ? 1 : 0;
+        size_t total = prefix_len + extra_space + text_len + 1;
+
+        char *formatted = malloc(total);
+        if (!formatted) {
+            LOG_ERROR("Failed to allocate memory for TUI message");
+            // Fall through to direct UI/console output
+        } else {
+            if (prefix_len > 0 && text_len > 0) {
+                snprintf(formatted, total, "%s %s", safe_prefix, safe_text);
+            } else if (prefix_len > 0) {
+                snprintf(formatted, total, "%s", safe_prefix);
+            } else {
+                snprintf(formatted, total, "%s", safe_text);
+            }
+
+            if (post_tui_message(queue, TUI_MSG_ADD_LINE, formatted) == 0) {
+                free(formatted);
+                return;
+            }
+
+            LOG_WARN("Failed to enqueue TUI message, falling back to direct render");
+            free(formatted);
+        }
+    }
+
+    if (tui) {
+        tui_add_conversation_line(tui, safe_prefix, safe_text, color);
+        return;
+    }
+
+    if (strcmp(safe_prefix, "[Assistant]") == 0) {
+        print_assistant(safe_text);
+        return;
+    }
+
+    if (strncmp(safe_prefix, "[Tool", 5) == 0) {
+        const char *colon = strchr(safe_prefix, ':');
+        const char *close = strrchr(safe_prefix, ']');
+        const char *name_start = NULL;
+        size_t name_len = 0;
+        if (colon) {
+            name_start = colon + 1;
+            if (*name_start == ' ') {
+                name_start++;
+            }
+            if (close && close > name_start) {
+                name_len = (size_t)(close - name_start);
+            }
+        }
+
+        char tool_name[128];
+        if (name_len == 0 || name_len >= sizeof(tool_name)) {
+            snprintf(tool_name, sizeof(tool_name), "tool");
+        } else {
+            memcpy(tool_name, name_start, name_len);
+            tool_name[name_len] = '\0';
+        }
+        print_tool(tool_name, safe_text);
+        return;
+    }
+
+    if (strcmp(safe_prefix, "[Error]") == 0) {
+        print_error(safe_text);
+        return;
+    }
+
+    if (safe_prefix[0]) {
+        printf("%s %s\n", safe_prefix, safe_text);
+    } else {
+        printf("%s\n", safe_text);
+    }
+    fflush(stdout);
+    return;
+}
+
+static void ui_set_status(TUIState *tui,
+                          TUIMessageQueue *queue,
+                          const char *status_text) {
+    const char *safe = status_text ? status_text : "";
+    if (queue) {
+        if (post_tui_message(queue, TUI_MSG_STATUS, safe) == 0) {
+            return;
+        }
+        LOG_WARN("Failed to enqueue status update, falling back to direct render");
+    }
+
+    if (tui) {
+        tui_update_status(tui, safe);
+        return;
+    }
+    if (safe[0] != '\0') {
+        printf("[Status] %s\n", safe);
+    }
+}
+
+static void ui_show_error(TUIState *tui,
+                          TUIMessageQueue *queue,
+                          const char *error_text) {
+    const char *safe = error_text ? error_text : "";
+    if (queue) {
+        if (post_tui_message(queue, TUI_MSG_ERROR, safe) == 0) {
+            return;
+        }
+        LOG_WARN("Failed to enqueue error message, falling back to direct render");
+    }
+    if (tui) {
+        tui_add_conversation_line(tui, "[Error]", safe, COLOR_PAIR_ERROR);
+        return;
+    }
+    print_error(safe);
+}
+
+// =====================================================================
+// Tool Output Helpers
+// =====================================================================
+
+static _Thread_local TUIMessageQueue *g_active_tool_queue = NULL;
+
+static void tool_emit_line(const char *prefix, const char *text) {
+    const char *safe_prefix = prefix ? prefix : "";
+    const char *safe_text = text ? text : "";
+
+    if (g_active_tool_queue) {
+        size_t prefix_len = safe_prefix[0] ? strlen(safe_prefix) : 0;
+        size_t text_len = strlen(safe_text);
+        size_t extra = (prefix_len > 0 && text_len > 0) ? 1 : 0;
+        size_t total = prefix_len + extra + text_len + 1;
+
+        char *formatted = malloc(total);
+        if (!formatted) {
+            LOG_ERROR("Failed to allocate tool output buffer");
+            return;
+        }
+
+        if (prefix_len > 0 && text_len > 0) {
+            snprintf(formatted, total, "%s %s", safe_prefix, safe_text);
+        } else if (prefix_len > 0) {
+            snprintf(formatted, total, "%s", safe_prefix);
+        } else {
+            snprintf(formatted, total, "%s", safe_text);
+        }
+
+        if (post_tui_message(g_active_tool_queue, TUI_MSG_ADD_LINE, formatted) != 0) {
+            LOG_WARN("Failed to post tool output to TUI queue");
+        }
+        free(formatted);
+        return;
+    }
+
+    if (safe_prefix[0] && safe_text[0]) {
+        printf("%s %s\n", safe_prefix, safe_text);
+    } else if (safe_prefix[0]) {
+        printf("%s\n", safe_prefix);
+    } else {
+        printf("%s\n", safe_text);
+    }
+    fflush(stdout);
+}
+
+typedef enum {
+    DIFF_LINE_ADDED,
+    DIFF_LINE_REMOVED,
+    DIFF_LINE_CONTEXT,
+    DIFF_LINE_HEADER,
+    DIFF_LINE_OTHER
+} DiffLineType;
+
+static void emit_diff_line(DiffLineType type,
+                           const char *line,
+                           const char *add_color_start,
+                           const char *remove_color_start,
+                           const char *context_color_start,
+                           const char *header_color_start) {
+    if (!line) {
+        return;
+    }
+
+    if (g_active_tool_queue) {
+        size_t len = strlen(line);
+        while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r')) {
+            len--;
+        }
+
+        char *trimmed = strndup(line, len);
+        if (!trimmed) {
+            LOG_ERROR("Failed to allocate trimmed diff line");
+            return;
+        }
+
+        const char *prefix = "[Diff]";
+        switch (type) {
+            case DIFF_LINE_ADDED:
+                prefix = "[Diff +]";
+                break;
+            case DIFF_LINE_REMOVED:
+                prefix = "[Diff -]";
+                break;
+            case DIFF_LINE_CONTEXT:
+                prefix = "[Diff ~]";
+                break;
+            case DIFF_LINE_HEADER:
+                prefix = "[Diff @]";
+                break;
+            case DIFF_LINE_OTHER:
+            default:
+                prefix = "[Diff]";
+                break;
+        }
+
+        if (trimmed[0] != '\0') {
+            tool_emit_line(prefix, trimmed);
+        } else {
+            tool_emit_line(prefix, " ");
+        }
+        free(trimmed);
+        return;
+    }
+
+    const char *color = NULL;
+    switch (type) {
+        case DIFF_LINE_ADDED:
+            color = add_color_start;
+            break;
+        case DIFF_LINE_REMOVED:
+            color = remove_color_start;
+            break;
+        case DIFF_LINE_CONTEXT:
+            color = context_color_start;
+            break;
+        case DIFF_LINE_HEADER:
+            color = header_color_start;
+            break;
+        case DIFF_LINE_OTHER:
+        default:
+            color = NULL;
+            break;
+    }
+
+    if (color) {
+        printf("%s%s%s", color, line, ANSI_RESET);
+    } else {
+        printf("%s", line);
+    }
 }
 
 // Helper function to extract tool details from arguments
@@ -304,58 +563,6 @@ static void print_error(const char *text) {
 // ESC Key Interrupt Handling
 // ============================================================================
 
-// Global interrupt flag - set to 1 when ESC is pressed
-static volatile sig_atomic_t interrupt_requested = 0;
-
-
-
-// Check for ESC key press without blocking
-// Returns: 1 if ESC was pressed, 0 otherwise
-int check_for_esc(void) {
-    struct termios old_term, new_term;
-    int esc_pressed = 0;
-
-    // Save current terminal settings
-    if (tcgetattr(STDIN_FILENO, &old_term) < 0) {
-        return 0;  // Can't check, assume no ESC
-    }
-
-    // Set terminal to non-blocking mode
-    new_term = old_term;
-    new_term.c_lflag &= (tcflag_t)~(ICANON | ECHO);
-    new_term.c_cc[VMIN] = 0;   // Non-blocking
-    new_term.c_cc[VTIME] = 0;  // No timeout
-    tcsetattr(STDIN_FILENO, TCSANOW, &new_term);
-
-    // Check if there's input available
-    fd_set readfds;
-    struct timeval timeout;
-    FD_ZERO(&readfds);
-    FD_SET(STDIN_FILENO, &readfds);
-    timeout.tv_sec = 0;
-    timeout.tv_usec = 0;
-
-    int ready = select(STDIN_FILENO + 1, &readfds, NULL, NULL, &timeout);
-    if (ready > 0) {
-        unsigned char c;
-        if (read(STDIN_FILENO, &c, 1) == 1) {
-            if (c == 27) {  // ESC key
-                esc_pressed = 1;
-                interrupt_requested = 1;
-
-                // Drain any following characters (like [, etc. from arrow keys)
-                while (read(STDIN_FILENO, &c, 1) == 1) {
-                    // Keep draining
-                }
-            }
-        }
-    }
-
-    // Restore terminal settings
-    tcsetattr(STDIN_FILENO, TCSANOW, &old_term);
-
-    return esc_pressed;
-}
 
 
 // ============================================================================
@@ -484,7 +691,16 @@ char* resolve_path(const char *path, const char *working_dir) {
 // Add a directory to the additional working directories list
 // Returns: 0 on success, -1 on error
 int add_directory(ConversationState *state, const char *path) {
+    if (!state || !path) {
+        return -1;
+    }
+
+    if (conversation_state_lock(state) != 0) {
+        return -1;
+    }
+
     // Validate that directory exists
+    int result = -1;
     struct stat st;
     char *resolved_path = NULL;
 
@@ -498,24 +714,24 @@ int add_directory(ConversationState *state, const char *path) {
     }
 
     if (!resolved_path) {
-        return -1;  // Path doesn't exist or can't be resolved
+        goto out;  // Path doesn't exist or can't be resolved
     }
 
     if (stat(resolved_path, &st) != 0 || !S_ISDIR(st.st_mode)) {
         free(resolved_path);
-        return -1;  // Not a directory
+        goto out;  // Not a directory
     }
 
     // Check if directory is already in the list (avoid duplicates)
     if (strcmp(resolved_path, state->working_dir) == 0) {
         free(resolved_path);
-        return -1;  // Already the main working directory
+        goto out;  // Already the main working directory
     }
 
     for (int i = 0; i < state->additional_dirs_count; i++) {
         if (strcmp(resolved_path, state->additional_dirs[i]) == 0) {
             free(resolved_path);
-            return -1;  // Already in additional directories
+            goto out;  // Already in additional directories
         }
     }
 
@@ -525,7 +741,7 @@ int add_directory(ConversationState *state, const char *path) {
         char **new_array = realloc(state->additional_dirs, (size_t)new_capacity * sizeof(char*));
         if (!new_array) {
             free(resolved_path);
-            return -1;  // Out of memory
+            goto out;  // Out of memory
         }
         state->additional_dirs = new_array;
         state->additional_dirs_capacity = new_capacity;
@@ -533,8 +749,13 @@ int add_directory(ConversationState *state, const char *path) {
 
     // Add directory to list
     state->additional_dirs[state->additional_dirs_count++] = resolved_path;
+    resolved_path = NULL;
+    result = 0;
 
-    return 0;
+out:
+    conversation_state_unlock(state);
+    free(resolved_path);
+    return result;
 }
 
 // ============================================================================
@@ -579,7 +800,7 @@ static int show_diff(const char *file_path, const char *original_content) {
     // Get color codes for diff elements
     char add_color[32], remove_color[32], header_color[32], context_color[32];
     const char *add_color_start, *remove_color_start, *header_color_start, *context_color_start;
-    
+
     // Try to get colors from colorscheme, fall back to ANSI colors
     if (get_colorscheme_color(COLORSCHEME_DIFF_ADD, add_color, sizeof(add_color)) == 0) {
         add_color_start = add_color;
@@ -587,21 +808,21 @@ static int show_diff(const char *file_path, const char *original_content) {
         LOG_WARN("Using fallback ANSI color for DIFF_ADD");
         add_color_start = ANSI_FALLBACK_DIFF_ADD;
     }
-    
+
     if (get_colorscheme_color(COLORSCHEME_DIFF_REMOVE, remove_color, sizeof(remove_color)) == 0) {
         remove_color_start = remove_color;
     } else {
         LOG_WARN("Using fallback ANSI color for DIFF_REMOVE");
         remove_color_start = ANSI_FALLBACK_DIFF_REMOVE;
     }
-    
+
     if (get_colorscheme_color(COLORSCHEME_DIFF_HEADER, header_color, sizeof(header_color)) == 0) {
         header_color_start = header_color;
     } else {
         LOG_WARN("Using fallback ANSI color for DIFF_HEADER");
         header_color_start = ANSI_FALLBACK_DIFF_HEADER;
     }
-    
+
     if (get_colorscheme_color(COLORSCHEME_DIFF_CONTEXT, context_color, sizeof(context_color)) == 0) {
         context_color_start = context_color;
     } else {
@@ -610,29 +831,49 @@ static int show_diff(const char *file_path, const char *original_content) {
     }
 
     // Read and display colorized diff output
-    
+
     char line[1024];
     int has_diff = 0;
 
     while (fgets(line, sizeof(line), pipe)) {
         has_diff = 1;
-        
+
         // Colorize based on line prefix
         if (line[0] == '+' && line[1] != '+') {
-            // Added line (but not +++ header)
-            printf("%s%s%s", add_color_start, line, ANSI_RESET);
+            emit_diff_line(DIFF_LINE_ADDED,
+                           line,
+                           add_color_start,
+                           remove_color_start,
+                           context_color_start,
+                           header_color_start);
         } else if (line[0] == '-' && line[1] != '-') {
-            // Removed line (but not --- header)
-            printf("%s%s%s", remove_color_start, line, ANSI_RESET);
+            emit_diff_line(DIFF_LINE_REMOVED,
+                           line,
+                           add_color_start,
+                           remove_color_start,
+                           context_color_start,
+                           header_color_start);
         } else if (strncmp(line, "@@", 2) == 0) {
-            // Line number context (@@ -line,count +line,count @@)
-            printf("%s%s%s", context_color_start, line, ANSI_RESET);
+            emit_diff_line(DIFF_LINE_CONTEXT,
+                           line,
+                           add_color_start,
+                           remove_color_start,
+                           context_color_start,
+                           header_color_start);
         } else if (strncmp(line, "---", 3) == 0 || strncmp(line, "+++", 3) == 0) {
-            // File headers
-            printf("%s%s%s", header_color_start, line, ANSI_RESET);
+            emit_diff_line(DIFF_LINE_HEADER,
+                           line,
+                           add_color_start,
+                           remove_color_start,
+                           context_color_start,
+                           header_color_start);
         } else {
-            // Context lines (no change)
-            printf("%s", line);
+            emit_diff_line(DIFF_LINE_OTHER,
+                           line,
+                           add_color_start,
+                           remove_color_start,
+                           context_color_start,
+                           header_color_start);
         }
     }
 
@@ -640,13 +881,13 @@ static int show_diff(const char *file_path, const char *original_content) {
     unlink(temp_path);
 
     if (!has_diff) {
-        printf("(No changes - files are identical)\n");
+        tool_emit_line("[Diff]", "(No changes - files are identical)");
     } else if (result == 0) {
         // diff exit code 0 means no differences found
-        printf("(No differences found)\n");
+        tool_emit_line("[Diff]", "(No differences found)");
     }
 
-    
+
     return 0;
 }
 
@@ -932,8 +1173,10 @@ STATIC cJSON* tool_write(cJSON *params, ConversationState *state) {
             show_diff(resolved_path, original_content);
         } else {
             // New file creation
-            printf("\n--- Created new file: %s ---\n", resolved_path);
-            printf("(New file written - no previous content to compare)\n\n");
+            char header[PATH_MAX + 64];
+            snprintf(header, sizeof(header), "--- Created new file: %s ---", resolved_path);
+            tool_emit_line("[Diff]", header);
+            tool_emit_line("[Diff]", "New file written - no previous content to compare");
         }
     }
 
@@ -963,13 +1206,139 @@ STATIC cJSON* tool_write(cJSON *params, ConversationState *state) {
 // Forward declaration
 static cJSON* execute_tool(const char *tool_name, cJSON *input, ConversationState *state);
 
+typedef void (*ToolCompletionCallback)(const ToolCompletion *completion, void *user_data);
+
+typedef struct {
+    pthread_mutex_t mutex;
+    pthread_cond_t cond;
+    int total;
+    int completed;
+    int error_count;
+    int cancelled;
+    ToolCompletionCallback callback;
+    void *callback_user_data;
+} ToolExecutionTracker;
+
+typedef struct {
+    TUIState *tui;
+    TUIMessageQueue *queue;
+    Spinner *spinner;
+    AIWorkerContext *worker_ctx;
+} ToolCallbackContext;
+
 typedef struct {
     char *tool_use_id;            // duplicated tool_call id
     const char *tool_name;        // name of the tool
     cJSON *input;                 // arguments for tool
     ConversationState *state;     // conversation state
     InternalContent *result_block;   // pointer to results array slot
+    ToolExecutionTracker *tracker;  // shared tracker for completion signaling
+    int notified;                  // guard against double notification
+    TUIMessageQueue *queue;        // active TUI queue for tool output
 } ToolThreadArg;
+
+static int tool_tracker_init(ToolExecutionTracker *tracker,
+                             int total,
+                             ToolCompletionCallback callback,
+                             void *user_data) {
+    if (!tracker) {
+        return -1;
+    }
+
+    if (pthread_mutex_init(&tracker->mutex, NULL) != 0) {
+        return -1;
+    }
+    if (pthread_cond_init(&tracker->cond, NULL) != 0) {
+        pthread_mutex_destroy(&tracker->mutex);
+        return -1;
+    }
+
+    tracker->total = total;
+    tracker->completed = 0;
+    tracker->error_count = 0;
+    tracker->cancelled = 0;
+    tracker->callback = callback;
+    tracker->callback_user_data = user_data;
+    return 0;
+}
+
+static void tool_tracker_destroy(ToolExecutionTracker *tracker) {
+    if (!tracker) {
+        return;
+    }
+    pthread_cond_destroy(&tracker->cond);
+    pthread_mutex_destroy(&tracker->mutex);
+}
+
+static void tool_tracker_notify_completion(ToolThreadArg *arg) {
+    if (!arg || !arg->tracker) {
+        return;
+    }
+
+    ToolExecutionTracker *tracker = arg->tracker;
+    ToolCompletion completion = {0};
+    ToolCompletionCallback cb = NULL;
+    void *cb_data = NULL;
+
+    pthread_mutex_lock(&tracker->mutex);
+    if (!arg->notified) {
+        arg->notified = 1;
+        tracker->completed++;
+        if (arg->result_block && arg->result_block->is_error) {
+            tracker->error_count++;
+        }
+
+        completion.tool_name = arg->tool_name;
+        completion.result = arg->result_block ? arg->result_block->tool_output : NULL;
+        completion.is_error = arg->result_block ? arg->result_block->is_error : 1;
+        completion.completed = tracker->completed;
+        completion.total = tracker->total;
+        cb = tracker->callback;
+        cb_data = tracker->callback_user_data;
+
+        pthread_cond_broadcast(&tracker->cond);
+    }
+    pthread_mutex_unlock(&tracker->mutex);
+
+    if (cb) {
+        cb(&completion, cb_data);
+    }
+}
+
+static void tool_progress_callback(const ToolCompletion *completion, void *user_data) {
+    if (!completion || !user_data) {
+        return;
+    }
+
+    ToolCallbackContext *ctx = (ToolCallbackContext *)user_data;
+    const char *tool_name = completion->tool_name ? completion->tool_name : "tool";
+    const char *status_word = completion->is_error ? "failed" : "completed";
+
+    char status[256];
+    if (completion->total > 0) {
+        snprintf(status, sizeof(status),
+                 "Tool %s %s (%d/%d)",
+                 tool_name,
+                 status_word,
+                 completion->completed,
+                 completion->total);
+    } else {
+        snprintf(status, sizeof(status),
+                 "Tool %s %s",
+                 tool_name,
+                 status_word);
+    }
+
+    if (ctx->spinner) {
+        spinner_update(ctx->spinner, status);
+    }
+
+    if (ctx->worker_ctx) {
+        ai_worker_handle_tool_completion(ctx->worker_ctx, completion);
+    } else {
+        ui_set_status(ctx->tui, ctx->queue, status);
+    }
+}
 
 // Cleanup handler for tool thread cancellation
 static void tool_thread_cleanup(void *arg) {
@@ -987,6 +1356,8 @@ static void tool_thread_cleanup(void *arg) {
     cJSON_AddStringToObject(error, "error", "Tool execution cancelled by user");
     t->result_block->tool_output = error;
     t->result_block->is_error = 1;
+
+    tool_tracker_notify_completion(t);
 }
 
 static void *tool_thread_func(void *arg) {
@@ -1000,7 +1371,10 @@ static void *tool_thread_func(void *arg) {
     pthread_cleanup_push(tool_thread_cleanup, arg);
 
     // Execute the tool
+    TUIMessageQueue *previous_queue = g_active_tool_queue;
+    g_active_tool_queue = t->queue;
     cJSON *res = execute_tool(t->tool_name, t->input, t->state);
+    g_active_tool_queue = previous_queue;
     // Free input JSON
     cJSON_Delete(t->input);
     t->input = NULL;  // Mark as freed for cleanup handler
@@ -1009,7 +1383,9 @@ static void *tool_thread_func(void *arg) {
     t->result_block->tool_id = t->tool_use_id;
     t->result_block->tool_name = strdup(t->tool_name);  // Store tool name for error reporting
     t->result_block->tool_output = res;
-    t->result_block->is_error = cJSON_HasObjectItem(res, "error");
+   t->result_block->is_error = cJSON_HasObjectItem(res, "error");
+
+    tool_tracker_notify_completion(t);
 
     // Pop cleanup handler (execute=0 means don't run it on normal exit)
     pthread_cleanup_pop(0);
@@ -1443,15 +1819,18 @@ STATIC cJSON* tool_todo_write(cJSON *params, ConversationState *state) {
         }
     }
 
-    // Render the updated todo list to terminal
-    if (added > 0) {
-        todo_render(state->todo_list);
-    }
-
     cJSON *result = cJSON_CreateObject();
     cJSON_AddStringToObject(result, "status", "success");
     cJSON_AddNumberToObject(result, "added", added);
     cJSON_AddNumberToObject(result, "total", total);
+
+    if (state->todo_list && state->todo_list->count > 0) {
+        char *rendered = todo_render_to_string(state->todo_list);
+        if (rendered) {
+            cJSON_AddStringToObject(result, "rendered", rendered);
+            free(rendered);
+        }
+    }
 
     return result;
 }
@@ -1506,22 +1885,6 @@ static Tool tools[] = {
 };
 
 static const int num_tools = sizeof(tools) / sizeof(Tool);
-
-// Thread monitor for ESC checking during tool execution
-typedef struct {
-    pthread_t *threads;
-    int thread_count;
-    volatile int *done_flag;
-} MonitorArg;
-
-static void *tool_monitor_func(void *arg) {
-    MonitorArg *ma = (MonitorArg *)arg;
-    for (int i = 0; i < ma->thread_count; i++) {
-        pthread_join(ma->threads[i], NULL);
-    }
-    *ma->done_flag = 1;
-    return NULL;
-}
 
 static cJSON* execute_tool(const char *tool_name, cJSON *input, ConversationState *state) {
     // Time the tool execution
@@ -1852,6 +2215,12 @@ char* build_request_json_from_state(ConversationState *state) {
         return NULL;
     }
 
+    if (conversation_state_lock(state) != 0) {
+        return NULL;
+    }
+
+    char *json_str = NULL;
+
     // Check if prompt caching is enabled
     int enable_caching = is_prompt_caching_enabled();
     LOG_DEBUG("Building request (caching: %s, messages: %d)",
@@ -1859,13 +2228,26 @@ char* build_request_json_from_state(ConversationState *state) {
 
     // Build request body
     cJSON *request = cJSON_CreateObject();
+    if (!request) {
+        LOG_ERROR("Failed to allocate request object");
+        goto unlock;
+    }
+
     cJSON_AddStringToObject(request, "model", state->model);
     cJSON_AddNumberToObject(request, "max_completion_tokens", MAX_TOKENS);
 
     // Add messages in OpenAI format
     cJSON *messages_array = cJSON_CreateArray();
+    if (!messages_array) {
+        LOG_ERROR("Failed to allocate messages array");
+        goto unlock;
+    }
     for (int i = 0; i < state->count; i++) {
         cJSON *msg = cJSON_CreateObject();
+        if (!msg) {
+            LOG_ERROR("Failed to allocate message object");
+            goto unlock;
+        }
 
         // Determine role
         const char *role;
@@ -2004,11 +2386,21 @@ char* build_request_json_from_state(ConversationState *state) {
     cJSON *tool_defs = get_tool_definitions(enable_caching);
     cJSON_AddItemToObject(request, "tools", tool_defs);
 
-    char *json_str = cJSON_PrintUnformatted(request);
+    conversation_state_unlock(state);
+    state = NULL;
+
+    json_str = cJSON_PrintUnformatted(request);
     cJSON_Delete(request);
 
     LOG_DEBUG("Request built successfully (size: %zu bytes)", json_str ? strlen(json_str) : 0);
     return json_str;
+
+unlock:
+    conversation_state_unlock(state);
+    if (request) {
+        cJSON_Delete(request);
+    }
+    return NULL;
 }
 
 // ============================================================================
@@ -2075,7 +2467,7 @@ static ApiResponse* call_api_with_retries(ConversationState *state) {
         clock_gettime(CLOCK_MONOTONIC, &now);
         long elapsed_ms = (now.tv_sec - retry_start.tv_sec) * 1000 +
                          (now.tv_nsec - retry_start.tv_nsec) / 1000000;
-        
+
         if (attempt_num > 1 && elapsed_ms >= state->max_retry_duration_ms) {
             LOG_ERROR("Maximum retry duration (%d ms) exceeded after %d attempts",
                      state->max_retry_duration_ms, attempt_num - 1);
@@ -2173,7 +2565,7 @@ static ApiResponse* call_api_with_retries(ConversationState *state) {
         elapsed_ms = (now.tv_sec - retry_start.tv_sec) * 1000 +
                     (now.tv_nsec - retry_start.tv_nsec) / 1000000;
         long remaining_ms = state->max_retry_duration_ms - elapsed_ms;
-        
+
         if (delay_ms > remaining_ms) {
             delay_ms = (int)remaining_ms;
             if (delay_ms <= 0) {
@@ -2472,13 +2864,70 @@ char* build_system_prompt(ConversationState *state) {
     return prompt;
 }
 
-// ============================================================================
+// ============================================================================ 
 // Message Management
 // ============================================================================
 
+int conversation_state_init(ConversationState *state) {
+    if (!state) {
+        return -1;
+    }
+
+    if (state->conv_mutex_initialized) {
+        return 0;
+    }
+
+    if (pthread_mutex_init(&state->conv_mutex, NULL) != 0) {
+        LOG_ERROR("Failed to initialize conversation mutex");
+        return -1;
+    }
+
+    state->conv_mutex_initialized = 1;
+    return 0;
+}
+
+void conversation_state_destroy(ConversationState *state) {
+    if (!state || !state->conv_mutex_initialized) {
+        return;
+    }
+
+    pthread_mutex_destroy(&state->conv_mutex);
+    state->conv_mutex_initialized = 0;
+}
+
+int conversation_state_lock(ConversationState *state) {
+    if (!state) {
+        return -1;
+    }
+
+    if (!state->conv_mutex_initialized) {
+        if (conversation_state_init(state) != 0) {
+            return -1;
+        }
+    }
+
+    if (pthread_mutex_lock(&state->conv_mutex) != 0) {
+        LOG_ERROR("Failed to lock conversation mutex");
+        return -1;
+    }
+    return 0;
+}
+
+void conversation_state_unlock(ConversationState *state) {
+    if (!state || !state->conv_mutex_initialized) {
+        return;
+    }
+    pthread_mutex_unlock(&state->conv_mutex);
+}
+
 static void add_system_message(ConversationState *state, const char *text) {
+    if (conversation_state_lock(state) != 0) {
+        return;
+    }
+
     if (state->count >= MAX_MESSAGES) {
         LOG_ERROR("Maximum message count reached");
+        conversation_state_unlock(state);
         return;
     }
 
@@ -2505,13 +2954,21 @@ static void add_system_message(ConversationState *state, const char *text) {
         free(msg->contents);
         msg->contents = NULL;
         state->count--;
+        conversation_state_unlock(state);
         return;
     }
+
+    conversation_state_unlock(state);
 }
 
 static void add_user_message(ConversationState *state, const char *text) {
+    if (conversation_state_lock(state) != 0) {
+        return;
+    }
+
     if (state->count >= MAX_MESSAGES) {
         LOG_ERROR("Maximum message count reached");
+        conversation_state_unlock(state);
         return;
     }
 
@@ -2538,14 +2995,22 @@ static void add_user_message(ConversationState *state, const char *text) {
         free(msg->contents);
         msg->contents = NULL;
         state->count--; // Rollback count increment
+        conversation_state_unlock(state);
         return;
     }
+
+    conversation_state_unlock(state);
 }
 
 // Parse OpenAI message format and add to conversation
 static void add_assistant_message_openai(ConversationState *state, cJSON *message) {
+    if (conversation_state_lock(state) != 0) {
+        return;
+    }
+
     if (state->count >= MAX_MESSAGES) {
         LOG_ERROR("Maximum message count reached");
+        conversation_state_unlock(state);
         return;
     }
 
@@ -2582,6 +3047,7 @@ static void add_assistant_message_openai(ConversationState *state, cJSON *messag
     if (content_count == 0) {
         LOG_WARN("Assistant message has no content");
         state->count--; // Rollback count increment
+        conversation_state_unlock(state);
         return;
     }
 
@@ -2589,6 +3055,7 @@ static void add_assistant_message_openai(ConversationState *state, cJSON *messag
     if (!msg->contents) {
         LOG_ERROR("Failed to allocate memory for message content");
         state->count--; // Rollback count increment
+        conversation_state_unlock(state);
         return;
     }
     msg->content_count = content_count;
@@ -2604,6 +3071,7 @@ static void add_assistant_message_openai(ConversationState *state, cJSON *messag
             free(msg->contents);
             msg->contents = NULL;
             state->count--;
+            conversation_state_unlock(state);
             return;
         }
         idx++;
@@ -2638,6 +3106,7 @@ static void add_assistant_message_openai(ConversationState *state, cJSON *messag
                 free(msg->contents);
                 msg->contents = NULL;
                 state->count--;
+                conversation_state_unlock(state);
                 return;
             }
             msg->contents[idx].tool_name = strdup(name->valuestring);
@@ -2653,6 +3122,7 @@ static void add_assistant_message_openai(ConversationState *state, cJSON *messag
                 free(msg->contents);
                 msg->contents = NULL;
                 state->count--;
+                conversation_state_unlock(state);
                 return;
             }
 
@@ -2665,6 +3135,8 @@ static void add_assistant_message_openai(ConversationState *state, cJSON *messag
             idx++;
         }
     }
+
+    conversation_state_unlock(state);
 }
 
 // Helper: Free an array of InternalContent and its internal allocations
@@ -2682,14 +3154,16 @@ static void free_internal_contents(InternalContent *results, int count) {
 }
 
 static void add_tool_results(ConversationState *state, InternalContent *results, int count) {
+    if (conversation_state_lock(state) != 0) {
+        free_internal_contents(results, count);
+        return;
+    }
+
     if (state->count >= MAX_MESSAGES) {
         LOG_ERROR("Maximum message count reached");
         // Free results since they won't be added to state
         free_internal_contents(results, count);
-        return;
-    }
-    if (state->count >= MAX_MESSAGES) {
-        LOG_ERROR("Maximum message count reached");
+        conversation_state_unlock(state);
         return;
     }
 
@@ -2697,6 +3171,8 @@ static void add_tool_results(ConversationState *state, InternalContent *results,
     msg->role = MSG_USER;
     msg->contents = results;
     msg->content_count = count;
+
+    conversation_state_unlock(state);
 }
 
 // ============================================================================
@@ -2704,6 +3180,10 @@ static void add_tool_results(ConversationState *state, InternalContent *results,
 // ============================================================================
 
 void clear_conversation(ConversationState *state) {
+    if (conversation_state_lock(state) != 0) {
+        return;
+    }
+
     // Keep the system message (first message)
     int system_msg_count = 0;
 
@@ -2734,10 +3214,16 @@ void clear_conversation(ConversationState *state) {
         todo_init(state->todo_list);
         LOG_DEBUG("Todo list cleared and reinitialized");
     }
+
+    conversation_state_unlock(state);
 }
 
 // Free all messages and their contents (including system message). Use at program shutdown.
 void conversation_free(ConversationState *state) {
+    if (conversation_state_lock(state) != 0) {
+        return;
+    }
+
     // Free all messages
     for (int i = 0; i < state->count; i++) {
         for (int j = 0; j < state->messages[i].content_count; j++) {
@@ -2754,9 +3240,15 @@ void conversation_free(ConversationState *state) {
 
     // Note: todo_list is freed separately in main cleanup
     // Do not call todo_free() here to avoid double-free
+
+    conversation_state_unlock(state);
 }
 
-static void process_response(ConversationState *state, ApiResponse *response, TUIState *tui) {
+static void process_response(ConversationState *state,
+                             ApiResponse *response,
+                             TUIState *tui,
+                             TUIMessageQueue *queue,
+                             AIWorkerContext *worker_ctx) {
     // Time the entire response processing
     struct timespec proc_start, proc_end;
     clock_gettime(CLOCK_MONOTONIC, &proc_start);
@@ -2768,11 +3260,7 @@ static void process_response(ConversationState *state, ApiResponse *response, TU
         while (*p && isspace((unsigned char)*p)) p++;
 
         if (*p != '\0') {  // Has non-whitespace content
-            if (tui) {
-                tui_add_conversation_line(tui, "[Assistant]", p, COLOR_PAIR_ASSISTANT);
-            } else {
-                print_assistant(p);
-            }
+            ui_append_line(tui, queue, "[Assistant]", p, COLOR_PAIR_ASSISTANT);
         }
     }
 
@@ -2795,220 +3283,285 @@ static void process_response(ConversationState *state, ApiResponse *response, TU
 
         LOG_INFO("Processing %d tool call(s)", tool_count);
 
-        // Time tool execution phase
         struct timespec tool_start, tool_end;
         clock_gettime(CLOCK_MONOTONIC, &tool_start);
 
-        // Parallel tool execution
         InternalContent *results = calloc((size_t)tool_count, sizeof(InternalContent));
-        // results will be owned by ConversationState after add_tool_results().
-        // Use free_internal_contents() to free in early exits.
-        pthread_t *threads = malloc((size_t)tool_count * sizeof(pthread_t));
-        ToolThreadArg *args = malloc((size_t)tool_count * sizeof(ToolThreadArg));
-        int thread_count = 0;
-
-        // Launch tool execution threads
-        for (int i = 0; i < tool_count; i++) {
-            ToolCall *tool = &tool_calls_array[i];
-
-            if (!tool->name || !tool->id) {
-                // This should never happen - provider should sanitize responses
-                LOG_ERROR("Tool call missing name or id (provider validation failed)");
-                continue;
-            }
-
-            // Use parameters directly (already parsed by provider)
-            // Duplicate parameters for thread to own and delete
-            cJSON *input;
-            if (tool->parameters) {
-                input = cJSON_Duplicate(tool->parameters, /*recurse*/1);
-            } else {
-                input = cJSON_CreateObject();
-            }
-
-            char *tool_details = get_tool_details(tool->name, input);
-
-            if (tui) {
-                char prefix_with_tool[128];
-                snprintf(prefix_with_tool, sizeof(prefix_with_tool), "[Tool: %s]", tool->name);
-
-                // Pass NULL for text when there are no details to avoid extra space
-                tui_add_conversation_line(tui, prefix_with_tool, tool_details, COLOR_PAIR_TOOL);
-            } else {
-                print_tool(tool->name, tool_details);
-            }
-
-            // Prepare thread arguments
-            args[thread_count].tool_use_id = strdup(tool->id);
-            args[thread_count].tool_name = tool->name;
-            args[thread_count].input = input;
-            args[thread_count].state = state;
-            args[thread_count].result_block = &results[i];
-
-            // Create thread
-            pthread_create(&threads[thread_count], NULL, tool_thread_func, &args[thread_count]);
-            thread_count++;
+        if (!results) {
+            ui_show_error(tui, queue, "Failed to allocate tool result buffer");
+            return;
         }
 
-        // Show spinner or status while waiting for tools to complete
+        int valid_tool_calls = 0;
+        for (int i = 0; i < tool_count; i++) {
+            ToolCall *tool = &tool_calls_array[i];
+            if (tool->name && tool->id) {
+                valid_tool_calls++;
+            }
+        }
+
+        pthread_t *threads = NULL;
+        ToolThreadArg *args = NULL;
+        if (valid_tool_calls > 0) {
+            threads = calloc((size_t)valid_tool_calls, sizeof(pthread_t));
+            args = calloc((size_t)valid_tool_calls, sizeof(ToolThreadArg));
+            if (!threads || !args) {
+                ui_show_error(tui, queue, "Failed to allocate tool thread structures");
+                free(threads);
+                free(args);
+                free_internal_contents(results, tool_count);
+                return;
+            }
+        }
+
+        ToolCallbackContext callback_ctx = {
+            .tui = tui,
+            .queue = queue,
+            .spinner = NULL,
+            .worker_ctx = worker_ctx
+        };
+
         Spinner *tool_spinner = NULL;
-        if (!tui) {
+        if (!tui && !queue) {
             char spinner_msg[128];
             snprintf(spinner_msg, sizeof(spinner_msg), "Running %d tool%s...",
-                     thread_count, thread_count > 1 ? "s" : "");
+                     valid_tool_calls, valid_tool_calls == 1 ? "" : "s");
             tool_spinner = spinner_start(spinner_msg, SPINNER_YELLOW);
         } else {
             char status_msg[128];
             snprintf(status_msg, sizeof(status_msg), "Running %d tool%s...",
-                     thread_count, thread_count > 1 ? "s" : "");
-            tui_update_status(tui, status_msg);
+                     valid_tool_calls, valid_tool_calls == 1 ? "" : "s");
+            ui_set_status(tui, queue, status_msg);
         }
+        callback_ctx.spinner = tool_spinner;
 
-        // Wait for all tool threads to complete, checking for ESC periodically
-        // Use a helper thread to monitor tool completion
-        int interrupted = 0;
-        volatile int all_tools_done = 0;
-
-        // Create a monitor thread that joins all tool threads
-        pthread_t monitor_thread;
-        MonitorArg monitor_arg = {threads, thread_count, &all_tools_done};
-        pthread_create(&monitor_thread, NULL, tool_monitor_func, &monitor_arg);
-
-        // Now check for ESC while waiting for tools to complete
-        while (!all_tools_done) {
-            if (check_for_esc()) {
-                LOG_INFO("Tool execution interrupted by user (ESC pressed) - cancelling threads");
-                interrupted = 1;
-
-                // Cancel all tool threads immediately
-                for (int i = 0; i < thread_count; i++) {
-                    pthread_cancel(threads[i]);
+        ToolExecutionTracker tracker;
+        int tracker_initialized = 0;
+        if (valid_tool_calls > 0) {
+            if (tool_tracker_init(&tracker, valid_tool_calls, tool_progress_callback, &callback_ctx) != 0) {
+                ui_show_error(tui, queue, "Failed to initialize tool tracker");
+                if (tool_spinner) {
+                    spinner_stop(tool_spinner, "Tool execution failed to start", 0);
                 }
-
-                // Update status to show immediate termination
-                if (!tui) {
-                    spinner_update(tool_spinner, "Interrupted (ESC) - terminating tools...");
-                } else {
-                    tui_update_status(tui, "Interrupted (ESC) - terminating tools...");
-                }
-                break;
+                free(threads);
+                free(args);
+                free_internal_contents(results, tool_count);
+                return;
             }
-            usleep(50000);  // Check every 50ms
+            tracker_initialized = 1;
         }
 
-        // Wait for monitor thread to complete (this ensures all tool threads are joined)
-        // If interrupted, threads are cancelled; otherwise wait for normal completion
-        pthread_join(monitor_thread, NULL);
+        int started_threads = 0;
+
+        for (int i = 0; i < tool_count; i++) {
+            ToolCall *tool = &tool_calls_array[i];
+            InternalContent *result_slot = &results[i];
+            result_slot->type = INTERNAL_TOOL_RESPONSE;
+
+            if (!tool->name || !tool->id) {
+                LOG_ERROR("Tool call missing name or id (provider validation failed)");
+                result_slot->tool_id = tool->id ? strdup(tool->id) : strdup("unknown");
+                result_slot->tool_name = tool->name ? strdup(tool->name) : strdup("tool");
+                cJSON *error = cJSON_CreateObject();
+                cJSON_AddStringToObject(error, "error", "Tool call missing name or id");
+                result_slot->tool_output = error;
+                result_slot->is_error = 1;
+                continue;
+            }
+
+            cJSON *input = tool->parameters
+                ? cJSON_Duplicate(tool->parameters, /*recurse*/1)
+                : cJSON_CreateObject();
+
+            char *tool_details = get_tool_details(tool->name, input);
+            char prefix_with_tool[128];
+            snprintf(prefix_with_tool, sizeof(prefix_with_tool), "[Tool: %s]", tool->name);
+            ui_append_line(tui, queue, prefix_with_tool, tool_details, COLOR_PAIR_TOOL);
+
+            if (!tracker_initialized) {
+                cJSON *error = cJSON_CreateObject();
+                cJSON_AddStringToObject(error, "error", "Internal error initializing tool tracker");
+                result_slot->tool_id = strdup(tool->id);
+                result_slot->tool_name = strdup(tool->name);
+                result_slot->tool_output = error;
+                result_slot->is_error = 1;
+                cJSON_Delete(input);
+                continue;
+            }
+
+            ToolThreadArg *current = &args[started_threads];
+            current->tool_use_id = strdup(tool->id);
+            current->tool_name = tool->name;
+            current->input = input;
+            current->state = state;
+            current->result_block = result_slot;
+            current->tracker = &tracker;
+            current->notified = 0;
+            current->queue = queue;
+
+            int rc = pthread_create(&threads[started_threads], NULL, tool_thread_func, current);
+            if (rc != 0) {
+                LOG_ERROR("Failed to create tool thread for %s (rc=%d)", tool->name, rc);
+                cJSON_Delete(input);
+                current->input = NULL;
+
+                result_slot->tool_id = current->tool_use_id;
+                result_slot->tool_name = strdup(tool->name);
+                cJSON *error = cJSON_CreateObject();
+                cJSON_AddStringToObject(error, "error", "Failed to start tool thread");
+                result_slot->tool_output = error;
+                result_slot->is_error = 1;
+                tool_tracker_notify_completion(current);
+                current->tool_use_id = NULL;
+                continue;
+            }
+
+            started_threads++;
+        }
+
+        int interrupted = 0;
+        if (tracker_initialized && started_threads > 0) {
+            while (1) {
+                int done = 0;
+                int cancelled = 0;
+
+                pthread_mutex_lock(&tracker.mutex);
+                if (tracker.cancelled || tracker.completed >= tracker.total) {
+                    done = tracker.completed >= tracker.total;
+                    cancelled = tracker.cancelled;
+                    pthread_mutex_unlock(&tracker.mutex);
+                    break;
+                }
+
+                struct timespec deadline;
+                clock_gettime(CLOCK_REALTIME, &deadline);
+                deadline.tv_nsec += 100000000L;
+                if (deadline.tv_nsec >= 1000000000L) {
+                    deadline.tv_sec += 1;
+                    deadline.tv_nsec -= 1000000000L;
+                }
+
+                // Wait for condition variable with timeout
+                (void)pthread_cond_timedwait(&tracker.cond, &tracker.mutex, &deadline);
+                done = tracker.completed >= tracker.total;
+                cancelled = tracker.cancelled;
+                pthread_mutex_unlock(&tracker.mutex);
+
+                if (done || cancelled) {
+                    break;
+                }
+
+                // ESC key handling is now done by TUI/ncurses event loop
+                // Non-TUI mode doesn't have interactive ESC key support anymore
+            }
+        }
+
+        for (int t = 0; t < started_threads; t++) {
+            pthread_join(threads[t], NULL);
+        }
 
         clock_gettime(CLOCK_MONOTONIC, &tool_end);
         long tool_exec_ms = (tool_end.tv_sec - tool_start.tv_sec) * 1000 +
                             (tool_end.tv_nsec - tool_start.tv_nsec) / 1000000;
-        LOG_INFO("All %d tool(s) completed in %ld ms", thread_count, tool_exec_ms);
+        LOG_INFO("All %d tool(s) processed in %ld ms", started_threads, tool_exec_ms);
 
-        // If interrupted, clean up and return
-        if (interrupted) {
-            if (!tui) {
-                if (tool_spinner) {
-                    spinner_stop(tool_spinner, "Interrupted by user (ESC) - tools terminated", 0);
-                }
-            } else {
-                tui_update_status(tui, "Interrupted by user (ESC) - tools terminated");
-            }
-
-            free(threads);
-            free(args);
-            // results will be freed when conversation state is cleaned up
-            return;  // Exit without continuing conversation
+        if (tracker_initialized) {
+            tool_tracker_destroy(&tracker);
         }
 
-        // Check if any tools had errors and display error messages
         int has_error = 0;
         for (int i = 0; i < tool_count; i++) {
             if (results[i].is_error) {
                 has_error = 1;
 
-                // Extract and display the error message
-                cJSON *error_obj = cJSON_GetObjectItem(results[i].tool_output, "error");
-                const char *error_msg = error_obj && cJSON_IsString(error_obj)
+                cJSON *error_obj = results[i].tool_output
+                    ? cJSON_GetObjectItem(results[i].tool_output, "error")
+                    : NULL;
+                const char *error_msg = (error_obj && cJSON_IsString(error_obj))
                     ? error_obj->valuestring
                     : "Unknown error";
-
-                // Get tool name for better context
                 const char *tool_name = results[i].tool_name ? results[i].tool_name : "tool";
 
-                // Display error next to/below the tool execution
-                if (tui) {
-                    char error_display[512];
-                    snprintf(error_display, sizeof(error_display), "%s failed: %s", tool_name, error_msg);
-                    tui_add_conversation_line(tui, "[Error]", error_display, COLOR_PAIR_ERROR);
-                } else {
-                    char error_display[512];
-                    snprintf(error_display, sizeof(error_display), "[Error] %s failed: %s", tool_name, error_msg);
-                    // Try to get color from colorscheme, fall back to centralized ANSI color
-                    char color_code[32];
-                    const char *color_start;
-                    if (get_colorscheme_color(COLORSCHEME_ERROR, color_code, sizeof(color_code)) == 0) {
-                        color_start = color_code;
-                    } else {
-                        LOG_WARN("Using fallback ANSI color for ERROR");
-                        color_start = ANSI_FALLBACK_ERROR;
-                    }
-                    printf("%s%s%s\n", color_start, error_display, ANSI_RESET);
-                    fflush(stdout);
-                }
+                char error_display[512];
+                snprintf(error_display, sizeof(error_display), "%s failed: %s", tool_name, error_msg);
+                ui_show_error(tui, queue, error_display);
             }
         }
 
-        // Clear status on success, show message on error
-        if (!tui) {
-            printf("DEBUG: has_error = %d\n", has_error);
-            if (has_error) {
-                spinner_stop(tool_spinner, "Tool execution completed with errors", 0);
+        if (interrupted) {
+            if (!tui && !queue) {
+                if (tool_spinner) {
+                    spinner_stop(tool_spinner, "Interrupted by user (ESC) - tools terminated", 0);
+                }
             } else {
-                printf("DEBUG: Stopping tool spinner with success message\n");
-                spinner_stop(tool_spinner, "Tool execution completed successfully", 1);
+                ui_set_status(tui, queue, "Interrupted by user (ESC) - tools terminated");
+            }
+
+            free(threads);
+            free(args);
+            free_internal_contents(results, tool_count);
+            return;
+        }
+
+        if (!tui && !queue) {
+            if (tool_spinner) {
+                if (has_error) {
+                    spinner_stop(tool_spinner, "Tool execution completed with errors", 0);
+                } else {
+                    spinner_stop(tool_spinner, "Tool execution completed successfully", 1);
+                }
             }
         } else {
             if (has_error) {
-                tui_update_status(tui, "Tool execution completed with errors");
+                ui_set_status(tui, queue, "Tool execution completed with errors");
             } else {
-                tui_update_status(tui, "");  // Clear status on success
+                ui_set_status(tui, queue, "");
             }
         }
+
         free(threads);
         free(args);
 
-        // Add tool results and continue conversation
         add_tool_results(state, results, tool_count);
 
-        Spinner *followup_spinner = NULL;
-        if (!tui) {
-            followup_spinner = spinner_start("Processing tool results...", SPINNER_CYAN);
-        } else {
-            tui_update_status(tui, "Processing tool results...");
-        }
-        ApiResponse *next_response = call_api(state);
-        // Clear status after API call completes
-        if (!tui) {
-            spinner_stop(followup_spinner, NULL, 1);  // Clear without message
-        } else {
-            tui_update_status(tui, "");  // Clear status
-        }
-        if (next_response) {
-            process_response(state, next_response, tui);
-            api_response_free(next_response);
-        } else {
-            // API call failed - show error to user
-            const char *error_msg = "API call failed after executing tools. Check logs for details.";
-            if (tui) {
-                tui_add_conversation_line(tui, "[Error]", error_msg, COLOR_PAIR_ERROR);
-            } else {
-                print_error(error_msg);
+        // Check if TodoWrite was executed and display the updated TODO list
+        int todo_write_executed = 0;
+        for (int i = 0; i < tool_count; i++) {
+            if (results[i].tool_name && strcmp(results[i].tool_name, "TodoWrite") == 0) {
+                todo_write_executed = 1;
+                break;
             }
-            LOG_ERROR("API call returned NULL after tool execution");
         }
 
-        // results is now owned by the conversation state and will be freed upon state cleanup
+        if (todo_write_executed && state->todo_list && state->todo_list->count > 0) {
+            char *todo_text = todo_render_to_string(state->todo_list);
+            if (todo_text) {
+                ui_append_line(tui, queue, "[Assistant]", todo_text, COLOR_PAIR_ASSISTANT);
+                free(todo_text);
+            }
+        }
+
+        Spinner *followup_spinner = NULL;
+        if (!tui && !queue) {
+            followup_spinner = spinner_start("Processing tool results...", SPINNER_CYAN);
+        } else {
+            ui_set_status(tui, queue, "Processing tool results...");
+        }
+        ApiResponse *next_response = call_api(state);
+        if (!tui && !queue) {
+            spinner_stop(followup_spinner, NULL, 1);
+        } else {
+            ui_set_status(tui, queue, "");
+        }
+
+        if (next_response) {
+            process_response(state, next_response, tui, queue, worker_ctx);
+            api_response_free(next_response);
+        } else {
+            const char *error_msg = "API call failed after executing tools. Check logs for details.";
+            ui_show_error(tui, queue, error_msg);
+            LOG_ERROR("API call returned NULL after tool execution");
+        }
 
         clock_gettime(CLOCK_MONOTONIC, &proc_end);
         long proc_ms = (proc_end.tv_sec - proc_start.tv_sec) * 1000 +
@@ -3023,6 +3576,35 @@ static void process_response(ConversationState *state, ApiResponse *response, TU
     long proc_ms = (proc_end.tv_sec - proc_start.tv_sec) * 1000 +
                    (proc_end.tv_nsec - proc_start.tv_nsec) / 1000000;
     LOG_INFO("Response processing completed in %ld ms (no tools)", proc_ms);
+}
+
+static void ai_worker_handle_instruction(AIWorkerContext *ctx, const AIInstruction *instruction) {
+    if (!ctx || !instruction) {
+        return;
+    }
+
+    ui_set_status(NULL, ctx->tui_queue, "Waiting for API response...");
+
+    ApiResponse *response = call_api(ctx->state);
+
+    ui_set_status(NULL, ctx->tui_queue, "");
+
+    if (!response) {
+        ui_show_error(NULL, ctx->tui_queue, "Failed to get response from API");
+        return;
+    }
+
+    cJSON *error = cJSON_GetObjectItem(response->raw_response, "error");
+    if (error) {
+        cJSON *error_message = cJSON_GetObjectItem(error, "message");
+        const char *error_msg = error_message ? error_message->valuestring : "Unknown error";
+        ui_show_error(NULL, ctx->tui_queue, error_msg);
+        api_response_free(response);
+        return;
+    }
+
+    process_response(ctx->state, response, NULL, ctx->tui_queue, ctx);
+    api_response_free(response);
 }
 
 // ============================================================================
@@ -3041,24 +3623,148 @@ static void process_response(ConversationState *state, ApiResponse *response, TU
 
 
 
-// Advanced input handler with readline-like keybindings
-static void interactive_mode(ConversationState *state) {
-    // Display startup banner with theme colors (colorscheme already initialized in main())
-    char color_code[32];
-    const char *banner_color;
-    if (get_colorscheme_color(COLORSCHEME_ASSISTANT, color_code, sizeof(color_code)) == 0) {
-        banner_color = color_code;
-    } else {
-        LOG_WARN("Using fallback ANSI color for ASSISTANT (banner)");
-        banner_color = ANSI_FALLBACK_BOLD_BLUE;  // Bold blue fallback from centralized system
+typedef struct {
+    ConversationState *state;
+    TUIState *tui;
+    AIWorkerContext *worker;
+    AIInstructionQueue *instruction_queue;
+    TUIMessageQueue *tui_queue;
+    int instruction_queue_capacity;
+} InteractiveContext;
+
+// Submit callback invoked by the TUI event loop when the user presses Enter
+static int submit_input_callback(const char *input, void *user_data) {
+    InteractiveContext *ctx = (InteractiveContext *)user_data;
+    if (!ctx || !ctx->state || !ctx->tui || !input) {
+        return 0;
     }
 
-    printf("%s", banner_color);
-    printf(" ▐▛███▜▌   claude-c v%s\n", VERSION);
-    printf("▝▜█████▛▘  %s\n", state->model);
-    printf("  ▘▘ ▝▝    %s\n", state->working_dir);
-    printf(ANSI_RESET "\n");  // Reset color and add blank line
-    fflush(stdout);
+    if (input[0] == '\0') {
+        return 0;
+    }
+
+    TUIState *tui = ctx->tui;
+    ConversationState *state = ctx->state;
+    AIWorkerContext *worker = ctx->worker;
+    TUIMessageQueue *queue = ctx->tui_queue;
+
+    char *input_copy = strdup(input);
+    if (!input_copy) {
+        ui_show_error(tui, queue, "Memory allocation failed");
+        return 0;
+    }
+
+    if (input_copy[0] == '/') {
+        ui_append_line(tui, queue, "[User]", input_copy, COLOR_PAIR_USER);
+
+        if (strcmp(input_copy, "/exit") == 0 || strcmp(input_copy, "/quit") == 0) {
+            free(input_copy);
+            return 1;
+        } else if (strcmp(input_copy, "/clear") == 0) {
+            clear_conversation(state);
+            tui_clear_conversation(tui);
+            ui_append_line(tui, queue, "[System]", "Conversation cleared", COLOR_PAIR_STATUS);
+            free(input_copy);
+            return 0;
+        } else if (strncmp(input_copy, "/add-dir ", 9) == 0) {
+            const char *path = input_copy + 9;
+            if (add_directory(state, path) == 0) {
+                ui_append_line(tui, queue, "[System]", "Directory added successfully", COLOR_PAIR_STATUS);
+                char *new_system_prompt = build_system_prompt(state);
+                if (!new_system_prompt) {
+                    ui_show_error(tui, queue, "Failed to rebuild system prompt");
+                    free(input_copy);
+                    return 0;
+                }
+
+                if (state->count > 0 && state->messages[0].role == MSG_SYSTEM) {
+                    free(state->messages[0].contents[0].text);
+                    state->messages[0].contents[0].text = strdup(new_system_prompt);
+                    if (!state->messages[0].contents[0].text) {
+                        ui_show_error(tui, queue, "Memory allocation failed");
+                    }
+                }
+                free(new_system_prompt);
+            } else {
+                ui_show_error(tui, queue, "Failed to add directory");
+            }
+            free(input_copy);
+            return 0;
+        } else if (strcmp(input_copy, "/help") == 0) {
+            ui_append_line(tui, queue, "[System]", "Available commands:", COLOR_PAIR_STATUS);
+            ui_append_line(tui, queue, "[System]", "  /exit, /quit - Exit the program", COLOR_PAIR_STATUS);
+            ui_append_line(tui, queue, "[System]", "  /clear - Clear conversation history", COLOR_PAIR_STATUS);
+            ui_append_line(tui, queue, "[System]", "  /add-dir <path> - Add additional working directory", COLOR_PAIR_STATUS);
+            ui_append_line(tui, queue, "[System]", "  /help - Show this help message", COLOR_PAIR_STATUS);
+            free(input_copy);
+            return 0;
+        } else {
+            ui_show_error(tui, queue, "Unknown command. Type /help for available commands.");
+            free(input_copy);
+            return 0;
+        }
+    }
+
+    ui_append_line(tui, queue, "[User]", input_copy, COLOR_PAIR_USER);
+    add_user_message(state, input_copy);
+
+    if (worker) {
+        if (ai_worker_submit(worker, input_copy) != 0) {
+            ui_show_error(tui, queue, "Failed to queue instruction for processing");
+        } else {
+            if (ctx->instruction_queue) {
+                int depth = ai_queue_depth(ctx->instruction_queue);
+                if (depth > 0) {
+                    char status[128];
+                    if (ctx->instruction_queue_capacity > 0) {
+                        snprintf(status, sizeof(status),
+                                 "Instruction queued (%d/%d pending)",
+                                 depth,
+                                 ctx->instruction_queue_capacity);
+                    } else {
+                        snprintf(status, sizeof(status),
+                                 "Instruction queued (%d pending)", depth);
+                    }
+                    ui_set_status(tui, queue, status);
+                } else {
+                    ui_set_status(tui, queue, "Instruction submitted (processing...)");
+                }
+            } else {
+                ui_set_status(tui, queue, "Instruction queued for processing...");
+            }
+        }
+    } else {
+        ui_set_status(tui, queue, "Waiting for API response...");
+        ApiResponse *response = call_api(state);
+        ui_set_status(tui, queue, "");
+
+        if (!response) {
+            ui_show_error(tui, queue, "Failed to get response from API");
+            free(input_copy);
+            return 0;
+        }
+
+        cJSON *error = cJSON_GetObjectItem(response->raw_response, "error");
+        if (error) {
+            cJSON *error_message = cJSON_GetObjectItem(error, "message");
+            const char *error_msg = error_message ? error_message->valuestring : "Unknown error";
+            ui_show_error(tui, queue, error_msg);
+            api_response_free(response);
+            free(input_copy);
+            return 0;
+        }
+
+        process_response(state, response, tui, queue, NULL);
+        api_response_free(response);
+    }
+
+    free(input_copy);
+    return 0;
+}
+
+// Advanced input handler with readline-like keybindings, driven by non-blocking event loop
+static void interactive_mode(ConversationState *state) {
+    const char *prompt = ">";
 
     // Initialize TUI
     TUIState tui = {0};
@@ -3076,105 +3782,84 @@ static void interactive_mode(ConversationState *state) {
              state->model, state->session_id ? state->session_id : "none");
     tui_update_status(&tui, status_msg);
 
-    int running = 1;
+    // Display startup banner with mascot in the TUI
+    tui_show_startup_banner(&tui, VERSION, state->model, state->working_dir);
 
-    while (running) {
-        char *input = tui_read_input(&tui, ">");
-        if (!input) {
-            // EOF (Ctrl+D)
-            break;
+    const size_t TUI_QUEUE_CAPACITY = 256;
+    const size_t AI_QUEUE_CAPACITY = 16;
+    TUIMessageQueue tui_queue;
+    AIInstructionQueue instruction_queue;
+    AIWorkerContext worker_ctx = {0};
+    int tui_queue_initialized = 0;
+    int instruction_queue_initialized = 0;
+    int worker_started = 0;
+    int async_enabled = 1;
+
+    if (tui_msg_queue_init(&tui_queue, TUI_QUEUE_CAPACITY) != 0) {
+        ui_show_error(&tui, NULL, "Failed to initialize TUI message queue; running in synchronous mode.");
+        async_enabled = 0;
+    } else {
+        tui_queue_initialized = 1;
+    }
+
+    if (async_enabled) {
+        if (ai_queue_init(&instruction_queue, AI_QUEUE_CAPACITY) != 0) {
+            ui_show_error(&tui, NULL, "Failed to initialize instruction queue; running in synchronous mode.");
+            async_enabled = 0;
+        } else {
+            instruction_queue_initialized = 1;
         }
+    }
 
-        // Skip empty input
-        if (strlen(input) == 0) {
-            free(input);
-            continue;
+    if (async_enabled) {
+        if (ai_worker_start(&worker_ctx, state, &instruction_queue, &tui_queue, ai_worker_handle_instruction) != 0) {
+            ui_show_error(&tui, NULL, "Failed to start AI worker thread; running in synchronous mode.");
+            async_enabled = 0;
+        } else {
+            worker_started = 1;
         }
+    }
 
-        // Handle commands
-        if (input[0] == '/') {
-            // Show command in conversation
-            tui_add_conversation_line(&tui, "[User]", input, COLOR_PAIR_USER);
-
-            if (strcmp(input, "/exit") == 0 || strcmp(input, "/quit") == 0) {
-                free(input);
-                break;
-            } else if (strcmp(input, "/clear") == 0) {
-                clear_conversation(state);
-                tui_clear_conversation(&tui);
-                tui_add_conversation_line(&tui, "[System]", "Conversation cleared", COLOR_PAIR_STATUS);
-                free(input);
-                continue;
-            } else if (strncmp(input, "/add-dir ", 9) == 0) {
-                const char *path = input + 9;
-                if (add_directory(state, path) == 0) {
-                    tui_add_conversation_line(&tui, "[System]", "Directory added successfully", COLOR_PAIR_STATUS);
-                    // Update system message
-                    char *new_system_prompt = build_system_prompt(state);
-                    if (!new_system_prompt) {
-                        goto cleanup_add_dir;
-                    }
-
-                    if (state->count > 0 && state->messages[0].role == MSG_SYSTEM) {
-                        free(state->messages[0].contents[0].text);
-                        state->messages[0].contents[0].text = strdup(new_system_prompt);
-                        if (!state->messages[0].contents[0].text) {
-                            // Failed to allocate, but we'll still cleanup
-                            tui_add_conversation_line(&tui, "[Error]", "Memory allocation failed", COLOR_PAIR_ERROR);
-                        }
-                    }
-
-                cleanup_add_dir:
-                    free(new_system_prompt);
-                } else {
-                    tui_add_conversation_line(&tui, "[Error]", "Failed to add directory", COLOR_PAIR_ERROR);
-                }
-                free(input);
-                continue;
-            } else if (strcmp(input, "/help") == 0) {
-                tui_add_conversation_line(&tui, "[System]", "Available commands:", COLOR_PAIR_STATUS);
-                tui_add_conversation_line(&tui, "[System]", "  /exit, /quit - Exit the program", COLOR_PAIR_STATUS);
-                tui_add_conversation_line(&tui, "[System]", "  /clear - Clear conversation history", COLOR_PAIR_STATUS);
-                tui_add_conversation_line(&tui, "[System]", "  /add-dir <path> - Add additional working directory", COLOR_PAIR_STATUS);
-                tui_add_conversation_line(&tui, "[System]", "  /help - Show this help message", COLOR_PAIR_STATUS);
-                free(input);
-                continue;
-            } else {
-                tui_add_conversation_line(&tui, "[Error]", "Unknown command. Type /help for available commands.", COLOR_PAIR_ERROR);
-                free(input);
-                continue;
-            }
+    if (!async_enabled) {
+        if (worker_started) {
+            ai_worker_stop(&worker_ctx);
+            worker_started = 0;
         }
-
-        // Display user message - skip since it's already shown when typing
-        // tui_add_conversation_line(&tui, "[User]", input, COLOR_PAIR_USER);
-
-        // Add to conversation
-        add_user_message(state, input);
-        free(input);
-
-        // Call API with status update
-        tui_update_status(&tui, "Waiting for API response...");
-        ApiResponse *response = call_api(state);
-        tui_update_status(&tui, "");  // Clear status after API response
-
-        if (!response) {
-            tui_add_conversation_line(&tui, "[Error]", "Failed to get response from API", COLOR_PAIR_ERROR);
-            continue;
+        if (instruction_queue_initialized) {
+            ai_queue_free(&instruction_queue);
+            instruction_queue_initialized = 0;
         }
-
-        // Check for errors in raw response
-        cJSON *error = cJSON_GetObjectItem(response->raw_response, "error");
-        if (error) {
-            cJSON *error_message = cJSON_GetObjectItem(error, "message");
-            const char *error_msg = error_message ? error_message->valuestring : "Unknown error";
-            tui_add_conversation_line(&tui, "[Error]", error_msg, COLOR_PAIR_ERROR);
-            api_response_free(response);
-            continue;
+        if (tui_queue_initialized) {
+            tui_msg_queue_shutdown(&tui_queue);
+            tui_msg_queue_free(&tui_queue);
+            tui_queue_initialized = 0;
         }
+    }
 
-        process_response(state, response, &tui);
-        api_response_free(response);
+    InteractiveContext ctx = {
+        .state = state,
+        .tui = &tui,
+        .worker = worker_started ? &worker_ctx : NULL,
+        .instruction_queue = instruction_queue_initialized ? &instruction_queue : NULL,
+        .tui_queue = tui_queue_initialized ? &tui_queue : NULL,
+        .instruction_queue_capacity = instruction_queue_initialized ? (int)AI_QUEUE_CAPACITY : 0,
+    };
+
+    void *event_loop_queue = tui_queue_initialized ? (void *)&tui_queue : NULL;
+    tui_event_loop(&tui, prompt, submit_input_callback, &ctx, event_loop_queue);
+
+    if (worker_started) {
+        ai_worker_stop(&worker_ctx);
+    }
+    if (tui_queue_initialized) {
+        tui_drain_message_queue(&tui, prompt, &tui_queue);
+    }
+    if (instruction_queue_initialized) {
+        ai_queue_free(&instruction_queue);
+    }
+    if (tui_queue_initialized) {
+        tui_msg_queue_shutdown(&tui_queue);
+        tui_msg_queue_free(&tui_queue);
     }
 
     // Cleanup TUI
@@ -3409,6 +4094,17 @@ int main(int argc, char *argv[]) {
 
     // Initialize conversation state
     ConversationState state = {0};
+    if (conversation_state_init(&state) != 0) {
+        LOG_ERROR("Failed to initialize conversation state synchronization");
+        fprintf(stderr, "Error: Unable to initialize conversation state\n");
+        free(session_id);
+        if (persistence_db) {
+            persistence_close(persistence_db);
+        }
+        curl_global_cleanup();
+        log_shutdown();
+        return 1;
+    }
     state.api_key = strdup(api_key);
     state.api_url = strdup(api_base);
     state.model = strdup(model);
@@ -3444,6 +4140,7 @@ int main(int argc, char *argv[]) {
         if (state.todo_list) {
             free(state.todo_list);
         }
+        conversation_state_destroy(&state);
         curl_global_cleanup();
         return 1;
     }
@@ -3470,6 +4167,7 @@ int main(int argc, char *argv[]) {
         if (state.todo_list) {
             free(state.todo_list);
         }
+        conversation_state_destroy(&state);
         curl_global_cleanup();
         return 1;
     }
@@ -3479,6 +4177,7 @@ int main(int argc, char *argv[]) {
         free(state.api_key);
         free(state.api_url);
         free(state.model);
+        conversation_state_destroy(&state);
         curl_global_cleanup();
         return 1;
     }
@@ -3534,6 +4233,7 @@ int main(int argc, char *argv[]) {
     free(state.model);
     free(state.working_dir);
     free(state.session_id);
+    conversation_state_destroy(&state);
 
     // Close persistence layer
     if (state.persistence_db) {
