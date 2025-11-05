@@ -1303,6 +1303,13 @@ static void input_redraw(TUIState *tui, const char *prompt) {
         cursor_screen_x >= 1 && cursor_screen_x <= input->win_width) {
         wmove(win, cursor_screen_y, cursor_screen_x);
     }
+    
+    // Hide cursor in NORMAL mode, show it in INSERT/COMMAND modes
+    if (tui->mode == TUI_MODE_NORMAL) {
+        curs_set(0);  // Hide cursor
+    } else {
+        curs_set(2);  // Show block cursor
+    }
 
     wrefresh(win);
 }
@@ -2023,11 +2030,9 @@ int tui_process_input_char(TUIState *tui, int ch, const char *prompt) {
         if (result == -1) {
             return -1;  // Quit signal
         }
-        // Mode might have switched to insert or command, continue processing below
-        if (tui->mode == TUI_MODE_NORMAL || tui->mode == TUI_MODE_COMMAND) {
-            return 0;  // Stay in normal/command mode
-        }
-        // If we switched to insert mode, fall through to process any pending input
+        // After handling normal mode input, always return
+        // We don't want to process the mode-switching key as text
+        return 0;
     }
 
     // Detect rapid input (paste heuristic when bracketed paste not available)
