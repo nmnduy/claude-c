@@ -3576,26 +3576,27 @@ static int submit_input_callback(const char *input, void *user_data) {
     if (input_copy[0] == '/') {
         ui_append_line(tui, queue, "[User]", input_copy, COLOR_PAIR_USER);
 
-        if (strcmp(input_copy, "/exit") == 0 || strcmp(input_copy, "/quit") == 0) {
-            free(input_copy);
-            return 1;
-        } else if (strcmp(input_copy, "/clear") == 0) {
-            clear_conversation(state);
-            tui_clear_conversation(tui);
-            ui_append_line(tui, queue, "[System]", "Conversation cleared", COLOR_PAIR_STATUS);
-            free(input_copy);
-            return 0;
-        } else if (strncmp(input_copy, "/add-dir ", 9) == 0) {
-            const char *path = input_copy + 9;
-            if (add_directory(state, path) == 0) {
-                ui_append_line(tui, queue, "[System]", "Directory added successfully", COLOR_PAIR_STATUS);
-                char *new_system_prompt = build_system_prompt(state);
-                if (!new_system_prompt) {
-                    ui_show_error(tui, queue, "Failed to rebuild system prompt");
-                    free(input_copy);
-                    return 0;
-                }
+        // Remember message count before command execution
+        int msg_count_before = state->count;
 
+        // Use the command system from commands.c
+        int cmd_result = commands_execute(state, input_copy);
+        
+        // Check if it's an exit command
+        if (cmd_result == -2) {
+            free(input_copy);
+            return 1;  // Exit the program
+        }
+        
+        // For /clear, also clear the TUI
+        if (strncmp(input_copy, "/clear", 6) == 0) {
+            tui_clear_conversation(tui);
+        }
+        
+        // For /add-dir, rebuild system prompt
+        if (strncmp(input_copy, "/add-dir ", 9) == 0 && cmd_result == 0) {
+            char *new_system_prompt = build_system_prompt(state);
+            if (new_system_prompt) {
                 if (state->count > 0 && state->messages[0].role == MSG_SYSTEM) {
                     free(state->messages[0].contents[0].text);
                     state->messages[0].contents[0].text = strdup(new_system_prompt);
@@ -3605,23 +3606,30 @@ static int submit_input_callback(const char *input, void *user_data) {
                 }
                 free(new_system_prompt);
             } else {
-                ui_show_error(tui, queue, "Failed to add directory");
+                ui_show_error(tui, queue, "Failed to rebuild system prompt");
             }
-            free(input_copy);
-            return 0;
-        } else if (strcmp(input_copy, "/help") == 0) {
-            ui_append_line(tui, queue, "[System]", "Available commands:", COLOR_PAIR_STATUS);
-            ui_append_line(tui, queue, "[System]", "  /exit, /quit - Exit the program", COLOR_PAIR_STATUS);
-            ui_append_line(tui, queue, "[System]", "  /clear - Clear conversation history", COLOR_PAIR_STATUS);
-            ui_append_line(tui, queue, "[System]", "  /add-dir <path> - Add additional working directory", COLOR_PAIR_STATUS);
-            ui_append_line(tui, queue, "[System]", "  /help - Show this help message", COLOR_PAIR_STATUS);
-            free(input_copy);
-            return 0;
-        } else {
-            ui_show_error(tui, queue, "Unknown command. Type /help for available commands.");
-            free(input_copy);
-            return 0;
         }
+        
+        // Check if command added new messages (e.g., /voice adds transcription)
+        if (cmd_result == 0 && state->count > msg_count_before) {
+            // Display any new user messages that were added
+            for (int i = msg_count_before; i < state->count; i++) {
+                if (state->messages[i].role == MSG_USER) {
+                    // Get the text from the first text content
+                    for (int j = 0; j < state->messages[i].content_count; j++) {
+                        if (state->messages[i].contents[j].type == CONTENT_TEXT) {
+                            ui_append_line(tui, queue, "[Transcription]",
+                                         state->messages[i].contents[j].text,
+                                         COLOR_PAIR_USER);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        
+        free(input_copy);
+        return 0;
     }
 
     ui_append_line(tui, queue, "[User]", input_copy, COLOR_PAIR_USER);
@@ -3697,7 +3705,7 @@ static void interactive_mode(ConversationState *state) {
 
     // Build initial status line
     char status_msg[256];
-    snprintf(status_msg, sizeof(status_msg), "Model: %s | Session: %s | Commands: /exit /quit /clear /add-dir /help | Ctrl+D to exit",
+    snprintf(status_msg, sizeof(status_msg), "Model: %s | Session: %s | Commands: /help for list | Ctrl+D to exit",
              state->model, state->session_id ? state->session_id : "none");
     tui_update_status(&tui, status_msg);
 
