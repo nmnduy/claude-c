@@ -1303,6 +1303,13 @@ static void input_redraw(TUIState *tui, const char *prompt) {
         cursor_screen_x >= 1 && cursor_screen_x <= input->win_width) {
         wmove(win, cursor_screen_y, cursor_screen_x);
     }
+    
+    // Hide cursor in NORMAL mode, show it in INSERT/COMMAND modes
+    if (tui->mode == TUI_MODE_NORMAL) {
+        curs_set(0);  // Hide cursor
+    } else {
+        curs_set(2);  // Show block cursor
+    }
 
     wrefresh(win);
 }
