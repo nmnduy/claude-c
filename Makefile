@@ -58,6 +58,7 @@ TEST_THREAD_CANCEL_TARGET = $(BUILD_DIR)/test_thread_cancel
 TEST_AWS_CRED_ROTATION_TARGET = $(BUILD_DIR)/test_aws_credential_rotation
 TEST_MESSAGE_QUEUE_TARGET = $(BUILD_DIR)/test_message_queue
 TEST_EVENT_LOOP_TARGET = $(BUILD_DIR)/test_event_loop
+TEST_TEXT_WRAP_TARGET = $(BUILD_DIR)/test_text_wrap
 QUERY_TOOL = $(BUILD_DIR)/query_logs
 SRC = src/claude.c
 LOGGER_SRC = src/logger.c
@@ -109,7 +110,7 @@ TEST_EVENT_LOOP_SRC = tests/test_event_loop.c
 TEST_STUBS_SRC = tests/test_stubs.c
 QUERY_TOOL_SRC = tools/query_logs.c
 
-.PHONY: all clean check-deps install test test-edit test-read test-todo test-todo-write test-paste test-retry-jitter test-openai-format test-write-diff-integration test-rotation test-patch-parser test-thread-cancel test-aws-cred-rotation test-message-queue test-event-loop query-tool debug analyze sanitize-ub sanitize-all sanitize-leak valgrind memscan version show-version update-version bump-version bump-patch build clang ci-test ci-gcc ci-clang ci-gcc-sanitize ci-clang-sanitize ci-all fmt-whitespace
+.PHONY: all clean check-deps install test test-edit test-read test-todo test-todo-write test-paste test-retry-jitter test-openai-format test-write-diff-integration test-rotation test-patch-parser test-thread-cancel test-aws-cred-rotation test-message-queue test-event-loop test-wrap query-tool debug analyze sanitize-ub sanitize-all sanitize-leak valgrind memscan version show-version update-version bump-version bump-patch build clang ci-test ci-gcc ci-clang ci-gcc-sanitize ci-clang-sanitize ci-all fmt-whitespace
 
 all: check-deps $(TARGET)
 
@@ -121,7 +122,7 @@ debug: check-deps $(BUILD_DIR)/claude-c-debug
 
 query-tool: check-deps $(QUERY_TOOL)
 
-test: test-edit test-read test-todo test-paste test-timing test-openai-format test-write-diff-integration test-rotation test-patch-parser test-thread-cancel test-aws-cred-rotation test-message-queue
+test: test-edit test-read test-todo test-paste test-timing test-openai-format test-write-diff-integration test-rotation test-patch-parser test-thread-cancel test-aws-cred-rotation test-message-queue test-wrap
 
 test-edit: check-deps $(TEST_EDIT_TARGET)
 	@echo ""
@@ -213,6 +214,12 @@ test-event-loop: check-deps $(TEST_EVENT_LOOP_TARGET)
 	@echo "Type some text and press Enter. Type 'quit' to exit."
 	@echo ""
 	@./$(TEST_EVENT_LOOP_TARGET)
+
+test-wrap: check-deps $(TEST_TEXT_WRAP_TARGET)
+	@echo ""
+	@echo "Running Text Wrapping tests..."
+	@echo ""
+	@./$(TEST_TEXT_WRAP_TARGET)
 
 $(TARGET): $(SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(COMMANDS_OBJ) $(COMPLETION_OBJ) $(TUI_OBJ) $(TODO_OBJ) $(AWS_BEDROCK_OBJ) $(PROVIDER_OBJ) $(OPENAI_PROVIDER_OBJ) $(OPENAI_MESSAGES_OBJ) $(BEDROCK_PROVIDER_OBJ) $(BUILTIN_THEMES_OBJ) $(PATCH_PARSER_OBJ) $(MESSAGE_QUEUE_OBJ) $(AI_WORKER_OBJ) $(VERSION_H)
 	@mkdir -p $(BUILD_DIR)
@@ -637,6 +644,14 @@ $(TEST_EVENT_LOOP_TARGET): $(TEST_EVENT_LOOP_SRC) $(TEST_STUBS_SRC) $(TUI_OBJ) $
 	@$(CC) $(CFLAGS) -Wno-unused-function -o $(TEST_EVENT_LOOP_TARGET) $(TEST_EVENT_LOOP_SRC) $(TEST_STUBS_SRC) $(TUI_OBJ) $(MESSAGE_QUEUE_OBJ) $(LOGGER_OBJ) $(TODO_OBJ) $(BUILTIN_THEMES_OBJ) $(PATCH_PARSER_OBJ) $(LDFLAGS)
 	@echo ""
 	@echo "✓ Event Loop test build successful!"
+	@echo ""
+
+$(TEST_TEXT_WRAP_TARGET): tests/test_text_wrap.c
+	@mkdir -p $(BUILD_DIR)
+	@echo "Compiling Text Wrapping test..."
+	@$(CC) -Wall -Wextra -O0 -g -o $(TEST_TEXT_WRAP_TARGET) tests/test_text_wrap.c -I./src
+	@echo ""
+	@echo "✓ Text Wrapping test build successful!"
 	@echo ""
 
 install: $(TARGET)
