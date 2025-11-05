@@ -650,8 +650,8 @@ static int resize_input_window(TUIState *tui, int desired_lines) {
         tui->input_buffer->win = tui->input_win;
         int h, w;
         getmaxyx(tui->input_win, h, w);
-        tui->input_buffer->win_width = w - 2;
-        tui->input_buffer->win_height = h - 2;
+        tui->input_buffer->win_width = w;  // Full width (no left/right borders)
+        tui->input_buffer->win_height = h - 1;  // Account for top border only
     }
 
     // Enable keypad for new window
@@ -708,8 +708,8 @@ static int input_init(TUIState *tui) {
     // Get window dimensions
     int h, w;
     getmaxyx(tui->input_win, h, w);
-    input->win_width = w - 2;  // Account for borders
-    input->win_height = h - 2;
+    input->win_width = w;  // Full width (no left/right borders)
+    input->win_height = h - 1;  // Account for top border only
 
     tui->input_buffer = input;
     return 0;
@@ -1001,13 +1001,20 @@ static void input_redraw(TUIState *tui, const char *prompt) {
     // Clear the window
     werase(win);
 
-    // Draw box with accent color if colors are available
+    // Draw only top border with accent color if colors are available
+    int win_height, win_width;
+    getmaxyx(win, win_height, win_width);
+    (void)win_height;  // Unused, suppress warning
+    
     if (has_colors()) {
         wattron(win, COLOR_PAIR(NCURSES_PAIR_ASSISTANT));
-        box(win, 0, 0);
+    }
+    
+    // Draw top border only (using ACS_HLINE for horizontal line)
+    mvwhline(win, 0, 0, ACS_HLINE, win_width);
+    
+    if (has_colors()) {
         wattroff(win, COLOR_PAIR(NCURSES_PAIR_ASSISTANT));
-    } else {
-        box(win, 0, 0);
     }
 
     // Draw prompt on first visible line (if we're not scrolled past it)
@@ -1019,10 +1026,10 @@ static void input_redraw(TUIState *tui, const char *prompt) {
         
         if (tui->mode == TUI_MODE_COMMAND && tui->command_buffer) {
             // Show command buffer
-            mvwprintw(win, 1, 1, "%s", tui->command_buffer);
+            mvwprintw(win, 1, 0, "%s", tui->command_buffer);
         } else {
             // Show normal prompt
-            mvwprintw(win, 1, 1, "%s ", prompt);
+            mvwprintw(win, 1, 0, "%s ", prompt);
         }
         
         if (has_colors()) {
@@ -1037,7 +1044,7 @@ static void input_redraw(TUIState *tui, const char *prompt) {
 
     int current_line = 0;
     int screen_y = 1;
-    int screen_x = (current_line == 0) ? prompt_len + 1 : 1;
+    int screen_x = (current_line == 0) ? prompt_len : 0;
 
     for (int i = 0; i < input->length && screen_y <= input->win_height; i++) {
         // Skip lines before scroll offset
@@ -1061,7 +1068,7 @@ static void input_redraw(TUIState *tui, const char *prompt) {
             mvwaddch(win, screen_y, screen_x, (unsigned char)'+' | A_DIM);
             screen_y++;
             current_line++;
-            screen_x = 1;  // Reset to left edge (after border)
+            screen_x = 0;  // Reset to left edge (no left border)
         } else {
             mvwaddch(win, screen_y, screen_x, c);
             screen_x++;
@@ -1075,7 +1082,7 @@ static void input_redraw(TUIState *tui, const char *prompt) {
             if (screen_x > line_width) {
                 screen_y++;
                 current_line++;
-                screen_x = 1;
+                screen_x = 0;
             }
         }
     }
@@ -1086,7 +1093,7 @@ static void input_redraw(TUIState *tui, const char *prompt) {
 
     // Position cursor (adjusted for scroll)
     int cursor_screen_y = cursor_line - input->line_scroll_offset + 1;
-    int cursor_screen_x = cursor_col + 1;  // +1 for border
+    int cursor_screen_x = cursor_col;  // No offset (no left border)
 
     // Recalculate cursor_col relative to its line
     int temp_line = 0;
@@ -1104,11 +1111,11 @@ static void input_redraw(TUIState *tui, const char *prompt) {
             }
         }
     }
-    cursor_screen_x = temp_col + 1;
+    cursor_screen_x = temp_col;
 
     // Bounds check for cursor position
-    if (cursor_screen_y >= 1 && cursor_screen_y <= input->win_height &&
-        cursor_screen_x >= 1 && cursor_screen_x <= input->win_width) {
+    if (cursor_screen_y >= 1 && cursor_screen_y <= input->win_height + 1 &&
+        cursor_screen_x >= 0 && cursor_screen_x < input->win_width) {
         wmove(win, cursor_screen_y, cursor_screen_x);
     }
     
@@ -1469,8 +1476,8 @@ void tui_handle_resize(TUIState *tui) {
             if (tui->input_buffer) {
                 int h, w;
                 getmaxyx(tui->input_win, h, w);
-                tui->input_buffer->win_width = w - 2;
-                tui->input_buffer->win_height = h - 2;
+                tui->input_buffer->win_width = w;  // Full width (no left/right borders)
+                tui->input_buffer->win_height = h - 1;  // Account for top border only
                 tui->input_buffer->win = tui->input_win;
             }
             

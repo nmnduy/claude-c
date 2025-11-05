@@ -8,6 +8,7 @@ A lightweight, modular implementation of a coding agent that interacts with an O
 
 - **Modular architecture**: Clean separation into focused modules (~2000+ lines total)
 - **Core tools**: Bash, Read, Write, Edit, Glob, Grep with advanced features
+- **Voice input**: Record and transcribe audio using OpenAI Whisper API
 - **Vendor support**: OpenAI and AWS Bedrock
 - **Efficient**: Direct API calls with libcurl, minimal dependencies
 - **Portable**: Standard C11 with POSIX support
@@ -24,23 +25,24 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for detailed system architectur
 - **libcurl**: HTTP client for API requests
 - **cJSON**: JSON parsing and generation
 - **pthread**: Thread support (standard on most systems)
+- **portaudio**: Cross-platform audio recording (optional, for voice input)
 - **POSIX**: File operations, glob, process management
 
 ### Installing Dependencies
 
 **macOS (Homebrew):**
 ```bash
-brew install curl cjson
+brew install curl cjson portaudio
 ```
 
 **Ubuntu/Debian:**
 ```bash
-sudo apt-get install libcurl4-openssl-dev libcjson-dev build-essential
+sudo apt-get install libcurl4-openssl-dev libcjson-dev portaudio19-dev build-essential
 ```
 
 **Fedora/RHEL:**
 ```bash
-sudo yum install libcurl-devel cjson-devel gcc make
+sudo yum install libcurl-devel cjson-devel portaudio-devel gcc make
 ```
 
 ## Building
@@ -143,7 +145,8 @@ export CLAUDE_C_THEME="./colorschemes/dracula.conf"
 The interactive mode supports:
 - Multi-turn conversations
 - ESC key interruption: Press ESC to stop the agent during API calls or tool execution
-- Slash commands: `/clear`, `/exit`, `/quit`, `/help`, `/add-dir`
+- Slash commands: `/clear`, `/exit`, `/quit`, `/help`, `/add-dir`, `/voice`
+- Voice input: Use `/voice` to record and transcribe audio (requires PortAudio and OPENAI_API_KEY)
 - Readline-style editing: Ctrl+A, Ctrl+E, Alt+B, Alt+F, etc.
 
 ### Color Theme Support

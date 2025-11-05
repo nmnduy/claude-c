@@ -190,6 +190,11 @@ typedef struct ConversationState {
 int add_directory(ConversationState *state, const char *path);
 
 /**
+ * Add a user message to the conversation
+ */
+void add_user_message(ConversationState *state, const char *text);
+
+/**
  * Clear conversation history (keeps system message)
  */
 void clear_conversation(ConversationState *state);
