@@ -4,8 +4,8 @@ CC ?= gcc
 CLANG = clang
 CFLAGS = -Werror -Wall -Wextra -Wpedantic -Wformat=2 -Wconversion -Wshadow -Wcast-qual -Wcast-align -Wstrict-prototypes -Wmissing-prototypes -Wmissing-declarations -Wuninitialized -Warray-bounds -Wvla -Wwrite-strings -Wnull-dereference -Wimplicit-fallthrough -Wsign-conversion -Wsign-compare -Wfloat-equal -Wpointer-arith -Wbad-function-cast -Wstrict-overflow -Waggregate-return -Wredundant-decls -Wnested-externs -Winline -Wswitch-enum -Wswitch-default -Wenum-conversion -Wdisabled-optimization -O2 -std=c11 -D_POSIX_C_SOURCE=200809L -D_DEFAULT_SOURCE=1 -Wno-aggregate-return $(SANITIZERS)
 DEBUG_CFLAGS = -Werror -Wall -Wextra -Wpedantic -Wformat=2 -Wconversion -Wshadow -Wcast-qual -Wcast-align -Wstrict-prototypes -Wmissing-prototypes -Wmissing-declarations -Wuninitialized -Warray-bounds -Wvla -Wwrite-strings -Wnull-dereference -Wimplicit-fallthrough -Wsign-conversion -Wsign-compare -Wfloat-equal -Wpointer-arith -Wbad-function-cast -Wstrict-overflow -Waggregate-return -Wredundant-decls -Wnested-externs -Winline -Wswitch-enum -Wswitch-default -Wenum-conversion -Wdisabled-optimization -g -O0 -std=c11 -D_POSIX_C_SOURCE=200809L -D_DEFAULT_SOURCE=1 -fsanitize=address -fno-omit-frame-pointer
-LDFLAGS = -lcurl -lpthread -lsqlite3 -lssl -lcrypto $(SANITIZERS)
-DEBUG_LDFLAGS = -lcurl -lpthread -lsqlite3 -lssl -lcrypto -fsanitize=address
+LDFLAGS = -lcurl -lpthread -lsqlite3 -lssl -lcrypto -lncurses $(SANITIZERS)
+DEBUG_LDFLAGS = -lcurl -lpthread -lsqlite3 -lssl -lcrypto -lncurses -fsanitize=address
 
 # Installation prefix (can be overridden via command line)
 INSTALL_PREFIX ?= $(HOME)/.local
@@ -44,9 +44,7 @@ endif
 BUILD_DIR = build
 TARGET = $(BUILD_DIR)/claude-c
 TEST_EDIT_TARGET = $(BUILD_DIR)/test_edit
-TEST_INPUT_TARGET = $(BUILD_DIR)/test_input
 TEST_READ_TARGET = $(BUILD_DIR)/test_read
-TEST_LINEEDIT_TARGET = $(BUILD_DIR)/test_lineedit
 TEST_TODO_TARGET = $(BUILD_DIR)/test_todo
 TEST_TODO_WRITE_TARGET = $(BUILD_DIR)/test_todo_write
 TEST_TIMING_TARGET = $(BUILD_DIR)/test_tool_timing
@@ -58,6 +56,8 @@ TEST_ROTATION_TARGET = $(BUILD_DIR)/test_rotation
 TEST_PATCH_PARSER_TARGET = $(BUILD_DIR)/test_patch_parser
 TEST_THREAD_CANCEL_TARGET = $(BUILD_DIR)/test_thread_cancel
 TEST_AWS_CRED_ROTATION_TARGET = $(BUILD_DIR)/test_aws_credential_rotation
+TEST_MESSAGE_QUEUE_TARGET = $(BUILD_DIR)/test_message_queue
+TEST_EVENT_LOOP_TARGET = $(BUILD_DIR)/test_event_loop
 QUERY_TOOL = $(BUILD_DIR)/query_logs
 SRC = src/claude.c
 LOGGER_SRC = src/logger.c
@@ -66,8 +66,6 @@ PERSISTENCE_SRC = src/persistence.c
 PERSISTENCE_OBJ = $(BUILD_DIR)/persistence.o
 MIGRATIONS_SRC = src/migrations.c
 MIGRATIONS_OBJ = $(BUILD_DIR)/migrations.o
-LINEEDIT_SRC = src/lineedit.c
-LINEEDIT_OBJ = $(BUILD_DIR)/lineedit.o
 COMMANDS_SRC = src/commands.c
 COMMANDS_OBJ = $(BUILD_DIR)/commands.o
 COMPLETION_SRC = src/completion.c
@@ -90,10 +88,12 @@ BUILTIN_THEMES_SRC = src/builtin_themes.c
 BUILTIN_THEMES_OBJ = $(BUILD_DIR)/builtin_themes.o
 PATCH_PARSER_SRC = src/patch_parser.c
 PATCH_PARSER_OBJ = $(BUILD_DIR)/patch_parser.o
+MESSAGE_QUEUE_SRC = src/message_queue.c
+MESSAGE_QUEUE_OBJ = $(BUILD_DIR)/message_queue.o
+AI_WORKER_SRC = src/ai_worker.c
+AI_WORKER_OBJ = $(BUILD_DIR)/ai_worker.o
 TEST_EDIT_SRC = tests/test_edit.c
-TEST_INPUT_SRC = tests/test_input.c
 TEST_READ_SRC = tests/test_read.c
-TEST_LINEEDIT_SRC = tests/test_lineedit.c
 TEST_TODO_SRC = tests/test_todo.c
 TEST_TODO_WRITE_SRC = tests/test_todo_write.c
 TEST_PASTE_SRC = tests/test_paste.c
@@ -104,9 +104,12 @@ TEST_ROTATION_SRC = tests/test_rotation.c
 TEST_PATCH_PARSER_SRC = tests/test_patch_parser.c
 TEST_THREAD_CANCEL_SRC = tests/test_thread_cancel.c
 TEST_AWS_CRED_ROTATION_SRC = tests/test_aws_credential_rotation.c
+TEST_MESSAGE_QUEUE_SRC = tests/test_message_queue.c
+TEST_EVENT_LOOP_SRC = tests/test_event_loop.c
+TEST_STUBS_SRC = tests/test_stubs.c
 QUERY_TOOL_SRC = tools/query_logs.c
 
-.PHONY: all clean check-deps install test test-edit test-input test-read test-lineedit test-todo test-todo-write test-paste test-retry-jitter test-openai-format test-write-diff-integration test-rotation test-patch-parser test-thread-cancel test-aws-cred-rotation query-tool debug analyze sanitize-ub sanitize-all sanitize-leak valgrind memscan version show-version update-version bump-version bump-patch build clang ci-test ci-gcc ci-clang ci-gcc-sanitize ci-clang-sanitize ci-all
+.PHONY: all clean check-deps install test test-edit test-read test-todo test-todo-write test-paste test-retry-jitter test-openai-format test-write-diff-integration test-rotation test-patch-parser test-thread-cancel test-aws-cred-rotation test-message-queue test-event-loop query-tool debug analyze sanitize-ub sanitize-all sanitize-leak valgrind memscan version show-version update-version bump-version bump-patch build clang ci-test ci-gcc ci-clang ci-gcc-sanitize ci-clang-sanitize ci-all fmt-whitespace
 
 all: check-deps $(TARGET)
 
@@ -118,7 +121,7 @@ debug: check-deps $(BUILD_DIR)/claude-c-debug
 
 query-tool: check-deps $(QUERY_TOOL)
 
-test: test-edit test-input test-read test-lineedit test-todo test-paste test-timing test-openai-format test-write-diff-integration test-rotation test-patch-parser test-thread-cancel test-aws-cred-rotation
+test: test-edit test-read test-todo test-paste test-timing test-openai-format test-write-diff-integration test-rotation test-patch-parser test-thread-cancel test-aws-cred-rotation test-message-queue
 
 test-edit: check-deps $(TEST_EDIT_TARGET)
 	@echo ""
@@ -126,23 +129,11 @@ test-edit: check-deps $(TEST_EDIT_TARGET)
 	@echo ""
 	@./$(TEST_EDIT_TARGET)
 
-test-input: check-deps $(TEST_INPUT_TARGET)
-	@echo ""
-	@echo "Running Input handler tests..."
-	@echo ""
-	@./$(TEST_INPUT_TARGET)
-
 test-read: check-deps $(TEST_READ_TARGET)
 	@echo ""
 	@echo "Running Read tool tests..."
 	@echo ""
 	@./$(TEST_READ_TARGET)
-
-test-lineedit: check-deps $(TEST_LINEEDIT_TARGET)
-	@echo ""
-	@echo "Running Line Editor wrapping tests..."
-	@echo ""
-	@./$(TEST_LINEEDIT_TARGET)
 
 test-todo: check-deps $(TEST_TODO_TARGET)
 	@echo ""
@@ -210,9 +201,22 @@ test-aws-cred-rotation: check-deps $(TEST_AWS_CRED_ROTATION_TARGET)
 	@echo ""
 	@./$(TEST_AWS_CRED_ROTATION_TARGET)
 
-$(TARGET): $(SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(LINEEDIT_OBJ) $(COMMANDS_OBJ) $(COMPLETION_OBJ) $(TUI_OBJ) $(TODO_OBJ) $(AWS_BEDROCK_OBJ) $(PROVIDER_OBJ) $(OPENAI_PROVIDER_OBJ) $(OPENAI_MESSAGES_OBJ) $(BEDROCK_PROVIDER_OBJ) $(BUILTIN_THEMES_OBJ) $(PATCH_PARSER_OBJ) $(VERSION_H)
+test-message-queue: check-deps $(TEST_MESSAGE_QUEUE_TARGET)
+	@echo ""
+	@echo "Running Message Queue tests..."
+	@echo ""
+	@./$(TEST_MESSAGE_QUEUE_TARGET)
+
+test-event-loop: check-deps $(TEST_EVENT_LOOP_TARGET)
+	@echo ""
+	@echo "Running Event Loop test (interactive)..."
+	@echo "Type some text and press Enter. Type 'quit' to exit."
+	@echo ""
+	@./$(TEST_EVENT_LOOP_TARGET)
+
+$(TARGET): $(SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(COMMANDS_OBJ) $(COMPLETION_OBJ) $(TUI_OBJ) $(TODO_OBJ) $(AWS_BEDROCK_OBJ) $(PROVIDER_OBJ) $(OPENAI_PROVIDER_OBJ) $(OPENAI_MESSAGES_OBJ) $(BEDROCK_PROVIDER_OBJ) $(BUILTIN_THEMES_OBJ) $(PATCH_PARSER_OBJ) $(MESSAGE_QUEUE_OBJ) $(AI_WORKER_OBJ) $(VERSION_H)
 	@mkdir -p $(BUILD_DIR)
-	$(CC) $(CFLAGS) -o $(TARGET) $(SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(LINEEDIT_OBJ) $(COMMANDS_OBJ) $(COMPLETION_OBJ) $(TUI_OBJ) $(TODO_OBJ) $(AWS_BEDROCK_OBJ) $(PROVIDER_OBJ) $(OPENAI_PROVIDER_OBJ) $(OPENAI_MESSAGES_OBJ) $(BEDROCK_PROVIDER_OBJ) $(BUILTIN_THEMES_OBJ) $(PATCH_PARSER_OBJ) $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $(TARGET) $(SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(COMMANDS_OBJ) $(COMPLETION_OBJ) $(TUI_OBJ) $(TODO_OBJ) $(AWS_BEDROCK_OBJ) $(PROVIDER_OBJ) $(OPENAI_PROVIDER_OBJ) $(OPENAI_MESSAGES_OBJ) $(BEDROCK_PROVIDER_OBJ) $(BUILTIN_THEMES_OBJ) $(PATCH_PARSER_OBJ) $(MESSAGE_QUEUE_OBJ) $(AI_WORKER_OBJ) $(LDFLAGS)
 	@echo ""
 	@echo "✓ Build successful!"
 	@echo "Version: $(VERSION)"
@@ -264,13 +268,12 @@ $(VERSION_H): $(VERSION_FILE)
 	@echo "✓ Version: $(VERSION)"
 
 # Debug build with AddressSanitizer for finding memory bugs
-$(BUILD_DIR)/claude-c-debug: $(SRC) $(LOGGER_SRC) $(PERSISTENCE_SRC) $(MIGRATIONS_SRC) $(LINEEDIT_SRC) $(COMMANDS_SRC) $(COMPLETION_SRC) $(TUI_SRC) $(TODO_SRC) $(AWS_BEDROCK_SRC) $(PROVIDER_SRC) $(OPENAI_PROVIDER_SRC) $(OPENAI_MESSAGES_SRC) $(BEDROCK_PROVIDER_SRC) $(BUILTIN_THEMES_SRC) $(PATCH_PARSER_SRC)
+$(BUILD_DIR)/claude-c-debug: $(SRC) $(LOGGER_SRC) $(PERSISTENCE_SRC) $(MIGRATIONS_SRC) $(COMMANDS_SRC) $(COMPLETION_SRC) $(TUI_SRC) $(TODO_SRC) $(AWS_BEDROCK_SRC) $(PROVIDER_SRC) $(OPENAI_PROVIDER_SRC) $(OPENAI_MESSAGES_SRC) $(BEDROCK_PROVIDER_SRC) $(BUILTIN_THEMES_SRC) $(PATCH_PARSER_SRC) $(MESSAGE_QUEUE_SRC) $(AI_WORKER_SRC)
 	@mkdir -p $(BUILD_DIR)
 	@echo "Building with AddressSanitizer (debug mode)..."
 	$(CC) $(DEBUG_CFLAGS) -c -o $(BUILD_DIR)/logger_debug.o $(LOGGER_SRC)
 	$(CC) $(DEBUG_CFLAGS) -c -o $(BUILD_DIR)/migrations_debug.o $(MIGRATIONS_SRC)
 	$(CC) $(DEBUG_CFLAGS) -c -o $(BUILD_DIR)/persistence_debug.o $(PERSISTENCE_SRC)
-	$(CC) $(DEBUG_CFLAGS) -c -o $(BUILD_DIR)/lineedit_debug.o $(LINEEDIT_SRC)
 	$(CC) $(DEBUG_CFLAGS) -c -o $(BUILD_DIR)/commands_debug.o $(COMMANDS_SRC)
 	$(CC) $(DEBUG_CFLAGS) -c -o $(BUILD_DIR)/completion_debug.o $(COMPLETION_SRC)
 	$(CC) $(DEBUG_CFLAGS) -c -o $(BUILD_DIR)/tui_debug.o $(TUI_SRC)
@@ -282,7 +285,9 @@ $(BUILD_DIR)/claude-c-debug: $(SRC) $(LOGGER_SRC) $(PERSISTENCE_SRC) $(MIGRATION
 	$(CC) $(DEBUG_CFLAGS) -c -o $(BUILD_DIR)/bedrock_provider_debug.o $(BEDROCK_PROVIDER_SRC)
 	$(CC) $(DEBUG_CFLAGS) -c -o $(BUILD_DIR)/builtin_themes_debug.o $(BUILTIN_THEMES_SRC)
 	$(CC) $(DEBUG_CFLAGS) -c -o $(BUILD_DIR)/patch_parser_debug.o $(PATCH_PARSER_SRC)
-	$(CC) $(DEBUG_CFLAGS) -o $(BUILD_DIR)/claude-c-debug $(SRC) $(BUILD_DIR)/logger_debug.o $(BUILD_DIR)/persistence_debug.o $(BUILD_DIR)/migrations_debug.o $(BUILD_DIR)/lineedit_debug.o $(BUILD_DIR)/commands_debug.o $(BUILD_DIR)/completion_debug.o $(BUILD_DIR)/tui_debug.o $(BUILD_DIR)/todo_debug.o $(BUILD_DIR)/aws_bedrock_debug.o $(BUILD_DIR)/provider_debug.o $(BUILD_DIR)/openai_provider_debug.o $(BUILD_DIR)/openai_messages_debug.o $(BUILD_DIR)/bedrock_provider_debug.o $(BUILD_DIR)/builtin_themes_debug.o $(BUILD_DIR)/patch_parser_debug.o $(DEBUG_LDFLAGS)
+	$(CC) $(DEBUG_CFLAGS) -c -o $(BUILD_DIR)/message_queue_debug.o $(MESSAGE_QUEUE_SRC)
+	$(CC) $(DEBUG_CFLAGS) -c -o $(BUILD_DIR)/ai_worker_debug.o $(AI_WORKER_SRC)
+	$(CC) $(DEBUG_CFLAGS) -o $(BUILD_DIR)/claude-c-debug $(SRC) $(BUILD_DIR)/logger_debug.o $(BUILD_DIR)/persistence_debug.o $(BUILD_DIR)/migrations_debug.o $(BUILD_DIR)/commands_debug.o $(BUILD_DIR)/completion_debug.o $(BUILD_DIR)/tui_debug.o $(BUILD_DIR)/todo_debug.o $(BUILD_DIR)/aws_bedrock_debug.o $(BUILD_DIR)/provider_debug.o $(BUILD_DIR)/openai_provider_debug.o $(BUILD_DIR)/openai_messages_debug.o $(BUILD_DIR)/bedrock_provider_debug.o $(BUILD_DIR)/builtin_themes_debug.o $(BUILD_DIR)/patch_parser_debug.o $(BUILD_DIR)/message_queue_debug.o $(BUILD_DIR)/ai_worker_debug.o $(DEBUG_LDFLAGS)
 	@echo ""
 	@echo "✓ Debug build successful with AddressSanitizer!"
 	@echo "Run: ./$(BUILD_DIR)/claude-c-debug \"your prompt here\""
@@ -295,10 +300,10 @@ $(BUILD_DIR)/claude-c-debug: $(SRC) $(LOGGER_SRC) $(PERSISTENCE_SRC) $(MIGRATION
 	@echo ""
 
 # Build with clang compiler
-$(BUILD_DIR)/claude-c-clang: $(SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(LINEEDIT_OBJ) $(COMMANDS_OBJ) $(COMPLETION_OBJ) $(TUI_OBJ) $(TODO_OBJ) $(AWS_BEDROCK_OBJ) $(PROVIDER_OBJ) $(OPENAI_PROVIDER_OBJ) $(OPENAI_MESSAGES_OBJ) $(BEDROCK_PROVIDER_OBJ) $(BUILTIN_THEMES_OBJ) $(PATCH_PARSER_OBJ) $(VERSION_H)
+$(BUILD_DIR)/claude-c-clang: $(SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(COMMANDS_OBJ) $(COMPLETION_OBJ) $(TUI_OBJ) $(TODO_OBJ) $(AWS_BEDROCK_OBJ) $(PROVIDER_OBJ) $(OPENAI_PROVIDER_OBJ) $(OPENAI_MESSAGES_OBJ) $(BEDROCK_PROVIDER_OBJ) $(BUILTIN_THEMES_OBJ) $(PATCH_PARSER_OBJ) $(AI_WORKER_OBJ) $(MESSAGE_QUEUE_OBJ) $(VERSION_H)
 	@mkdir -p $(BUILD_DIR)
 	@echo "Building with clang compiler..."
-	$(CLANG) $(CFLAGS) -o $(BUILD_DIR)/claude-c-clang $(SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(LINEEDIT_OBJ) $(COMMANDS_OBJ) $(COMPLETION_OBJ) $(TUI_OBJ) $(TODO_OBJ) $(AWS_BEDROCK_OBJ) $(PROVIDER_OBJ) $(OPENAI_PROVIDER_OBJ) $(OPENAI_MESSAGES_OBJ) $(BEDROCK_PROVIDER_OBJ) $(BUILTIN_THEMES_OBJ) $(PATCH_PARSER_OBJ) $(LDFLAGS)
+	$(CLANG) $(CFLAGS) -o $(BUILD_DIR)/claude-c-clang $(SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(COMMANDS_OBJ) $(COMPLETION_OBJ) $(TUI_OBJ) $(TODO_OBJ) $(AWS_BEDROCK_OBJ) $(PROVIDER_OBJ) $(OPENAI_PROVIDER_OBJ) $(OPENAI_MESSAGES_OBJ) $(BEDROCK_PROVIDER_OBJ) $(BUILTIN_THEMES_OBJ) $(PATCH_PARSER_OBJ) $(MESSAGE_QUEUE_OBJ) $(AI_WORKER_OBJ) $(LDFLAGS)
 	@echo ""
 	@echo "✓ Clang build successful!"
 	@echo "Version: $(VERSION)"
@@ -365,16 +370,13 @@ sanitize-leak: check-deps
 	@echo ""
 
 # Run Valgrind memory checker on tests
-valgrind: test-edit test-input test-read
+valgrind: test-edit test-read
 	@echo ""
 	@echo "Running Valgrind on test suite..."
 	@echo ""
 	@command -v valgrind >/dev/null 2>&1 || { echo "Error: valgrind not found. Install with: brew install valgrind (macOS) or apt-get install valgrind (Linux)"; exit 1; }
 	@echo "=== Testing Edit tool with Valgrind ==="
 	valgrind --leak-check=full --show-leak-kinds=all --track-origins=yes --error-exitcode=1 ./$(TEST_EDIT_TARGET)
-	@echo ""
-	@echo "=== Testing Input handler with Valgrind ==="
-	valgrind --leak-check=full --show-leak-kinds=all --track-origins=yes --error-exitcode=1 ./$(TEST_INPUT_TARGET)
 	@echo ""
 	@echo "=== Testing Read tool with Valgrind ==="
 	valgrind --leak-check=full --show-leak-kinds=all --track-origins=yes --error-exitcode=1 ./$(TEST_READ_TARGET)
@@ -414,21 +416,21 @@ $(MIGRATIONS_OBJ): $(MIGRATIONS_SRC) src/migrations.h
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c -o $(MIGRATIONS_OBJ) $(MIGRATIONS_SRC)
 
-$(LINEEDIT_OBJ): $(LINEEDIT_SRC) src/lineedit.h
-	@mkdir -p $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c -o $(LINEEDIT_OBJ) $(LINEEDIT_SRC)
-
-$(COMMANDS_OBJ): $(COMMANDS_SRC) src/commands.h src/lineedit.h
+$(COMMANDS_OBJ): $(COMMANDS_SRC) src/commands.h
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c -o $(COMMANDS_OBJ) $(COMMANDS_SRC)
 
-$(COMPLETION_OBJ): $(COMPLETION_SRC) src/completion.h src/lineedit.h
+$(COMPLETION_OBJ): $(COMPLETION_SRC) src/completion.h
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c -o $(COMPLETION_OBJ) $(COMPLETION_SRC)
 
 $(TUI_OBJ): $(TUI_SRC) src/tui.h src/claude_internal.h
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c -o $(TUI_OBJ) $(TUI_SRC)
+
+$(AI_WORKER_OBJ): $(AI_WORKER_SRC) src/ai_worker.h src/message_queue.h src/claude_internal.h
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c -o $(AI_WORKER_OBJ) $(AI_WORKER_SRC)
 
 $(TODO_OBJ): $(TODO_SRC) src/todo.h
 	@mkdir -p $(BUILD_DIR)
@@ -462,6 +464,10 @@ $(PATCH_PARSER_OBJ): $(PATCH_PARSER_SRC) src/patch_parser.h src/claude_internal.
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c -o $(PATCH_PARSER_OBJ) $(PATCH_PARSER_SRC)
 
+$(MESSAGE_QUEUE_OBJ): $(MESSAGE_QUEUE_SRC) src/message_queue.h
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c -o $(MESSAGE_QUEUE_OBJ) $(MESSAGE_QUEUE_SRC)
+
 # Query tool - utility to inspect API call logs
 $(QUERY_TOOL): $(QUERY_TOOL_SRC) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ)
 	@mkdir -p $(BUILD_DIR)
@@ -475,56 +481,31 @@ $(QUERY_TOOL): $(QUERY_TOOL_SRC) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ)
 # Test target for Edit tool - compiles test suite with claude.c functions
 # We rename claude's main to avoid conflict with test's main
 # and export internal functions via TEST_BUILD flag
-$(TEST_EDIT_TARGET): $(SRC) $(TEST_EDIT_SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(TODO_OBJ) $(PATCH_PARSER_OBJ)
+$(TEST_EDIT_TARGET): $(SRC) $(TEST_EDIT_SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(TODO_OBJ) $(PATCH_PARSER_OBJ) $(MESSAGE_QUEUE_OBJ)
 	@mkdir -p $(BUILD_DIR)
 	@echo "Compiling claude.c for testing (renaming main)..."
 	@$(CC) $(CFLAGS) -DTEST_BUILD -c -o $(BUILD_DIR)/claude_test.o $(SRC)
 	@echo "Compiling Edit tool test suite..."
 	@$(CC) $(CFLAGS) -c -o $(BUILD_DIR)/test_edit.o $(TEST_EDIT_SRC)
 	@echo "Linking test executable..."
-	@$(CC) -o $(TEST_EDIT_TARGET) $(BUILD_DIR)/claude_test.o $(BUILD_DIR)/test_edit.o $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(TODO_OBJ) $(PATCH_PARSER_OBJ) $(LDFLAGS)
+	@$(CC) -o $(TEST_EDIT_TARGET) $(BUILD_DIR)/claude_test.o $(BUILD_DIR)/test_edit.o $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(TODO_OBJ) $(PATCH_PARSER_OBJ) $(MESSAGE_QUEUE_OBJ) $(LDFLAGS)
 	@echo ""
 	@echo "✓ Edit tool test build successful!"
 	@echo ""
 
-# Test target for Input handler - compiles test suite with lineedit.c functions
-$(TEST_INPUT_TARGET): $(LINEEDIT_SRC) $(TEST_INPUT_SRC) $(LOGGER_OBJ)
-	@mkdir -p $(BUILD_DIR)
-	@echo "Compiling lineedit.c for input testing..."
-	@$(CC) $(CFLAGS) -DTEST_BUILD -c -o $(BUILD_DIR)/lineedit_input_test.o $(LINEEDIT_SRC)
-	@echo "Compiling Input handler test suite..."
-	@$(CC) $(CFLAGS) -c -o $(BUILD_DIR)/test_input.o $(TEST_INPUT_SRC)
-	@echo "Linking test executable..."
-	@$(CC) -o $(TEST_INPUT_TARGET) $(BUILD_DIR)/lineedit_input_test.o $(BUILD_DIR)/test_input.o $(LOGGER_OBJ) $(LDFLAGS)
-	@echo ""
-	@echo "✓ Input handler test build successful!"
-	@echo ""
-
 # Test target for Read tool - compiles test suite with claude.c functions
-$(TEST_READ_TARGET): $(SRC) $(TEST_READ_SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(TODO_OBJ) $(PATCH_PARSER_OBJ)
+$(TEST_READ_TARGET): $(SRC) $(TEST_READ_SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(TODO_OBJ) $(PATCH_PARSER_OBJ) $(MESSAGE_QUEUE_OBJ)
 	@mkdir -p $(BUILD_DIR)
 	@echo "Compiling claude.c for read testing..."
 	@$(CC) $(CFLAGS) -DTEST_BUILD -c -o $(BUILD_DIR)/claude_read_test.o $(SRC)
 	@echo "Compiling Read tool test suite..."
 	@$(CC) $(CFLAGS) -c -o $(BUILD_DIR)/test_read.o $(TEST_READ_SRC)
 	@echo "Linking test executable..."
-	@$(CC) -o $(TEST_READ_TARGET) $(BUILD_DIR)/claude_read_test.o $(BUILD_DIR)/test_read.o $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(TODO_OBJ) $(PATCH_PARSER_OBJ) $(LDFLAGS)
+	@$(CC) -o $(TEST_READ_TARGET) $(BUILD_DIR)/claude_read_test.o $(BUILD_DIR)/test_read.o $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(TODO_OBJ) $(PATCH_PARSER_OBJ) $(MESSAGE_QUEUE_OBJ) $(LDFLAGS)
 	@echo ""
 	@echo "✓ Read tool test build successful!"
 	@echo ""
 
-# Test target for Line Editor - tests wrapping calculation logic
-$(TEST_LINEEDIT_TARGET): $(LINEEDIT_SRC) $(TEST_LINEEDIT_SRC) $(LOGGER_OBJ)
-	@mkdir -p $(BUILD_DIR)
-	@echo "Compiling lineedit.c for testing..."
-	@$(CC) $(CFLAGS) -DTEST_BUILD -c -o $(BUILD_DIR)/lineedit_test.o $(LINEEDIT_SRC)
-	@echo "Compiling Line Editor test suite..."
-	@$(CC) $(CFLAGS) -c -o $(BUILD_DIR)/test_lineedit.o $(TEST_LINEEDIT_SRC)
-	@echo "Linking test executable..."
-	@$(CC) -o $(TEST_LINEEDIT_TARGET) $(BUILD_DIR)/lineedit_test.o $(BUILD_DIR)/test_lineedit.o $(LOGGER_OBJ) $(LDFLAGS)
-	@echo ""
-	@echo "✓ Line Editor test build successful!"
-	@echo ""
 
 # Test target for TODO list - tests task management functionality
 $(TEST_TODO_TARGET): $(TODO_SRC) $(TEST_TODO_SRC) tests/test_todo_stubs.c
@@ -540,14 +521,14 @@ $(TEST_TODO_TARGET): $(TODO_SRC) $(TEST_TODO_SRC) tests/test_todo_stubs.c
 	@echo ""
 
 # Test target for TodoWrite tool - tests integration with claude.c
-$(TEST_TODO_WRITE_TARGET): $(SRC) $(TEST_TODO_WRITE_SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(TODO_OBJ) $(PATCH_PARSER_OBJ)
+$(TEST_TODO_WRITE_TARGET): $(SRC) $(TEST_TODO_WRITE_SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(TODO_OBJ) $(PATCH_PARSER_OBJ) $(MESSAGE_QUEUE_OBJ)
 	@mkdir -p $(BUILD_DIR)
 	@echo "Compiling claude.c for TodoWrite testing (renaming main)..."
 	@$(CC) $(CFLAGS) -DTEST_BUILD -c -o $(BUILD_DIR)/claude_todowrite_test.o $(SRC)
 	@echo "Compiling TodoWrite tool test suite..."
 	@$(CC) $(CFLAGS) -c -o $(BUILD_DIR)/test_todo_write.o $(TEST_TODO_WRITE_SRC)
 	@echo "Linking test executable..."
-	@$(CC) -o $(TEST_TODO_WRITE_TARGET) $(BUILD_DIR)/claude_todowrite_test.o $(BUILD_DIR)/test_todo_write.o $(TODO_OBJ) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(PATCH_PARSER_OBJ) $(LDFLAGS)
+	@$(CC) -o $(TEST_TODO_WRITE_TARGET) $(BUILD_DIR)/claude_todowrite_test.o $(BUILD_DIR)/test_todo_write.o $(TODO_OBJ) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(PATCH_PARSER_OBJ) $(MESSAGE_QUEUE_OBJ) $(LDFLAGS)
 	@echo ""
 	@echo "✓ TodoWrite tool test build successful!"
 	@echo ""
@@ -589,14 +570,14 @@ $(TEST_OPENAI_FORMAT_TARGET): $(TEST_OPENAI_FORMAT_SRC)
 	@echo ""
 
 # Test target for Write tool diff integration
-$(TEST_WRITE_DIFF_INTEGRATION_TARGET): $(SRC) $(TEST_WRITE_DIFF_INTEGRATION_SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(TODO_OBJ) $(LINEEDIT_OBJ) $(PATCH_PARSER_OBJ)
+$(TEST_WRITE_DIFF_INTEGRATION_TARGET): $(SRC) $(TEST_WRITE_DIFF_INTEGRATION_SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(TODO_OBJ) $(PATCH_PARSER_OBJ) $(MESSAGE_QUEUE_OBJ)
 	@mkdir -p $(BUILD_DIR)
 	@echo "Compiling claude.c for write diff testing..."
 	@$(CC) $(CFLAGS) -DTEST_BUILD -c -o $(BUILD_DIR)/claude_write_diff_test.o $(SRC)
 	@echo "Compiling Write tool diff integration test suite..."
 	@$(CC) $(CFLAGS) -c -o $(BUILD_DIR)/test_write_diff_integration.o $(TEST_WRITE_DIFF_INTEGRATION_SRC)
 	@echo "Linking test executable..."
-	@$(CC) -o $(TEST_WRITE_DIFF_INTEGRATION_TARGET) $(BUILD_DIR)/claude_write_diff_test.o $(BUILD_DIR)/test_write_diff_integration.o $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(TODO_OBJ) $(LINEEDIT_OBJ) $(PATCH_PARSER_OBJ) $(LDFLAGS)
+	@$(CC) -o $(TEST_WRITE_DIFF_INTEGRATION_TARGET) $(BUILD_DIR)/claude_write_diff_test.o $(BUILD_DIR)/test_write_diff_integration.o $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(TODO_OBJ) $(PATCH_PARSER_OBJ) $(MESSAGE_QUEUE_OBJ) $(LDFLAGS)
 	@echo ""
 	@echo "✓ Write tool diff integration test build successful!"
 	@echo ""
@@ -611,14 +592,14 @@ $(TEST_ROTATION_TARGET): $(TEST_ROTATION_SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $
 	@echo ""
 
 # Test target for patch parser
-$(TEST_PATCH_PARSER_TARGET): $(SRC) $(TEST_PATCH_PARSER_SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(TODO_OBJ) $(PATCH_PARSER_OBJ)
+$(TEST_PATCH_PARSER_TARGET): $(SRC) $(TEST_PATCH_PARSER_SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(TODO_OBJ) $(PATCH_PARSER_OBJ) $(MESSAGE_QUEUE_OBJ)
 	@mkdir -p $(BUILD_DIR)
 	@echo "Compiling claude.c for patch parser testing..."
 	@$(CC) $(CFLAGS) -DTEST_BUILD -c -o $(BUILD_DIR)/claude_patch_test.o $(SRC)
 	@echo "Compiling Patch Parser test suite..."
 	@$(CC) $(CFLAGS) -c -o $(BUILD_DIR)/test_patch_parser.o $(TEST_PATCH_PARSER_SRC)
 	@echo "Linking test executable..."
-	@$(CC) -o $(TEST_PATCH_PARSER_TARGET) $(BUILD_DIR)/claude_patch_test.o $(BUILD_DIR)/test_patch_parser.o $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(TODO_OBJ) $(PATCH_PARSER_OBJ) $(LDFLAGS)
+	@$(CC) -o $(TEST_PATCH_PARSER_TARGET) $(BUILD_DIR)/claude_patch_test.o $(BUILD_DIR)/test_patch_parser.o $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(TODO_OBJ) $(PATCH_PARSER_OBJ) $(MESSAGE_QUEUE_OBJ) $(LDFLAGS)
 	@echo ""
 	@echo "✓ Patch Parser test build successful!"
 	@echo ""
@@ -641,6 +622,23 @@ $(TEST_AWS_CRED_ROTATION_TARGET): $(TEST_AWS_CRED_ROTATION_SRC) $(AWS_BEDROCK_OB
 	@echo "✓ AWS Credential Rotation test build successful!"
 	@echo ""
 
+# Test target for message queues - tests thread-safe queues
+$(TEST_MESSAGE_QUEUE_TARGET): $(TEST_MESSAGE_QUEUE_SRC) $(MESSAGE_QUEUE_OBJ) $(LOGGER_OBJ)
+	@mkdir -p $(BUILD_DIR)
+	@echo "Compiling Message Queue test suite..."
+	@$(CC) $(CFLAGS) -o $(TEST_MESSAGE_QUEUE_TARGET) $(TEST_MESSAGE_QUEUE_SRC) $(MESSAGE_QUEUE_OBJ) $(LOGGER_OBJ) $(LDFLAGS)
+	@echo ""
+	@echo "✓ Message Queue test build successful!"
+	@echo ""
+
+$(TEST_EVENT_LOOP_TARGET): $(TEST_EVENT_LOOP_SRC) $(TEST_STUBS_SRC) $(TUI_OBJ) $(MESSAGE_QUEUE_OBJ) $(LOGGER_OBJ) $(TODO_OBJ) $(BUILTIN_THEMES_OBJ) $(PATCH_PARSER_OBJ)
+	@mkdir -p $(BUILD_DIR)
+	@echo "Compiling Event Loop test..."
+	@$(CC) $(CFLAGS) -Wno-unused-function -o $(TEST_EVENT_LOOP_TARGET) $(TEST_EVENT_LOOP_SRC) $(TEST_STUBS_SRC) $(TUI_OBJ) $(MESSAGE_QUEUE_OBJ) $(LOGGER_OBJ) $(TODO_OBJ) $(BUILTIN_THEMES_OBJ) $(PATCH_PARSER_OBJ) $(LDFLAGS)
+	@echo ""
+	@echo "✓ Event Loop test build successful!"
+	@echo ""
+
 install: $(TARGET)
 	@echo "Installing claude-c to $(INSTALL_PREFIX)/bin..."
 	@mkdir -p $(INSTALL_PREFIX)/bin
@@ -658,6 +656,12 @@ endif
 
 clean:
 	rm -rf $(BUILD_DIR)
+
+# Format: Remove trailing whitespaces from source files
+fmt-whitespace:
+	@echo "Removing trailing whitespaces from source files..."
+	@find src tests tools -type f \( -name "*.c" -o -name "*.h" \) -exec sed -i '' 's/[[:space:]]*$$//' {} +
+	@echo "✓ Trailing whitespaces removed"
 
 check-deps:
 	@echo "Checking dependencies..."
@@ -677,12 +681,11 @@ help:
 	@echo "  make debug     - Build with AddressSanitizer (memory bug detection)"
 	@echo "  make test      - Build and run all unit tests"
 	@echo "  make test-edit - Build and run Edit tool tests only"
-	@echo "  make test-input - Build and run Input handler tests only"
 	@echo "  make test-read - Build and run Read tool tests only"
-	@echo "  make test-lineedit - Build and run Line Editor wrapping tests only"
 	@echo "  make test-todo - Build and run TODO list tests only"
 	@echo "  make test-paste - Build and run Paste Handler tests only"
 	@echo "  make test-retry-jitter - Build and run Retry Jitter tests only"
+	@echo "  make test-message-queue - Build and run Message Queue tests only"
 	@echo "  make query-tool - Build the API call log query utility"
 	@echo "  make clean     - Remove built files"
 	@echo "  make install   - Install to \$$HOME/.local/bin as claude-c (default)"
@@ -711,6 +714,9 @@ help:
 	@echo "  make sanitize-ub  - Build with Undefined Behavior Sanitizer only"
 	@echo "  make sanitize-leak - Build with Leak Sanitizer only"
 	@echo "  make valgrind     - Run test suite under Valgrind"
+	@echo ""
+	@echo "Code Formatting:"
+	@echo "  make fmt-whitespace - Remove trailing whitespaces from all source files"
 	@echo ""
 	@echo "Dependencies:"
 	@echo "  - gcc or clang (or compatible C compiler)"

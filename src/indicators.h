@@ -30,6 +30,12 @@ static const char *SPINNER_LINE[]   = {"-","\\","|","/"};
 static const char *SPINNER_BOX[]    = {"◰","◳","◲","◱"};
 static const char *SPINNER_CIRCLE[] = {"◜","◠","◝","◞","◡","◟"};
 
+#if defined(__GNUC__) || defined(__clang__)
+#define INDICATOR_UNUSED __attribute__((unused))
+#else
+#define INDICATOR_UNUSED
+#endif
+
 // Color accessors
 static inline const char* get_spinner_color_status(void) {
     static char buf[32]; static int w=0;
@@ -114,7 +120,7 @@ static void *spinner_thread_func(void *arg) {
 }
 
 // Start spinner; style fixed once per lifecycle
-static Spinner* spinner_start(const char *message, const char *color) {
+static INDICATOR_UNUSED Spinner* spinner_start(const char *message, const char *color) {
     init_global_spinner_variant();
     Spinner *s = malloc(sizeof(Spinner)); if (!s) return NULL;
     s->message = strdup(message);
@@ -128,7 +134,7 @@ static Spinner* spinner_start(const char *message, const char *color) {
 }
 
 // Update spinner text
-static void spinner_update(Spinner *s, const char *msg) {
+static INDICATOR_UNUSED void spinner_update(Spinner *s, const char *msg) {
     if (!s) return;
     pthread_mutex_lock(&s->lock);
     free(s->message);
@@ -137,7 +143,7 @@ static void spinner_update(Spinner *s, const char *msg) {
 }
 
 // Stop spinner and display final state
-static void spinner_stop(Spinner *s, const char *final_message, int success) {
+static INDICATOR_UNUSED void spinner_stop(Spinner *s, const char *final_message, int success) {
     if (!s) return;
     pthread_mutex_lock(&s->lock);
     s->running = 0;

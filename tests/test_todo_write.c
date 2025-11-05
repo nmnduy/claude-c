@@ -18,6 +18,10 @@ void test_basic_todo_write(void) {
 
     // Initialize conversation state with todo list
     ConversationState state = {0};
+    assert(conversation_state_init(&state) == 0);
+    assert(conversation_state_init(&state) == 0);
+    assert(conversation_state_init(&state) == 0);
+    assert(conversation_state_init(&state) == 0);
     TodoList list;
     todo_init(&list);
     state.todo_list = &list;
@@ -73,6 +77,10 @@ void test_basic_todo_write(void) {
     cJSON_Delete(params);
     cJSON_Delete(result);
     todo_free(&list);
+    conversation_state_destroy(&state);
+    conversation_state_destroy(&state);
+    conversation_state_destroy(&state);
+    conversation_state_destroy(&state);
 
     printf("  ✓ Basic TodoWrite test passed\n");
 }

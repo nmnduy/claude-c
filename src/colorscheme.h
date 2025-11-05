@@ -117,6 +117,9 @@ static void rgb_to_ansi_code(RGB rgb, char *buf, size_t bufsize) {
 
 // Get ANSI color code for a colorscheme element
 // Returns 0 on success, -1 if no theme loaded
+#if defined(__GNUC__)
+__attribute__((unused))
+#endif
 static int get_colorscheme_color(ColorschemeElement element, char *buf, size_t bufsize) {
     if (!g_theme_loaded) {
         static int warned = 0;
@@ -332,7 +335,7 @@ static int load_kitty_theme(const char *filepath, Theme *theme) {
     theme->diff_remove_rgb = theme->error_rgb;    // Red for removals (same as error)
     theme->diff_header_rgb = theme->header_rgb;   // Cyan for diff headers (same as header)
     theme->diff_context_rgb = theme->foreground_rgb;  // Default color for context
-    
+
     // Make context slightly dimmer by reducing brightness
     int avg = (theme->diff_context_rgb.r + theme->diff_context_rgb.g + theme->diff_context_rgb.b) / 3;
     if (avg > 100) {

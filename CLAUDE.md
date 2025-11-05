@@ -2,6 +2,18 @@
 
 Project instructions for Claude Code when working with this codebase.
 
+## Guidelines for This Document
+
+**Purpose**: High-level executive overview and table of contents for the codebase.
+
+**Keep it minimal:**
+- Directional, not prescriptive - point to where things are, don't duplicate documentation
+- Table of contents > detailed specs - link to source files and docs, don't copy them
+- Executive summary > implementation details - what and where, not how
+- Updates should be rare and only for structural/architectural changes
+
+**Full documentation lives in**: Source code comments, `docs/*.md`, and individual README files.
+
 ## Quick Navigation
 
 **Current tasks**: `./todo.md`
@@ -18,7 +30,7 @@ Pure C implementation of a coding agent using Anthropic's Claude API.
 
 **Stack:**
 - C11 + POSIX
-- libcurl (HTTP), cJSON (parsing), pthread
+- libcurl (HTTP), cJSON (parsing), pthread, ncurses (TUI)
 - 7 core tools implemented
 - Prompt caching enabled by default
 
@@ -151,6 +163,7 @@ export CLAUDE_C_THEME="./colorschemes/dracula.conf"
 - **libcurl** - HTTP client
 - **cJSON** - JSON parsing
 - **pthread** - Thread support
+- **ncurses** - Terminal UI (scrolling, mouse support)
 - **POSIX** - File ops, glob, process management
 
 Verify: `make check-deps`
@@ -168,13 +181,9 @@ Verify: `make check-deps`
 
 ## Documentation
 
-```
-$ ls docs/
-ARCHITECTURE.md
-CI_TROUBLESHOOTING.md
-COLOR_THEMES.md
-RELEASE.md
-```
+Most documentation is in `docs/`
+
+Do not write documentation unless specified otherwise.
 
 ## Prompt Caching
 

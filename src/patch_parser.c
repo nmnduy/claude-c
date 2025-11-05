@@ -103,7 +103,7 @@ static PatchOperation parse_operation(const char *block) {
     }
     memcpy(raw_path, file_marker, path_len);
     raw_path[path_len] = '\0';
-    
+
     // Trim whitespace, free raw buffer
     op.file_path = trim_whitespace(raw_path);
     free(raw_path);
