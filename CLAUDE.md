@@ -20,6 +20,7 @@ Project instructions for Claude Code when working with this codebase.
 **Main implementation**: `src/claude.c` (core agent loop, API calls)
 **Tools**: `src/tool_*.c` (Bash, Read, Write, Edit, Glob, Grep)
 **TODO system**: `src/todo.h`, `src/todo.c`
+**TUI & Normal Mode**: `src/tui.h`, `src/tui.c`, `docs/normal-mode.md`
 **Color themes**: `src/colorscheme.h`, `colorschemes/*.conf`
 **Tests**: `tests/test_*.c`
 **Build**: `Makefile`

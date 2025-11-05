@@ -38,6 +38,13 @@ typedef struct {
     TUIColorPair color_pair; // Color for display
 } ConversationEntry;
 
+// TUI Mode (Vim-like)
+typedef enum {
+    TUI_MODE_NORMAL,   // Normal mode (vim-like navigation, default for conversation viewing)
+    TUI_MODE_INSERT,   // Insert mode (text input for sending messages)
+    TUI_MODE_COMMAND   // Command mode (entered with ':' from normal mode)
+} TUIMode;
+
 // TUI State
 typedef struct {
     WINDOW *conv_win;        // Conversation window (top of screen)
@@ -62,6 +69,12 @@ typedef struct {
     int status_spinner_active;        // Spinner animation active flag
     int status_spinner_frame;         // Current spinner frame index
     uint64_t status_spinner_last_update_ns; // Last spinner frame update timestamp
+
+    TUIMode mode;            // Current input mode (NORMAL, INSERT, or COMMAND)
+    int normal_mode_last_key; // Previous key in normal mode (for gg, G combos)
+    char *command_buffer;    // Buffer for command mode input (starts with ':')
+    int command_buffer_len;  // Length of command buffer
+    int command_buffer_capacity; // Capacity of command buffer
 
     int is_initialized;      // Whether TUI has been set up
 } TUIState;

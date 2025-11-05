@@ -90,6 +90,34 @@ static void render_status_window(TUIState *tui) {
 
     werase(tui->status_win);
 
+    int col = 0;
+    
+    // Always show mode indicator on the right side
+    const char *mode_str;
+    int mode_color;
+    switch (tui->mode) {
+        case TUI_MODE_NORMAL:
+            mode_str = "-- NORMAL --";
+            mode_color = NCURSES_PAIR_ASSISTANT;
+            break;
+        case TUI_MODE_INSERT:
+            mode_str = "-- INSERT --";
+            mode_color = NCURSES_PAIR_PROMPT;
+            break;
+        case TUI_MODE_COMMAND:
+            mode_str = "-- COMMAND --";
+            mode_color = NCURSES_PAIR_STATUS;
+            break;
+        default:
+            mode_str = "-- UNKNOWN --";
+            mode_color = NCURSES_PAIR_ERROR;
+            break;
+    }
+    int mode_len = (int)strlen(mode_str);
+    int mode_col = width - mode_len - 1;
+    if (mode_col < 0) mode_col = 0;
+    
+    // Render status message on the left (if visible)
     if (tui->status_visible && tui->status_message && tui->status_message[0] != '\0') {
         if (has_colors()) {
             wattron(tui->status_win, COLOR_PAIR(NCURSES_PAIR_STATUS) | A_BOLD);
@@ -97,7 +125,6 @@ static void render_status_window(TUIState *tui) {
             wattron(tui->status_win, A_BOLD);
         }
 
-        int col = 0;
         if (tui->status_spinner_active) {
             const spinner_variant_t *variant = status_spinner_variant();
             int frame_count = variant->count;
@@ -117,12 +144,33 @@ static void render_status_window(TUIState *tui) {
             }
         }
 
-        if (col < width) {
-            mvwaddnstr(tui->status_win, 0, col, tui->status_message, width - col);
+        // Limit status message to not overlap with mode indicator
+        int max_status_len = mode_col - col - 2;  // -2 for spacing
+        if (max_status_len > 0 && col < mode_col - 2) {
+            int msg_len = (int)strlen(tui->status_message);
+            if (msg_len > max_status_len) {
+                msg_len = max_status_len;
+            }
+            mvwaddnstr(tui->status_win, 0, col, tui->status_message, msg_len);
         }
 
         if (has_colors()) {
             wattroff(tui->status_win, COLOR_PAIR(NCURSES_PAIR_STATUS) | A_BOLD);
+        } else {
+            wattroff(tui->status_win, A_BOLD);
+        }
+    }
+    
+    // Render mode indicator on the right
+    if (mode_col < width) {
+        if (has_colors()) {
+            wattron(tui->status_win, COLOR_PAIR(mode_color) | A_BOLD);
+        } else {
+            wattron(tui->status_win, A_BOLD);
+        }
+        mvwaddnstr(tui->status_win, 0, mode_col, mode_str, width - mode_col);
+        if (has_colors()) {
+            wattroff(tui->status_win, COLOR_PAIR(mode_color) | A_BOLD);
         } else {
             wattroff(tui->status_win, A_BOLD);
         }
@@ -1155,13 +1203,22 @@ static void input_redraw(TUIState *tui, const char *prompt) {
     }
 
     // Draw prompt on first visible line (if we're not scrolled past it)
+    // In command mode, show command buffer instead of normal prompt
     if (input->line_scroll_offset == 0) {
         if (has_colors()) {
             wattron(win, COLOR_PAIR(NCURSES_PAIR_PROMPT) | A_BOLD);
-            mvwprintw(win, 1, 1, "%s ", prompt);
-            wattroff(win, COLOR_PAIR(NCURSES_PAIR_PROMPT) | A_BOLD);
+        }
+        
+        if (tui->mode == TUI_MODE_COMMAND && tui->command_buffer) {
+            // Show command buffer
+            mvwprintw(win, 1, 1, "%s", tui->command_buffer);
         } else {
+            // Show normal prompt
             mvwprintw(win, 1, 1, "%s ", prompt);
+        }
+        
+        if (has_colors()) {
+            wattroff(win, COLOR_PAIR(NCURSES_PAIR_PROMPT) | A_BOLD);
         }
     }
 
@@ -1334,6 +1391,15 @@ int tui_init(TUIState *tui) {
     tui->status_spinner_active = 0;
     tui->status_spinner_frame = 0;
     tui->status_spinner_last_update_ns = 0;
+    
+    // Initialize mode (start in NORMAL mode for Vim-like behavior)
+    tui->mode = TUI_MODE_NORMAL;
+    tui->normal_mode_last_key = 0;
+    
+    // Initialize command mode buffer
+    tui->command_buffer = NULL;
+    tui->command_buffer_len = 0;
+    tui->command_buffer_capacity = 0;
 
     // Initialize input buffer
     if (input_init(tui) != 0) {
@@ -1378,6 +1444,10 @@ void tui_cleanup(TUIState *tui) {
     // Free status message
     free(tui->status_message);
     tui->status_message = NULL;
+    
+    // Free command buffer
+    free(tui->command_buffer);
+    tui->command_buffer = NULL;
 
     // Destroy status window
     if (tui->status_win) {
@@ -1675,6 +1745,212 @@ int tui_poll_input(TUIState *tui) {
     return ch;
 }
 
+// Handle command mode input
+// Returns: 0 to continue, 1 if command executed, -1 on error/quit
+static int handle_command_mode_input(TUIState *tui, int ch, const char *prompt) {
+    if (!tui || !tui->command_buffer) {
+        return 0;
+    }
+    
+    if (ch == 27) {  // ESC - cancel command mode
+        tui->mode = TUI_MODE_NORMAL;
+        tui->command_buffer_len = 0;
+        if (tui->command_buffer) {
+            tui->command_buffer[0] = '\0';
+        }
+        if (tui->status_height > 0) {
+            render_status_window(tui);
+        }
+        input_redraw(tui, prompt);
+        return 0;
+    } else if (ch == KEY_BACKSPACE || ch == 127 || ch == 8) {  // Backspace
+        if (tui->command_buffer_len > 1) {  // Keep the ':'
+            tui->command_buffer_len--;
+            tui->command_buffer[tui->command_buffer_len] = '\0';
+            input_redraw(tui, prompt);
+        } else {
+            // Backspace on just ':' exits command mode
+            tui->mode = TUI_MODE_NORMAL;
+            tui->command_buffer_len = 0;
+            tui->command_buffer[0] = '\0';
+            if (tui->status_height > 0) {
+                render_status_window(tui);
+            }
+            input_redraw(tui, prompt);
+        }
+        return 0;
+    } else if (ch == 13 || ch == 10) {  // Enter - execute command
+        // Parse and execute command
+        const char *cmd = tui->command_buffer + 1;  // Skip the ':'
+        
+        if (strcmp(cmd, "q") == 0 || strcmp(cmd, "quit") == 0) {
+            // Quit command
+            return -1;
+        } else if (strcmp(cmd, "w") == 0 || strcmp(cmd, "write") == 0) {
+            // Write command (in our context, maybe save conversation?)
+            tui_add_conversation_line(tui, "[System]", "Write command not yet implemented", COLOR_PAIR_STATUS);
+        } else if (strcmp(cmd, "wq") == 0) {
+            // Write and quit
+            return -1;
+        } else if (cmd[0] != '\0') {
+            // Unknown command
+            char error_msg[256];
+            snprintf(error_msg, sizeof(error_msg), "Unknown command: %s", cmd);
+            tui_add_conversation_line(tui, "[Error]", error_msg, COLOR_PAIR_ERROR);
+        }
+        
+        // Exit command mode
+        tui->mode = TUI_MODE_NORMAL;
+        tui->command_buffer_len = 0;
+        tui->command_buffer[0] = '\0';
+        if (tui->status_height > 0) {
+            render_status_window(tui);
+        }
+        input_redraw(tui, prompt);
+        return 0;
+    } else if (ch >= 32 && ch < 127) {  // Printable ASCII
+        // Add to command buffer
+        if (tui->command_buffer_len < tui->command_buffer_capacity - 1) {
+            tui->command_buffer[tui->command_buffer_len++] = (char)ch;
+            tui->command_buffer[tui->command_buffer_len] = '\0';
+            input_redraw(tui, prompt);
+        }
+        return 0;
+    }
+    
+    return 0;
+}
+
+// Handle normal mode input
+// Returns: 0 to continue, 1 to switch to insert mode, -1 on error/quit
+static int handle_normal_mode_input(TUIState *tui, int ch, const char *prompt) {
+    if (!tui || !tui->conv_win) {
+        return 0;
+    }
+    
+    int max_y, max_x;
+    getmaxyx(tui->conv_win, max_y, max_x);
+    (void)max_x;
+    
+    // Calculate scrolling parameters
+    int half_page = max_y / 2;
+    int full_page = max_y - 2;  // Leave a bit of overlap
+    
+    // Handle key combinations (like gg, G)
+    if (tui->normal_mode_last_key == 'g' && ch == 'g') {
+        // gg: Go to top
+        tui->conv_scroll_offset = 0;
+        tui->normal_mode_last_key = 0;
+        render_conversation_window(tui);
+        input_redraw(tui, prompt);
+        return 0;
+    }
+    
+    // Reset last key for non-g keys
+    if (ch != 'g') {
+        tui->normal_mode_last_key = 0;
+    }
+    
+    switch (ch) {
+        case 'i':  // Enter insert mode (insert at cursor)
+        case 'a':  // Enter insert mode (append after cursor)
+        case 'A':  // Enter insert mode (append at end of line)
+        case 'I':  // Enter insert mode (insert at beginning of line)
+        case 'o':  // Enter insert mode (open line below)
+        case 'O':  // Enter insert mode (open line above)
+            tui->mode = TUI_MODE_INSERT;
+            if (tui->status_height > 0) {
+                render_status_window(tui);
+            }
+            return 1;  // Switched to insert mode
+            
+        case ':':  // Enter command mode
+            tui->mode = TUI_MODE_COMMAND;
+            // Initialize command buffer with ':'
+            if (!tui->command_buffer) {
+                tui->command_buffer_capacity = 256;
+                tui->command_buffer = malloc((size_t)tui->command_buffer_capacity);
+                if (!tui->command_buffer) {
+                    LOG_ERROR("[TUI] Failed to allocate command buffer");
+                    tui->mode = TUI_MODE_NORMAL;
+                    return 0;
+                }
+            }
+            tui->command_buffer[0] = ':';
+            tui->command_buffer[1] = '\0';
+            tui->command_buffer_len = 1;
+            if (tui->status_height > 0) {
+                render_status_window(tui);
+            }
+            input_redraw(tui, "");  // Redraw to show command buffer
+            return 0;
+            
+        case 'j':  // Scroll down 1 line
+        case KEY_DOWN:
+            tui_scroll_conversation(tui, 1);
+            input_redraw(tui, prompt);
+            break;
+            
+        case 'k':  // Scroll up 1 line
+        case KEY_UP:
+            tui_scroll_conversation(tui, -1);
+            input_redraw(tui, prompt);
+            break;
+            
+        case 4:  // Ctrl+D: Scroll down half page
+            tui_scroll_conversation(tui, half_page);
+            input_redraw(tui, prompt);
+            break;
+            
+        case 21:  // Ctrl+U: Scroll up half page
+            tui_scroll_conversation(tui, -half_page);
+            input_redraw(tui, prompt);
+            break;
+            
+        case 6:  // Ctrl+F: Scroll down full page
+        case KEY_NPAGE:  // Page Down
+            tui_scroll_conversation(tui, full_page);
+            input_redraw(tui, prompt);
+            break;
+            
+        case 2:  // Ctrl+B: Scroll up full page
+        case KEY_PPAGE:  // Page Up
+            tui_scroll_conversation(tui, -full_page);
+            input_redraw(tui, prompt);
+            break;
+            
+        case 'g':  // First 'g' in 'gg' sequence
+            tui->normal_mode_last_key = 'g';
+            break;
+            
+        case 'G':  // Go to bottom
+            {
+                int total_visual_lines = calculate_total_visual_lines(tui, max_x);
+                int max_offset = total_visual_lines - tui->conv_height;
+                if (max_offset < 0) max_offset = 0;
+                tui->conv_scroll_offset = max_offset;
+                render_conversation_window(tui);
+                input_redraw(tui, prompt);
+            }
+            break;
+            
+        case 'q':  // Quit (when input is empty)
+            if (tui->input_buffer && tui->input_buffer->length == 0) {
+                return -1;  // Signal quit
+            }
+            break;
+            
+        case KEY_RESIZE:
+            tui_handle_resize(tui);
+            render_conversation_window(tui);
+            render_status_window(tui);
+            input_redraw(tui, prompt);
+            break;
+    }
+    
+    return 0;
+}
+
 // Check if paste mode should be exited due to timeout
 // Returns 1 if paste ended, 0 otherwise
 static int check_paste_timeout(TUIState *tui, const char *prompt) {
@@ -1729,6 +2005,29 @@ int tui_process_input_char(TUIState *tui, int ch, const char *prompt) {
     TUIInputBuffer *input = tui->input_buffer;
     if (!input) {
         return -1;
+    }
+    
+    // Handle command mode separately
+    if (tui->mode == TUI_MODE_COMMAND) {
+        int result = handle_command_mode_input(tui, ch, prompt);
+        if (result == -1) {
+            return -1;  // Quit signal
+        }
+        // Command mode handles all input internally
+        return 0;
+    }
+    
+    // Handle normal mode separately
+    if (tui->mode == TUI_MODE_NORMAL) {
+        int result = handle_normal_mode_input(tui, ch, prompt);
+        if (result == -1) {
+            return -1;  // Quit signal
+        }
+        // Mode might have switched to insert or command, continue processing below
+        if (tui->mode == TUI_MODE_NORMAL || tui->mode == TUI_MODE_COMMAND) {
+            return 0;  // Stay in normal/command mode
+        }
+        // If we switched to insert mode, fall through to process any pending input
     }
 
     // Detect rapid input (paste heuristic when bracketed paste not available)
@@ -1885,6 +2184,18 @@ int tui_process_input_char(TUIState *tui, int ch, const char *prompt) {
         
         LOG_DEBUG("[TUI] ESC sequence detected, next_ch=%d", next_ch);
         
+        // If standalone ESC (no following character), switch to normal mode
+        if (next_ch == ERR) {
+            nodelay(tui->input_win, FALSE);
+            tui->mode = TUI_MODE_NORMAL;
+            tui->normal_mode_last_key = 0;
+            if (tui->status_height > 0) {
+                render_status_window(tui);
+            }
+            input_redraw(tui, prompt);
+            return 0;
+        }
+        
         if (next_ch == '[') {
             // Could be bracketed paste sequence or other CSI sequence
             // Read the sequence with a small delay to allow characters to arrive
@@ -1938,10 +2249,8 @@ int tui_process_input_char(TUIState *tui, int ch, const char *prompt) {
         
         nodelay(tui->input_win, FALSE);
 
-        if (next_ch == ERR) {
-            // Standalone ESC, ignore
-            return 0;
-        } else if (next_ch == 'b' || next_ch == 'B') {  // Alt+b: backward word
+        // Handle Alt key combinations
+        if (next_ch == 'b' || next_ch == 'B') {  // Alt+b: backward word
             input->cursor = move_backward_word(input->buffer, input->cursor);
             input_redraw(tui, prompt);
         } else if (next_ch == 'f' || next_ch == 'F') {  // Alt+f: forward word
