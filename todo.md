@@ -1,4 +1,7 @@
 - [ ] if have `rg` then put that in the system prompt instead of `grep`. print warning when there is no `rg`
+- [ ] diff print
+- [ ] print todo list nicely
+- [ ] can stop agent mid work
 - [x] why so many linse between [Assistant] and everything else?
 
 - [ ] use this pattern for `timeout`: Ran (./mvnw quarkus:dev & pid=$!; sleep 30; kill $pid; wait $pid) 
