@@ -386,24 +386,30 @@ static void emit_diff_line(const char *line,
         return;
     }
 
-    // Determine color based on first character
-    const char *color = NULL;
-    if (trimmed[0] == '+' && trimmed[1] != '+') {
-        color = add_color;
-    } else if (trimmed[0] == '-' && trimmed[1] != '-') {
-        color = remove_color;
-    }
-
     // Print with indentation and color if applicable
     if (g_active_tool_queue) {
-        if (color) {
-            char colored_line[2048];
-            snprintf(colored_line, sizeof(colored_line), "%s%s%s", color, trimmed, ANSI_RESET);
-            tool_emit_line("", colored_line);
+        // For TUI mode: use prefix-based coloring instead of ANSI codes
+        // The TUI's infer_color_from_prefix() will handle the coloring
+        const char *prefix = "";
+        if (trimmed[0] == '+' && trimmed[1] != '+') {
+            prefix = "[Diff +]";
+        } else if (trimmed[0] == '-' && trimmed[1] != '-') {
+            prefix = "[Diff -]";
+        } else if (trimmed[0] == '@' && trimmed[1] == '@') {
+            prefix = "[Diff @]";
         } else {
-            tool_emit_line("", trimmed);
+            prefix = "[Diff ~]";
         }
+        tool_emit_line(prefix, trimmed);
     } else {
+        // For non-TUI mode (direct stdout): use ANSI color codes
+        const char *color = NULL;
+        if (trimmed[0] == '+' && trimmed[1] != '+') {
+            color = add_color;
+        } else if (trimmed[0] == '-' && trimmed[1] != '-') {
+            color = remove_color;
+        }
+        
         if (color) {
             printf("  %s%s%s\n", color, trimmed, ANSI_RESET);
         } else {
@@ -2874,7 +2880,7 @@ static void add_system_message(ConversationState *state, const char *text) {
     conversation_state_unlock(state);
 }
 
-static void add_user_message(ConversationState *state, const char *text) {
+void add_user_message(ConversationState *state, const char *text) {
     if (conversation_state_lock(state) != 0) {
         return;
     }
