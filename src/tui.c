@@ -1411,8 +1411,8 @@ int tui_init(TUIState *tui) {
     tui->status_spinner_frame = 0;
     tui->status_spinner_last_update_ns = 0;
     
-    // Initialize mode (start in NORMAL mode for Vim-like behavior)
-    tui->mode = TUI_MODE_NORMAL;
+    // Initialize mode (start in INSERT mode for immediate input)
+    tui->mode = TUI_MODE_INSERT;
     tui->normal_mode_last_key = 0;
     
     // Initialize command mode buffer
