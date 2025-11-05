@@ -1905,14 +1905,16 @@ static int handle_normal_mode_input(TUIState *tui, int ch, const char *prompt) {
             input_redraw(tui, "");  // Redraw to show command buffer
             return 0;
             
-        case 'j':  // Scroll down 1 line
+        case 'j':  // Scroll down 1 line (Vim j)
         case KEY_DOWN:
+        case 5:  // Ctrl+E: Scroll down 1 line (Vim Ctrl-E)
             tui_scroll_conversation(tui, 1);
             input_redraw(tui, prompt);
             break;
             
-        case 'k':  // Scroll up 1 line
+        case 'k':  // Scroll up 1 line (Vim k)
         case KEY_UP:
+        case 25:  // Ctrl+Y: Scroll up 1 line (Vim Ctrl-Y)
             tui_scroll_conversation(tui, -1);
             input_redraw(tui, prompt);
             break;
