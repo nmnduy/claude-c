@@ -1678,7 +1678,7 @@ static int handle_normal_mode_input(TUIState *tui, int ch, const char *prompt) {
                 render_status_window(tui);
             }
             input_redraw(tui, prompt);  // Redraw to show input box
-            return 1;  // Switched to insert mode
+            return 0;  // Mode switched, continue processing (not submission)
             
         case ':':  // Enter command mode
             tui->mode = TUI_MODE_COMMAND;
