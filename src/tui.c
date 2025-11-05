@@ -92,7 +92,9 @@ static void render_status_window(TUIState *tui) {
 
     int col = 0;
     
-    // Always show mode indicator on the right side
+    // MODE INDICATOR - Commented out (hiding input box in normal mode instead)
+    // If we want to restore mode indicator, uncomment this section:
+    /*
     const char *mode_str;
     int mode_color;
     switch (tui->mode) {
@@ -116,6 +118,7 @@ static void render_status_window(TUIState *tui) {
     int mode_len = (int)strlen(mode_str);
     int mode_col = width - mode_len - 1;
     if (mode_col < 0) mode_col = 0;
+    */
     
     // Render status message on the left (if visible)
     if (tui->status_visible && tui->status_message && tui->status_message[0] != '\0') {
@@ -144,13 +147,13 @@ static void render_status_window(TUIState *tui) {
             }
         }
 
-        // Limit status message to not overlap with mode indicator
-        int max_status_len = mode_col - col - 2;  // -2 for spacing
-        if (max_status_len > 0 && col < mode_col - 2) {
-            int msg_len = (int)strlen(tui->status_message);
-            if (msg_len > max_status_len) {
-                msg_len = max_status_len;
-            }
+        // Render status message (no mode indicator overlap now)
+        int msg_len = (int)strlen(tui->status_message);
+        int max_status_len = width - col - 1;
+        if (msg_len > max_status_len) {
+            msg_len = max_status_len;
+        }
+        if (msg_len > 0 && col < width) {
             mvwaddnstr(tui->status_win, 0, col, tui->status_message, msg_len);
         }
 
@@ -161,7 +164,8 @@ static void render_status_window(TUIState *tui) {
         }
     }
     
-    // Render mode indicator on the right
+    // MODE INDICATOR RENDERING - Commented out (hiding input box in normal mode instead)
+    /*
     if (mode_col < width) {
         if (has_colors()) {
             wattron(tui->status_win, COLOR_PAIR(mode_color) | A_BOLD);
@@ -175,6 +179,7 @@ static void render_status_window(TUIState *tui) {
             wattroff(tui->status_win, A_BOLD);
         }
     }
+    */
 
     wrefresh(tui->status_win);
 }
@@ -1145,6 +1150,13 @@ static void input_redraw(TUIState *tui, const char *prompt) {
         return;
     }
 
+    // Hide input window in NORMAL mode
+    if (tui->mode == TUI_MODE_NORMAL) {
+        werase(win);
+        wrefresh(win);
+        return;
+    }
+
     int prompt_len = (int)strlen(prompt) + 1;  // +1 for space after prompt
 
     // Calculate available width for text (window width - borders - prompt)
@@ -1869,6 +1881,7 @@ static int handle_normal_mode_input(TUIState *tui, int ch, const char *prompt) {
             if (tui->status_height > 0) {
                 render_status_window(tui);
             }
+            input_redraw(tui, prompt);  // Redraw to show input box
             return 1;  // Switched to insert mode
             
         case ':':  // Enter command mode
