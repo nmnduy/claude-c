@@ -9,6 +9,7 @@
 
 #include <cjson/cJSON.h>
 #include <pthread.h>
+#include <signal.h>
 #include "version.h"
 
 // ============================================================================
@@ -177,6 +178,7 @@ typedef struct ConversationState {
     int max_retry_duration_ms;      // Maximum retry duration in milliseconds (configurable via env var)
     pthread_mutex_t conv_mutex;     // Synchronize access to conversation data
     int conv_mutex_initialized;     // Tracks mutex initialization
+    volatile sig_atomic_t interrupt_requested;  // Flag to interrupt ongoing API calls
 } ConversationState;
 
 // ============================================================================

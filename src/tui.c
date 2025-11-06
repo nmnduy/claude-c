@@ -2000,9 +2000,18 @@ int tui_process_input_char(TUIState *tui, int ch, const char *prompt) {
         
         LOG_DEBUG("[TUI] ESC sequence detected, next_ch=%d", next_ch);
         
-        // If standalone ESC (no following character), switch to normal mode
+        // If standalone ESC (no following character), handle based on mode
         if (next_ch == ERR) {
             nodelay(tui->input_win, FALSE);
+            
+            // In INSERT mode, return special code 2 to signal interrupt request
+            // The event loop will call the interrupt callback
+            if (tui->mode == TUI_MODE_INSERT) {
+                LOG_DEBUG("[TUI] Esc pressed in INSERT mode - signaling interrupt");
+                return 2;  // Signal interrupt
+            }
+            
+            // In other modes, switch to NORMAL mode
             tui->mode = TUI_MODE_NORMAL;
             tui->normal_mode_last_key = 0;
             if (tui->status_height > 0) {
@@ -2320,9 +2329,11 @@ static int process_tui_messages(TUIState *tui,
 }
 
 int tui_event_loop(TUIState *tui, const char *prompt, 
-                   InputSubmitCallback callback, void *user_data,
+                   InputSubmitCallback submit_callback,
+                   InterruptCallback interrupt_callback,
+                   void *user_data,
                    void *msg_queue_ptr) {
-    if (!tui || !tui->is_initialized || !callback) {
+    if (!tui || !tui->is_initialized || !submit_callback) {
         return -1;
     }
 
@@ -2373,7 +2384,7 @@ int tui_event_loop(TUIState *tui, const char *prompt,
                 if (input && strlen(input) > 0) {
                     LOG_DEBUG("[TUI] Submitting input (%zu bytes)", strlen(input));
                     // Call the callback
-                    int callback_result = callback(input, user_data);
+                    int callback_result = submit_callback(input, user_data);
                     
                     // Clear input buffer after submission
                     tui_clear_input_buffer(tui);
@@ -2386,6 +2397,24 @@ int tui_event_loop(TUIState *tui, const char *prompt,
                     }
                 }
                 break;  // Stop processing after submission
+            } else if (result == 2) {
+                // Esc pressed - interrupt requested
+                LOG_DEBUG("[TUI] Interrupt requested (Esc pressed)");
+                if (interrupt_callback) {
+                    int interrupt_result = interrupt_callback(user_data);
+                    if (interrupt_result != 0) {
+                        LOG_DEBUG("[TUI] Interrupt callback requested exit (code=%d)", interrupt_result);
+                        running = 0;
+                    }
+                }
+                // Switch to NORMAL mode after interrupt
+                tui->mode = TUI_MODE_NORMAL;
+                tui->normal_mode_last_key = 0;
+                if (tui->status_height > 0) {
+                    render_status_window(tui);
+                }
+                tui_redraw_input(tui, prompt);
+                break;  // Stop processing after interrupt
             } else if (result == -1) {
                 // EOF/quit signal
                 LOG_DEBUG("[TUI] Input processing returned EOF/quit");
