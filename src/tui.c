@@ -388,129 +388,75 @@ static void free_conversation_entries(TUIState *tui) {
     tui->entries_capacity = 0;
 }
 
-// Estimate how many entries can fit in the window
-// This is conservative - assumes at least 2 lines per entry on average
-static int estimate_visible_entries(TUIState *tui, int window_height) {
-    if (!tui || window_height <= 0) return 0;
+// Expand pad capacity if needed
+static int expand_pad_if_needed(TUIState *tui, int needed_lines) {
+    if (!tui) return -1;
     
-    // Conservative estimate: assume entries take 2-3 lines on average
-    // At minimum, we want to show at least a few entries
-    int estimated = window_height / 2;
-    if (estimated < 3 && tui->entries_count >= 3) {
-        estimated = 3;  // Try to show at least 3 entries if we have them
-    }
-    if (estimated > tui->entries_count) {
-        estimated = tui->entries_count;
+    // If we have enough capacity, nothing to do
+    if (needed_lines <= tui->conv_pad_capacity) {
+        return 0;
     }
     
-    return estimated;
-}
-
-// Helper: Render conversation window without custom text wrapping
-// Text wraps naturally at terminal width, like standard terminal output
-static void render_conversation_window(TUIState *tui) {
-    if (!tui || !tui->conv_win) return;
-
-    werase(tui->conv_win);
-
+    // Calculate new capacity (double until it fits)
+    int new_capacity = tui->conv_pad_capacity;
+    while (new_capacity < needed_lines) {
+        new_capacity *= 2;
+    }
+    
+    // Get current width
     int max_y, max_x;
     getmaxyx(tui->conv_win, max_y, max_x);
-
-    if (max_x <= 0 || max_y <= 0) {
-        wrefresh(tui->conv_win);
-        return;
-    }
-
-    // Calculate which entry to start from based on scroll offset
-    int start_entry = tui->conv_scroll_offset;
-    if (start_entry < 0) start_entry = 0;
-    if (start_entry >= tui->entries_count) {
-        start_entry = tui->entries_count - 1;
-    }
-    if (start_entry < 0) {
-        wrefresh(tui->conv_win);
-        return;
-    }
-
-    // Render entries starting from start_entry
-    // Let ncurses handle wrapping, track cursor position
-    wmove(tui->conv_win, 0, 0);
+    (void)max_y;
     
-    for (int i = start_entry; i < tui->entries_count; i++) {
-        ConversationEntry *entry = &tui->entries[i];
-        
-        // Check if we have space before rendering
-        int cur_y, cur_x;
-        getyx(tui->conv_win, cur_y, cur_x);
-        (void)cur_x;
-        
-        if (cur_y >= max_y) {
-            break;  // Out of space
-        }
-        
-        // Map TUIColorPair to ncurses color pair
-        int mapped_pair = NCURSES_PAIR_FOREGROUND;
-        switch (entry->color_pair) {
-            case COLOR_PAIR_DEFAULT:
-            case COLOR_PAIR_FOREGROUND:
-                mapped_pair = NCURSES_PAIR_FOREGROUND;
-                break;
-            case COLOR_PAIR_USER:
-                mapped_pair = NCURSES_PAIR_USER;
-                break;
-            case COLOR_PAIR_ASSISTANT:
-                mapped_pair = NCURSES_PAIR_ASSISTANT;
-                break;
-            case COLOR_PAIR_TOOL:
-            case COLOR_PAIR_STATUS:
-                mapped_pair = NCURSES_PAIR_STATUS;
-                break;
-            case COLOR_PAIR_ERROR:
-                mapped_pair = NCURSES_PAIR_ERROR;
-                break;
-            case COLOR_PAIR_PROMPT:
-                mapped_pair = NCURSES_PAIR_PROMPT;
-                break;
-        }
-
-        const int prefix_pair = mapped_pair;
-        int text_pair = NCURSES_PAIR_FOREGROUND;
-        int prefix_has_text = entry->prefix && entry->prefix[0] != '\0';
-
-        if (!prefix_has_text &&
-            entry->color_pair != COLOR_PAIR_DEFAULT &&
-            entry->color_pair != COLOR_PAIR_FOREGROUND) {
-            text_pair = mapped_pair;
-        }
-
-        // Print prefix if present
-        if (prefix_has_text) {
-            if (has_colors()) {
-                wattron(tui->conv_win, COLOR_PAIR(prefix_pair) | A_BOLD);
-            }
-            waddstr(tui->conv_win, entry->prefix);
-            waddch(tui->conv_win, ' ');
-            if (has_colors()) {
-                wattroff(tui->conv_win, COLOR_PAIR(prefix_pair) | A_BOLD);
-            }
-        }
-        
-        // Print text - let it wrap naturally at terminal width
-        if (entry->text && entry->text[0] != '\0') {
-            if (has_colors()) {
-                wattron(tui->conv_win, COLOR_PAIR(text_pair));
-            }
-            waddstr(tui->conv_win, entry->text);
-            if (has_colors()) {
-                wattroff(tui->conv_win, COLOR_PAIR(text_pair));
-            }
-        }
-        
-        // Add newline to separate entries
-        waddch(tui->conv_win, '\n');
+    // Create new larger pad
+    WINDOW *new_pad = newpad(new_capacity, max_x);
+    if (!new_pad) {
+        LOG_ERROR("[TUI] Failed to create expanded pad");
+        return -1;
     }
     
-    wrefresh(tui->conv_win);
+    // Copy content from old pad to new pad
+    // We need to read from old pad and write to new pad
+    for (int y = 0; y < tui->conv_total_lines && y < tui->conv_pad_capacity; y++) {
+        for (int x = 0; x < max_x; x++) {
+            chtype ch = mvwinch(tui->conv_win, y, x);
+            mvwaddch(new_pad, y, x, ch);
+        }
+    }
+    
+    // Delete old pad and replace
+    delwin(tui->conv_win);
+    tui->conv_win = new_pad;
+    tui->conv_pad_capacity = new_capacity;
+    
+    LOG_DEBUG("[TUI] Expanded pad capacity to %d lines", new_capacity);
+    return 0;
+}
+
+// Helper: Refresh conversation window viewport (using pad)
+static void refresh_conversation_viewport(TUIState *tui) {
+    if (!tui || !tui->conv_win) return;
+
+    int max_x;
+    getmaxyx(stdscr, tui->screen_height, max_x);
+    
+    // Clamp scroll offset
+    int max_scroll = tui->conv_total_lines - tui->conv_height;
+    if (max_scroll < 0) max_scroll = 0;
+    
+    if (tui->conv_scroll_offset < 0) {
+        tui->conv_scroll_offset = 0;
+    }
+    if (tui->conv_scroll_offset > max_scroll) {
+        tui->conv_scroll_offset = max_scroll;
+    }
+    
+    // Refresh pad viewport
+    // prefresh(pad, pad_y, pad_x, screen_y1, screen_x1, screen_y2, screen_x2)
+    prefresh(tui->conv_win, 
+             tui->conv_scroll_offset, 0,        // pad position (y, x)
+             0, 0,                               // screen top-left
+             tui->conv_height - 1, max_x - 1);  // screen bottom-right
 }
 
 // UTF-8 helper functions (from lineedit.c)
@@ -640,7 +586,7 @@ static int resize_input_window(TUIState *tui, int desired_lines) {
             tui->conv_win = newwin(new_conv_height, max_x, 0, 0);
             if (tui->conv_win) {
                 scrollok(tui->conv_win, TRUE);
-                render_conversation_window(tui);
+                refresh_conversation_viewport(tui);
             }
         }
     }
@@ -1190,8 +1136,11 @@ int tui_init(TUIState *tui) {
     tui->conv_height = max_y - tui->input_height - tui->status_height - CONV_WIN_PADDING;
     if (tui->conv_height < 5) tui->conv_height = 5;  // Minimum height
 
-    // Create conversation window (top of screen)
-    tui->conv_win = newwin(tui->conv_height, max_x, 0, 0);
+    // Create conversation pad (large virtual window for scrolling)
+    // Start with reasonable capacity, will expand as needed
+    tui->conv_pad_capacity = 1000;  // Initial capacity
+    tui->conv_total_lines = 0;      // No content yet
+    tui->conv_win = newpad(tui->conv_pad_capacity, max_x);
     if (!tui->conv_win) {
         endwin();
         return -1;
@@ -1329,16 +1278,98 @@ void tui_add_conversation_line(TUIState *tui, const char *prefix, const char *te
         return;
     }
 
-    // Auto-scroll to bottom (show latest messages)
-    // Start from an entry that should show recent messages
-    int visible_entries = estimate_visible_entries(tui, tui->conv_height);
-    tui->conv_scroll_offset = tui->entries_count - visible_entries;
-    if (tui->conv_scroll_offset < 0) {
-        tui->conv_scroll_offset = 0;
+    // Get pad dimensions
+    int pad_height, pad_width;
+    getmaxyx(tui->conv_win, pad_height, pad_width);
+    (void)pad_height;
+    
+    // Calculate how many lines this entry will take when wrapped
+    int prefix_len = (prefix && prefix[0] != '\0') ? (int)strlen(prefix) + 1 : 0; // +1 for space
+    int text_len = (text && text[0] != '\0') ? (int)strlen(text) : 0;
+    
+    // Estimate wrapped lines (conservative)
+    int estimated_lines = 1; // At least 1 line
+    if (text_len > 0) {
+        estimated_lines = ((prefix_len + text_len) / pad_width) + 2; // +2 for newline and safety
     }
+    
+    // Expand pad if needed
+    if (tui->conv_total_lines + estimated_lines >= tui->conv_pad_capacity) {
+        expand_pad_if_needed(tui, tui->conv_total_lines + estimated_lines + 100);
+    }
+    
+    // Map color pair
+    int mapped_pair = NCURSES_PAIR_FOREGROUND;
+    switch (color_pair) {
+        case COLOR_PAIR_DEFAULT:
+        case COLOR_PAIR_FOREGROUND:
+            mapped_pair = NCURSES_PAIR_FOREGROUND;
+            break;
+        case COLOR_PAIR_USER:
+            mapped_pair = NCURSES_PAIR_USER;
+            break;
+        case COLOR_PAIR_ASSISTANT:
+            mapped_pair = NCURSES_PAIR_ASSISTANT;
+            break;
+        case COLOR_PAIR_TOOL:
+        case COLOR_PAIR_STATUS:
+            mapped_pair = NCURSES_PAIR_STATUS;
+            break;
+        case COLOR_PAIR_ERROR:
+            mapped_pair = NCURSES_PAIR_ERROR;
+            break;
+        case COLOR_PAIR_PROMPT:
+            mapped_pair = NCURSES_PAIR_PROMPT;
+            break;
+    }
+    
+    // Move to end of pad
+    wmove(tui->conv_win, tui->conv_total_lines, 0);
+    int start_line = tui->conv_total_lines;
+    
+    // Write prefix if present
+    if (prefix && prefix[0] != '\0') {
+        if (has_colors()) {
+            wattron(tui->conv_win, COLOR_PAIR(mapped_pair) | A_BOLD);
+        }
+        waddstr(tui->conv_win, prefix);
+        waddch(tui->conv_win, ' ');
+        if (has_colors()) {
+            wattroff(tui->conv_win, COLOR_PAIR(mapped_pair) | A_BOLD);
+        }
+    }
+    
+    // Write text
+    if (text && text[0] != '\0') {
+        int text_pair = (prefix && prefix[0] != '\0') ? NCURSES_PAIR_FOREGROUND : mapped_pair;
+        if (has_colors()) {
+            wattron(tui->conv_win, COLOR_PAIR(text_pair));
+        }
+        waddstr(tui->conv_win, text);
+        if (has_colors()) {
+            wattroff(tui->conv_win, COLOR_PAIR(text_pair));
+        }
+    }
+    
+    // Add newline
+    waddch(tui->conv_win, '\n');
+    
+    // Update total lines (get actual cursor position after wrapping)
+    int cur_y, cur_x;
+    getyx(tui->conv_win, cur_y, cur_x);
+    (void)cur_x;
+    tui->conv_total_lines = cur_y;
+    
+    LOG_DEBUG("[TUI] Added line, total_lines now %d (estimated %d, actual %d)", 
+              tui->conv_total_lines, estimated_lines, cur_y - start_line);
 
-    // Render the conversation window
-    render_conversation_window(tui);
+    // Auto-scroll to bottom (show latest messages)
+    int max_scroll = tui->conv_total_lines - tui->conv_height;
+    if (max_scroll < 0) max_scroll = 0;
+    tui->conv_scroll_offset = max_scroll;
+
+    // Refresh viewport
+    refresh_conversation_viewport(tui);
 
     if (tui->status_height > 0) {
         render_status_window(tui);
@@ -1408,13 +1439,14 @@ void tui_clear_conversation(TUIState *tui) {
     // Free all conversation entries
     free_conversation_entries(tui);
     
-    // Reset scroll offset
+    // Reset scroll offset and line count
     tui->conv_scroll_offset = 0;
+    tui->conv_total_lines = 0;
 
-    // Clear and refresh the conversation window
+    // Clear the pad
     if (tui->conv_win) {
         werase(tui->conv_win);
-        wrefresh(tui->conv_win);
+        refresh_conversation_viewport(tui);
     }
 
     // Add a system message indicating the clear
@@ -1449,14 +1481,85 @@ void tui_handle_resize(TUIState *tui) {
     tui->conv_height = max_y - tui->input_height - tui->status_height - CONV_WIN_PADDING;
     if (tui->conv_height < 5) tui->conv_height = 5;
 
-    // Resize and reposition conversation window
+    // Resize pad to new width (keep capacity)
     if (tui->conv_win) {
         delwin(tui->conv_win);
-        tui->conv_win = newwin(tui->conv_height, max_x, 0, 0);
+        tui->conv_win = newpad(tui->conv_pad_capacity, max_x);
         if (tui->conv_win) {
             scrollok(tui->conv_win, TRUE);
-            render_conversation_window(tui);
-            wrefresh(tui->conv_win);  // Force refresh after render
+            
+            // Rebuild pad content from stored entries
+            tui->conv_total_lines = 0;
+            for (int i = 0; i < tui->entries_count; i++) {
+                ConversationEntry *entry = &tui->entries[i];
+                
+                // Map color pair
+                int mapped_pair = NCURSES_PAIR_FOREGROUND;
+                switch (entry->color_pair) {
+                    case COLOR_PAIR_DEFAULT:
+                    case COLOR_PAIR_FOREGROUND:
+                        mapped_pair = NCURSES_PAIR_FOREGROUND;
+                        break;
+                    case COLOR_PAIR_USER:
+                        mapped_pair = NCURSES_PAIR_USER;
+                        break;
+                    case COLOR_PAIR_ASSISTANT:
+                        mapped_pair = NCURSES_PAIR_ASSISTANT;
+                        break;
+                    case COLOR_PAIR_TOOL:
+                    case COLOR_PAIR_STATUS:
+                        mapped_pair = NCURSES_PAIR_STATUS;
+                        break;
+                    case COLOR_PAIR_ERROR:
+                        mapped_pair = NCURSES_PAIR_ERROR;
+                        break;
+                    case COLOR_PAIR_PROMPT:
+                        mapped_pair = NCURSES_PAIR_PROMPT;
+                        break;
+                }
+                
+                // Write prefix if present
+                if (entry->prefix && entry->prefix[0] != '\0') {
+                    if (has_colors()) {
+                        wattron(tui->conv_win, COLOR_PAIR(mapped_pair) | A_BOLD);
+                    }
+                    waddstr(tui->conv_win, entry->prefix);
+                    waddch(tui->conv_win, ' ');
+                    if (has_colors()) {
+                        wattroff(tui->conv_win, COLOR_PAIR(mapped_pair) | A_BOLD);
+                    }
+                }
+                
+                // Write text
+                if (entry->text && entry->text[0] != '\0') {
+                    int text_pair = (entry->prefix && entry->prefix[0] != '\0') ? NCURSES_PAIR_FOREGROUND : mapped_pair;
+                    if (has_colors()) {
+                        wattron(tui->conv_win, COLOR_PAIR(text_pair));
+                    }
+                    waddstr(tui->conv_win, entry->text);
+                    if (has_colors()) {
+                        wattroff(tui->conv_win, COLOR_PAIR(text_pair));
+                    }
+                }
+                
+                // Add newline
+                waddch(tui->conv_win, '\n');
+            }
+            
+            // Update total lines
+            int cur_y, cur_x;
+            getyx(tui->conv_win, cur_y, cur_x);
+            (void)cur_x;
+            tui->conv_total_lines = cur_y;
+            
+            // Maintain scroll position (clamp to new max)
+            int max_scroll = tui->conv_total_lines - tui->conv_height;
+            if (max_scroll < 0) max_scroll = 0;
+            if (tui->conv_scroll_offset > max_scroll) {
+                tui->conv_scroll_offset = max_scroll;
+            }
+            
+            refresh_conversation_viewport(tui);
         }
     }
 
@@ -1532,13 +1635,11 @@ void tui_show_startup_banner(TUIState *tui, const char *version, const char *mod
 void tui_scroll_conversation(TUIState *tui, int direction) {
     if (!tui || !tui->is_initialized || !tui->conv_win) return;
 
-    // Calculate max scroll offset based on entries
-    // We allow scrolling to show the last entry at the bottom
-    int visible_entries = estimate_visible_entries(tui, tui->conv_height);
-    int max_offset = tui->entries_count - visible_entries;
+    // Calculate max scroll offset based on total lines
+    int max_offset = tui->conv_total_lines - tui->conv_height;
     if (max_offset < 0) max_offset = 0;
 
-    // Update scroll offset
+    // Update scroll offset (line-based, not entry-based!)
     tui->conv_scroll_offset += direction;
 
     // Clamp to valid range
@@ -1548,8 +1649,8 @@ void tui_scroll_conversation(TUIState *tui, int direction) {
         tui->conv_scroll_offset = max_offset;
     }
 
-    // Re-render conversation window
-    render_conversation_window(tui);
+    // Refresh viewport with new offset
+    refresh_conversation_viewport(tui);
 
     // Refresh input window to keep cursor visible
     if (tui->input_win) {
@@ -1671,7 +1772,7 @@ static int handle_normal_mode_input(TUIState *tui, int ch, const char *prompt) {
         // gg: Go to top
         tui->conv_scroll_offset = 0;
         tui->normal_mode_last_key = 0;
-        render_conversation_window(tui);
+        refresh_conversation_viewport(tui);
         input_redraw(tui, prompt);
         return 0;
     }
@@ -1758,11 +1859,10 @@ static int handle_normal_mode_input(TUIState *tui, int ch, const char *prompt) {
             
         case 'G':  // Go to bottom
             {
-                int visible_entries = estimate_visible_entries(tui, tui->conv_height);
-                int max_offset = tui->entries_count - visible_entries;
+                int max_offset = tui->conv_total_lines - tui->conv_height;
                 if (max_offset < 0) max_offset = 0;
                 tui->conv_scroll_offset = max_offset;
-                render_conversation_window(tui);
+                refresh_conversation_viewport(tui);
                 input_redraw(tui, prompt);
             }
             break;
@@ -1775,7 +1875,7 @@ static int handle_normal_mode_input(TUIState *tui, int ch, const char *prompt) {
             
         case KEY_RESIZE:
             tui_handle_resize(tui);
-            render_conversation_window(tui);
+            refresh_conversation_viewport(tui);
             render_status_window(tui);
             input_redraw(tui, prompt);
             break;
@@ -1915,7 +2015,7 @@ int tui_process_input_char(TUIState *tui, int ch, const char *prompt) {
     // Handle special keys
     if (ch == KEY_RESIZE) {
         tui_handle_resize(tui);
-        render_conversation_window(tui);
+        refresh_conversation_viewport(tui);
         render_status_window(tui);
         input_redraw(tui, prompt);
         return 0;
@@ -2362,7 +2462,7 @@ int tui_event_loop(TUIState *tui, const char *prompt,
     tui_clear_input_buffer(tui);
     
     // Initial draw (ensure all windows reflect current size)
-    render_conversation_window(tui);
+    refresh_conversation_viewport(tui);
     render_status_window(tui);
     tui_redraw_input(tui, prompt);
     
@@ -2374,7 +2474,7 @@ int tui_event_loop(TUIState *tui, const char *prompt,
         if (g_resize_flag) {
             g_resize_flag = 0;
             tui_handle_resize(tui);
-            render_conversation_window(tui);
+            refresh_conversation_viewport(tui);
             render_status_window(tui);
             tui_redraw_input(tui, prompt);
         }
