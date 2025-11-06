@@ -48,6 +48,8 @@ static volatile sig_atomic_t g_resize_flag = 0;
 #define NCURSES_PAIR_TODO_COMPLETED 7
 #define NCURSES_PAIR_TODO_IN_PROGRESS 8
 #define NCURSES_PAIR_TODO_PENDING 9
+// Dedicated tool color pair (separate from STATUS)
+#define NCURSES_PAIR_TOOL 10
 
 // Validate TUI window state (debug builds)
 // Uses ncurses is_pad() function to check window types
@@ -319,12 +321,19 @@ static void init_ncurses_colors(void) {
                 rgb_to_ncurses(g_theme.error_rgb.g),
                 rgb_to_ncurses(g_theme.error_rgb.b));
 
+            // Tool (magenta/pink)
+            init_color(21,
+                rgb_to_ncurses(g_theme.tool_rgb.r),
+                rgb_to_ncurses(g_theme.tool_rgb.g),
+                rgb_to_ncurses(g_theme.tool_rgb.b));
+
             // Initialize color pairs with custom colors
             init_pair(NCURSES_PAIR_FOREGROUND, 16, -1);  // -1 = default background
             init_pair(NCURSES_PAIR_USER, 17, -1);
             init_pair(NCURSES_PAIR_ASSISTANT, 18, -1);
             init_pair(NCURSES_PAIR_STATUS, 19, -1);
             init_pair(NCURSES_PAIR_ERROR, 20, -1);
+            init_pair(NCURSES_PAIR_TOOL, 21, -1);
             init_pair(NCURSES_PAIR_PROMPT, 17, -1);  // Use USER color for prompt
             // TODO color pairs
             init_pair(NCURSES_PAIR_TODO_COMPLETED, 17, -1);    // Green (same as USER)
@@ -340,6 +349,7 @@ static void init_ncurses_colors(void) {
             init_pair(NCURSES_PAIR_ASSISTANT, COLOR_CYAN, -1);
             init_pair(NCURSES_PAIR_STATUS, COLOR_YELLOW, -1);
             init_pair(NCURSES_PAIR_ERROR, COLOR_RED, -1);
+            init_pair(NCURSES_PAIR_TOOL, COLOR_MAGENTA, -1);
             init_pair(NCURSES_PAIR_PROMPT, COLOR_GREEN, -1);
             // TODO color pairs
             init_pair(NCURSES_PAIR_TODO_COMPLETED, COLOR_GREEN, -1);
@@ -1156,6 +1166,8 @@ void tui_add_conversation_line(TUIState *tui, const char *prefix, const char *te
             mapped_pair = NCURSES_PAIR_ASSISTANT;
             break;
         case COLOR_PAIR_TOOL:
+            mapped_pair = NCURSES_PAIR_TOOL;
+            break;
         case COLOR_PAIR_STATUS:
             mapped_pair = NCURSES_PAIR_STATUS;
             break;
@@ -2130,6 +2142,30 @@ static TUIColorPair infer_color_from_prefix(const char *prefix) {
     }
     if (strstr(prefix, "Prompt")) {
         return COLOR_PAIR_PROMPT;
+    }
+    // Heuristic: any other bracketed role tag like "[Bash]", "[Read]" is a tool
+    if (prefix[0] == '[') {
+        const char *close = strchr(prefix, ']');
+        if (close && close > prefix + 1) {
+            // Extract inner label and compare against known non-tool roles
+            size_t len = (size_t)(close - (prefix + 1));
+            char buf[32];
+            if (len >= sizeof(buf)) len = sizeof(buf) - 1;
+            memcpy(buf, prefix + 1, len);
+            buf[len] = '\0';
+            // Normalize to lowercase for comparison
+            for (size_t i = 0; i < len; i++) {
+                if (buf[i] >= 'A' && buf[i] <= 'Z') buf[i] = (char)(buf[i] - 'A' + 'a');
+            }
+            if (strcmp(buf, "user") != 0 &&
+                strcmp(buf, "assistant") != 0 &&
+                strcmp(buf, "error") != 0 &&
+                strcmp(buf, "system") != 0 &&
+                strcmp(buf, "status") != 0 &&
+                strcmp(buf, "prompt") != 0) {
+                return COLOR_PAIR_TOOL;
+            }
+        }
     }
     return COLOR_PAIR_DEFAULT;
 }
