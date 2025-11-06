@@ -221,6 +221,63 @@ char* todo_render_to_string(const TodoList *list) {
     return result;
 }
 
+char* todo_render_to_string_plain(const TodoList *list) {
+    if (!list || list->count == 0) {
+        return NULL;  // No todos to display
+    }
+
+    // Calculate approximate buffer size needed
+    size_t buffer_size = 256;  // Base size for intro text
+    for (size_t i = 0; i < list->count; i++) {
+        buffer_size += strlen(list->items[i].content) + strlen(list->items[i].active_form) + 50;
+    }
+
+    char *result = malloc(buffer_size);
+    if (!result) {
+        LOG_ERROR("Failed to allocate memory for todo render string (plain)");
+        return NULL;
+    }
+
+    size_t offset = 0;
+
+    offset += (size_t)snprintf(result + offset, buffer_size - offset,
+                               "Here are the current tasks:\n");
+
+    // Render each item with plain text bullets (no ANSI codes)
+    for (size_t i = 0; i < list->count; i++) {
+        const TodoItem *item = &list->items[i];
+
+        switch (item->status) {
+            default:
+                LOG_WARN("Unknown TODO status: %d", (int)item->status);
+                offset += (size_t)snprintf(result + offset, buffer_size - offset,
+                                 "    • %s\n", item->content);
+                break;
+            case TODO_COMPLETED:
+                offset += (size_t)snprintf(result + offset, buffer_size - offset,
+                                 "    ✓ %s\n", item->content);
+                break;
+
+            case TODO_IN_PROGRESS:
+                offset += (size_t)snprintf(result + offset, buffer_size - offset,
+                                 "    ⋯ %s\n", item->active_form);
+                break;
+
+            case TODO_PENDING:
+                offset += (size_t)snprintf(result + offset, buffer_size - offset,
+                                 "    ○ %s\n", item->content);
+                break;
+        }
+    }
+
+    // Remove trailing newline if present
+    if (offset > 0 && offset <= buffer_size && result[offset - 1] == '\n') {
+        result[offset - 1] = '\0';
+    }
+
+    return result;
+}
+
 void todo_render(const TodoList *list) {
     if (!list || list->count == 0) {
         return;  // No todos to display

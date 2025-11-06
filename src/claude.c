@@ -3558,7 +3558,9 @@ static void process_response(ConversationState *state,
         }
 
         if (todo_write_executed && state->todo_list && state->todo_list->count > 0) {
-            char *todo_text = todo_render_to_string(state->todo_list);
+            // Use plain text version (no ANSI codes) for TUI
+            char *todo_text = (tui || queue) ? todo_render_to_string_plain(state->todo_list) 
+                                             : todo_render_to_string(state->todo_list);
             if (todo_text) {
                 ui_append_line(tui, queue, "[Assistant]", todo_text, COLOR_PAIR_ASSISTANT);
                 free(todo_text);
