@@ -388,14 +388,22 @@ static void free_conversation_entries(TUIState *tui) {
     tui->entries_capacity = 0;
 }
 
-// Calculate total visual lines needed for all entries
-// Natural wrapping: each entry is just one line (no custom wrapping)
-static int calculate_total_visual_lines(TUIState *tui, int max_x) {
-    (void)max_x;  // Unused when not wrapping
-    if (!tui) return 0;
+// Estimate how many entries can fit in the window
+// This is conservative - assumes at least 2 lines per entry on average
+static int estimate_visible_entries(TUIState *tui, int window_height) {
+    if (!tui || window_height <= 0) return 0;
     
-    // Each entry is just one line - text wraps naturally at terminal width
-    return tui->entries_count;
+    // Conservative estimate: assume entries take 2-3 lines on average
+    // At minimum, we want to show at least a few entries
+    int estimated = window_height / 2;
+    if (estimated < 3 && tui->entries_count >= 3) {
+        estimated = 3;  // Try to show at least 3 entries if we have them
+    }
+    if (estimated > tui->entries_count) {
+        estimated = tui->entries_count;
+    }
+    
+    return estimated;
 }
 
 // Helper: Render conversation window without custom text wrapping
@@ -407,7 +415,11 @@ static void render_conversation_window(TUIState *tui) {
 
     int max_y, max_x;
     getmaxyx(tui->conv_win, max_y, max_x);
-    (void)max_x;  // Unused when not doing custom wrapping
+
+    if (max_x <= 0 || max_y <= 0) {
+        wrefresh(tui->conv_win);
+        return;
+    }
 
     // Calculate which entry to start from based on scroll offset
     int start_entry = tui->conv_scroll_offset;
@@ -415,12 +427,26 @@ static void render_conversation_window(TUIState *tui) {
     if (start_entry >= tui->entries_count) {
         start_entry = tui->entries_count - 1;
     }
-    if (start_entry < 0) start_entry = 0;
+    if (start_entry < 0) {
+        wrefresh(tui->conv_win);
+        return;
+    }
 
     // Render entries starting from start_entry
-    int y = 0;
-    for (int i = start_entry; i < tui->entries_count && y < max_y; i++) {
+    // Let ncurses handle wrapping, track cursor position
+    wmove(tui->conv_win, 0, 0);
+    
+    for (int i = start_entry; i < tui->entries_count; i++) {
         ConversationEntry *entry = &tui->entries[i];
+        
+        // Check if we have space before rendering
+        int cur_y, cur_x;
+        getyx(tui->conv_win, cur_y, cur_x);
+        (void)cur_x;
+        
+        if (cur_y >= max_y) {
+            break;  // Out of space
+        }
         
         // Map TUIColorPair to ncurses color pair
         int mapped_pair = NCURSES_PAIR_FOREGROUND;
@@ -457,15 +483,13 @@ static void render_conversation_window(TUIState *tui) {
             text_pair = mapped_pair;
         }
 
-        // Move to the line position
-        wmove(tui->conv_win, y, 0);
-        
         // Print prefix if present
         if (prefix_has_text) {
             if (has_colors()) {
                 wattron(tui->conv_win, COLOR_PAIR(prefix_pair) | A_BOLD);
             }
-            wprintw(tui->conv_win, "%s ", entry->prefix);
+            waddstr(tui->conv_win, entry->prefix);
+            waddch(tui->conv_win, ' ');
             if (has_colors()) {
                 wattroff(tui->conv_win, COLOR_PAIR(prefix_pair) | A_BOLD);
             }
@@ -476,13 +500,14 @@ static void render_conversation_window(TUIState *tui) {
             if (has_colors()) {
                 wattron(tui->conv_win, COLOR_PAIR(text_pair));
             }
-            wprintw(tui->conv_win, "%s", entry->text);
+            waddstr(tui->conv_win, entry->text);
             if (has_colors()) {
                 wattroff(tui->conv_win, COLOR_PAIR(text_pair));
             }
         }
         
-        y++;
+        // Add newline to separate entries
+        waddch(tui->conv_win, '\n');
     }
     
     wrefresh(tui->conv_win);
@@ -1305,19 +1330,11 @@ void tui_add_conversation_line(TUIState *tui, const char *prefix, const char *te
     }
 
     // Auto-scroll to bottom (show latest messages)
-    // Calculate total visual lines to properly position scroll
-    int max_x = 0;
-    if (tui->conv_win) {
-        int max_y;
-        getmaxyx(tui->conv_win, max_y, max_x);
-    }
-    
-    if (max_x > 0) {
-        int total_visual_lines = calculate_total_visual_lines(tui, max_x);
-        tui->conv_scroll_offset = total_visual_lines - tui->conv_height;
-        if (tui->conv_scroll_offset < 0) {
-            tui->conv_scroll_offset = 0;
-        }
+    // Start from an entry that should show recent messages
+    int visible_entries = estimate_visible_entries(tui, tui->conv_height);
+    tui->conv_scroll_offset = tui->entries_count - visible_entries;
+    if (tui->conv_scroll_offset < 0) {
+        tui->conv_scroll_offset = 0;
     }
 
     // Render the conversation window
@@ -1515,12 +1532,10 @@ void tui_show_startup_banner(TUIState *tui, const char *version, const char *mod
 void tui_scroll_conversation(TUIState *tui, int direction) {
     if (!tui || !tui->is_initialized || !tui->conv_win) return;
 
-    // Calculate max scroll offset based on visual lines
-    int max_y, max_x;
-    getmaxyx(tui->conv_win, max_y, max_x);
-    
-    int total_visual_lines = calculate_total_visual_lines(tui, max_x);
-    int max_offset = total_visual_lines - tui->conv_height;
+    // Calculate max scroll offset based on entries
+    // We allow scrolling to show the last entry at the bottom
+    int visible_entries = estimate_visible_entries(tui, tui->conv_height);
+    int max_offset = tui->entries_count - visible_entries;
     if (max_offset < 0) max_offset = 0;
 
     // Update scroll offset
@@ -1743,8 +1758,8 @@ static int handle_normal_mode_input(TUIState *tui, int ch, const char *prompt) {
             
         case 'G':  // Go to bottom
             {
-                int total_visual_lines = calculate_total_visual_lines(tui, max_x);
-                int max_offset = total_visual_lines - tui->conv_height;
+                int visible_entries = estimate_visible_entries(tui, tui->conv_height);
+                int max_offset = tui->entries_count - visible_entries;
                 if (max_offset < 0) max_offset = 0;
                 tui->conv_scroll_offset = max_offset;
                 render_conversation_window(tui);
