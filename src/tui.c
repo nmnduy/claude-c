@@ -321,11 +321,11 @@ static void init_ncurses_colors(void) {
                 rgb_to_ncurses(g_theme.error_rgb.g),
                 rgb_to_ncurses(g_theme.error_rgb.b));
 
-            // Tool (magenta/pink)
+            // Tool color (use assistant/header tone for a softer look)
             init_color(21,
-                rgb_to_ncurses(g_theme.tool_rgb.r),
-                rgb_to_ncurses(g_theme.tool_rgb.g),
-                rgb_to_ncurses(g_theme.tool_rgb.b));
+                rgb_to_ncurses(g_theme.assistant_rgb.r),
+                rgb_to_ncurses(g_theme.assistant_rgb.g),
+                rgb_to_ncurses(g_theme.assistant_rgb.b));
 
             // Initialize color pairs with custom colors
             init_pair(NCURSES_PAIR_FOREGROUND, 16, -1);  // -1 = default background
@@ -333,7 +333,8 @@ static void init_ncurses_colors(void) {
             init_pair(NCURSES_PAIR_ASSISTANT, 18, -1);
             init_pair(NCURSES_PAIR_STATUS, 19, -1);
             init_pair(NCURSES_PAIR_ERROR, 20, -1);
-            init_pair(NCURSES_PAIR_TOOL, 21, -1);
+            // Use a softer color for tool tags (align with assistant/header)
+            init_pair(NCURSES_PAIR_TOOL, 18, -1);
             init_pair(NCURSES_PAIR_PROMPT, 17, -1);  // Use USER color for prompt
             // TODO color pairs
             init_pair(NCURSES_PAIR_TODO_COMPLETED, 17, -1);    // Green (same as USER)
@@ -349,7 +350,8 @@ static void init_ncurses_colors(void) {
             init_pair(NCURSES_PAIR_ASSISTANT, COLOR_CYAN, -1);
             init_pair(NCURSES_PAIR_STATUS, COLOR_YELLOW, -1);
             init_pair(NCURSES_PAIR_ERROR, COLOR_RED, -1);
-            init_pair(NCURSES_PAIR_TOOL, COLOR_MAGENTA, -1);
+            // Use cyan instead of magenta for a less intense tool tag
+            init_pair(NCURSES_PAIR_TOOL, COLOR_CYAN, -1);
             init_pair(NCURSES_PAIR_PROMPT, COLOR_GREEN, -1);
             // TODO color pairs
             init_pair(NCURSES_PAIR_TODO_COMPLETED, COLOR_GREEN, -1);
@@ -365,6 +367,8 @@ static void init_ncurses_colors(void) {
         init_pair(NCURSES_PAIR_STATUS, COLOR_YELLOW, -1);
         init_pair(NCURSES_PAIR_ERROR, COLOR_RED, -1);
         init_pair(NCURSES_PAIR_PROMPT, COLOR_GREEN, -1);
+        // Ensure tool pair is initialized; prefer cyan for a softer appearance
+        init_pair(NCURSES_PAIR_TOOL, COLOR_CYAN, -1);
         // TODO color pairs
         init_pair(NCURSES_PAIR_TODO_COMPLETED, COLOR_GREEN, -1);
         init_pair(NCURSES_PAIR_TODO_IN_PROGRESS, COLOR_YELLOW, -1);
@@ -1442,6 +1446,7 @@ void tui_show_startup_banner(TUIState *tui, const char *version, const char *mod
     char line1[256];
     char line2[256];
     char line3[256];
+    char tip_line[512];
     
     snprintf(line1, sizeof(line1), " ▐▛███▜▌   claude-c v%s", version);
     snprintf(line2, sizeof(line2), "▝▜█████▛▘  %s", model);
@@ -1455,6 +1460,39 @@ void tui_show_startup_banner(TUIState *tui, const char *version, const char *mod
     tui_add_conversation_line(tui, NULL, line2, COLOR_PAIR_ASSISTANT);
     tui_add_conversation_line(tui, NULL, line3, COLOR_PAIR_ASSISTANT);
     tui_add_conversation_line(tui, NULL, "", COLOR_PAIR_FOREGROUND);  // Blank line
+
+    // Tips array: randomly select one to display at startup
+    static const char *tips[] = {
+        "Ctrl+G to enter Normal mode (vim-style); press 'i' to insert.",
+        "Scroll: j/k (line), Ctrl+D/U (half page), gg/G (top/bottom).",
+        "Use PageUp/PageDown or Arrow keys to scroll.",
+        "Type /help for commands (e.g., /clear, /exit, /add-dir, /voice).",
+        "Press ESC to cancel a running API/tool action.",
+        "Use /add-dir to attach a directory as context.",
+        "Press Ctrl+D to exit quickly.",
+        "Use /voice to record and transcribe audio (requires PortAudio).",
+        "Set CLAUDE_C_THEME to a Kitty theme file to customize colors.",
+        "Set CLAUDE_LOG_LEVEL=DEBUG for verbose logs.",
+        "API history stored in ./.claude-c/api_calls.db (configurable via CLAUDE_C_DB_PATH).",
+        "Normal mode: gg jumps to top, G to bottom.",
+        "Insert mode supports readline keys: Ctrl+A, Ctrl+E, Alt+B, Alt+F.",
+        "Switch models via OPENAI_MODEL or ANTHROPIC_MODEL environment variables.",
+        "Enable Bedrock with CLAUDE_CODE_USE_BEDROCK=1 and ANTHROPIC_MODEL set.",
+        "Interrupt long tool runs any time with ESC.",
+        "Disable prompt caching with DISABLE_PROMPT_CACHING=1 if needed.",
+        "Enable MCP with CLAUDE_MCP_ENABLED=1 and configure servers in ~/.config/claude-c/.",
+        "Use /clear to clear conversation; /quit or /exit to leave.",
+        "Use /help to see all available commands."
+    };
+    size_t tips_count = sizeof(tips) / sizeof(tips[0]);
+
+    // Compute a simple per-process pseudo-random index without relying on global srand
+    unsigned int seed = (unsigned int)(time(NULL) ^ getpid());
+    size_t tip_index = tips_count ? (seed % tips_count) : 0;
+    snprintf(tip_line, sizeof(tip_line), "Tip: %s", tips[tip_index]);
+
+    tui_add_conversation_line(tui, NULL, tip_line, COLOR_PAIR_STATUS);
+    tui_add_conversation_line(tui, NULL, "", COLOR_PAIR_FOREGROUND);
 }
 
 
