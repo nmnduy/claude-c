@@ -179,8 +179,8 @@ cJSON* build_openai_request(ConversationState *state, int enable_caching) {
     cJSON_AddItemToObject(request, "messages", messages_array);
     conversation_state_unlock(state);
 
-    // Add tools with cache_control support
-    cJSON *tool_defs = get_tool_definitions(enable_caching);
+    // Add tools with cache_control support (including MCP tools if available)
+    cJSON *tool_defs = get_tool_definitions(state, enable_caching);
     cJSON_AddItemToObject(request, "tools", tool_defs);
 
     LOG_DEBUG("OpenAI request built successfully");
