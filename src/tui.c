@@ -49,6 +49,39 @@ static volatile sig_atomic_t g_resize_flag = 0;
 #define NCURSES_PAIR_TODO_IN_PROGRESS 8
 #define NCURSES_PAIR_TODO_PENDING 9
 
+// Validate TUI window state (debug builds)
+// Uses ncurses is_pad() function to check window types
+static void validate_tui_windows(TUIState *tui) {
+#ifdef DEBUG
+    if (!tui) return;
+    
+    if (tui->is_initialized) {
+        // Conversation window MUST be a pad
+        if (tui->conv_win && !is_pad(tui->conv_win)) {
+            LOG_ERROR("[TUI] VALIDATION FAILED: conv_win is not a pad! "
+                     "This will cause conversation loss. "
+                     "Check for incorrect newwin() instead of newpad().");
+        }
+        
+        // Input and status windows should NOT be pads
+        if (tui->input_win && is_pad(tui->input_win)) {
+            LOG_WARN("[TUI] VALIDATION: input_win appears to be a pad (unexpected)");
+        }
+        if (tui->status_win && is_pad(tui->status_win)) {
+            LOG_WARN("[TUI] VALIDATION: status_win appears to be a pad (unexpected)");
+        }
+        
+        // Check window dimensions are sane
+        if (tui->conv_height <= 0 || tui->conv_height > tui->screen_height) {
+            LOG_WARN("[TUI] VALIDATION: conv_height=%d is out of range (screen=%d)", 
+                    tui->conv_height, tui->screen_height);
+        }
+    }
+#else
+    (void)tui;  // Suppress unused parameter warning in release builds
+#endif
+}
+
 // Signal handler for window resize
 #ifdef SIGWINCH
 static void handle_resize(int sig) {
@@ -593,17 +626,30 @@ static int resize_input_window(TUIState *tui, int desired_lines) {
     int new_conv_height = max_y - new_window_height - tui->status_height - CONV_WIN_PADDING;
     if (new_conv_height < 5) new_conv_height = 5;
 
-    // Resize conversation window if height changed
+    // Update conversation window viewport height if changed
+    // IMPORTANT: conv_win is a PAD, not a regular window!
+    // Pads don't need to be resized when the viewport changes.
+    // The pad has its own capacity (conv_pad_capacity) independent of the viewport.
+    // We only need to update the viewport dimensions and refresh.
     if (new_conv_height != tui->conv_height) {
+        LOG_DEBUG("[TUI] Updating conversation viewport height: %d -> %d", 
+                  tui->conv_height, new_conv_height);
         tui->conv_height = new_conv_height;
-        if (tui->conv_win) {
-            delwin(tui->conv_win);
-            tui->conv_win = newwin(new_conv_height, max_x, 0, 0);
-            if (tui->conv_win) {
-                scrollok(tui->conv_win, TRUE);
-                refresh_conversation_viewport(tui);
-            }
+        
+        // Adjust scroll offset to keep content visible after viewport change
+        int max_scroll = tui->conv_total_lines - tui->conv_height;
+        if (max_scroll < 0) max_scroll = 0;
+        if (tui->conv_scroll_offset > max_scroll) {
+            tui->conv_scroll_offset = max_scroll;
         }
+        
+        // Refresh the viewport with new dimensions
+        if (tui->conv_win) {
+            refresh_conversation_viewport(tui);
+        }
+        
+        // Validate that conv_win is still a pad (catches bugs early)
+        validate_tui_windows(tui);
     }
 
     // Recreate status window to account for new offsets
@@ -1227,6 +1273,9 @@ int tui_init(TUIState *tui) {
               tui->screen_width, tui->screen_height, tui->conv_height,
               tui->status_height, tui->input_height);
 
+    // Validate initial window setup
+    validate_tui_windows(tui);
+
     if (tui->status_height > 0) {
         render_status_window(tui);
     }
@@ -1639,6 +1688,9 @@ void tui_handle_resize(TUIState *tui) {
             refresh_conversation_viewport(tui);
         }
     }
+    
+    // Validate pad was correctly recreated
+    validate_tui_windows(tui);
 
     // Resize and reposition status window
     if (tui->status_win) {
