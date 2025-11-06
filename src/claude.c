@@ -1626,14 +1626,60 @@ static cJSON* tool_grep(cJSON *params, ConversationState *state) {
     const char *path = path_json && cJSON_IsString(path_json) ?
                        path_json->valuestring : ".";
 
+    // Get max results from environment or use default
+    int max_results = 100;  // Default limit
+    const char *max_env = getenv("CLAUDE_C_GREP_MAX_RESULTS");
+    if (max_env) {
+        int max_val = atoi(max_env);
+        if (max_val > 0) {
+            max_results = max_val;
+        }
+    }
+
     cJSON *result = cJSON_CreateObject();
     cJSON *matches = cJSON_CreateArray();
+    int match_count = 0;
+    int truncated = 0;
+
+    // Common exclusions to avoid build artifacts and large binary/generated files
+    // This list mimics what tools like ripgrep exclude by default
+    const char *exclusions = 
+        "--exclude-dir=.git "
+        "--exclude-dir=.svn "
+        "--exclude-dir=.hg "
+        "--exclude-dir=node_modules "
+        "--exclude-dir=bower_components "
+        "--exclude-dir=vendor "
+        "--exclude-dir=build "
+        "--exclude-dir=dist "
+        "--exclude-dir=target "
+        "--exclude-dir=.cache "
+        "--exclude-dir=.venv "
+        "--exclude-dir=venv "
+        "--exclude-dir=__pycache__ "
+        "--exclude='*.min.js' "
+        "--exclude='*.min.css' "
+        "--exclude='*.pyc' "
+        "--exclude='*.o' "
+        "--exclude='*.a' "
+        "--exclude='*.so' "
+        "--exclude='*.dylib' "
+        "--exclude='*.exe' "
+        "--exclude='*.dll' "
+        "--exclude='*.class' "
+        "--exclude='*.jar' "
+        "--exclude='*.war' "
+        "--exclude='*.zip' "
+        "--exclude='*.tar' "
+        "--exclude='*.gz' "
+        "--exclude='*.log' "
+        "--exclude='.DS_Store' ";
 
     // Search in main working directory
-    char command[BUFFER_SIZE];
+    char command[BUFFER_SIZE * 2];
     snprintf(command, sizeof(command),
-             "cd %s && grep -r -n '%s' %s 2>/dev/null || true",
-             state->working_dir, pattern, path);
+             "cd %s && grep -r -n %s '%s' %s 2>/dev/null || true",
+             state->working_dir, exclusions, pattern, path);
 
     FILE *pipe = popen(command, "r");
     if (!pipe) {
@@ -1644,28 +1690,50 @@ static cJSON* tool_grep(cJSON *params, ConversationState *state) {
 
     char buffer[BUFFER_SIZE];
     while (fgets(buffer, sizeof(buffer), pipe)) {
+        if (match_count >= max_results) {
+            truncated = 1;
+            break;
+        }
         buffer[strcspn(buffer, "\n")] = 0;  // Remove newline
         cJSON_AddItemToArray(matches, cJSON_CreateString(buffer));
+        match_count++;
     }
     pclose(pipe);
 
-    // Search in additional working directories
-    for (int dir_idx = 0; dir_idx < state->additional_dirs_count; dir_idx++) {
+    // Search in additional working directories (if not already truncated)
+    for (int dir_idx = 0; dir_idx < state->additional_dirs_count && !truncated; dir_idx++) {
         snprintf(command, sizeof(command),
-                 "cd %s && grep -r -n '%s' %s 2>/dev/null || true",
-                 state->additional_dirs[dir_idx], pattern, path);
+                 "cd %s && grep -r -n %s '%s' %s 2>/dev/null || true",
+                 state->additional_dirs[dir_idx], exclusions, pattern, path);
 
         pipe = popen(command, "r");
         if (!pipe) continue;  // Skip this directory on error
 
         while (fgets(buffer, sizeof(buffer), pipe)) {
+            if (match_count >= max_results) {
+                truncated = 1;
+                break;
+            }
             buffer[strcspn(buffer, "\n")] = 0;  // Remove newline
             cJSON_AddItemToArray(matches, cJSON_CreateString(buffer));
+            match_count++;
         }
         pclose(pipe);
     }
 
     cJSON_AddItemToObject(result, "matches", matches);
+    
+    // Add metadata about the search
+    if (truncated) {
+        char warning[256];
+        snprintf(warning, sizeof(warning), 
+                "Results truncated at %d matches. Use CLAUDE_C_GREP_MAX_RESULTS to adjust limit, or refine your search pattern.",
+                max_results);
+        cJSON_AddStringToObject(result, "warning", warning);
+    }
+    
+    cJSON_AddNumberToObject(result, "match_count", match_count);
+    
     return result;
 }
 
@@ -2000,15 +2068,21 @@ cJSON* get_tool_definitions(int enable_caching) {
     cJSON_AddStringToObject(grep_tool, "type", "function");
     cJSON *grep_func = cJSON_CreateObject();
     cJSON_AddStringToObject(grep_func, "name", "Grep");
-    cJSON_AddStringToObject(grep_func, "description", "Searches for patterns in files");
+    cJSON_AddStringToObject(grep_func, "description", 
+        "Searches for patterns in files. Results limited to 100 matches by default "
+        "(configurable via CLAUDE_C_GREP_MAX_RESULTS). Automatically excludes common "
+        "build directories, dependencies, and binary files (.git, node_modules, build/, "
+        "*.min.js, etc). Returns 'match_count' and 'warning' if truncated.");
     cJSON *grep_params = cJSON_CreateObject();
     cJSON_AddStringToObject(grep_params, "type", "object");
     cJSON *grep_props = cJSON_CreateObject();
     cJSON *grep_pattern = cJSON_CreateObject();
     cJSON_AddStringToObject(grep_pattern, "type", "string");
+    cJSON_AddStringToObject(grep_pattern, "description", "Pattern to search for");
     cJSON_AddItemToObject(grep_props, "pattern", grep_pattern);
     cJSON *grep_path = cJSON_CreateObject();
     cJSON_AddStringToObject(grep_path, "type", "string");
+    cJSON_AddStringToObject(grep_path, "description", "Path to search in (default: .)");
     cJSON_AddItemToObject(grep_props, "path", grep_path);
     cJSON_AddItemToObject(grep_params, "properties", grep_props);
     cJSON *grep_req = cJSON_CreateArray();

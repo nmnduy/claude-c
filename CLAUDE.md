@@ -86,6 +86,7 @@ export OPENAI_API_KEY="your-api-key"
   - `CLAUDE_C_DB_MAX_RECORDS` - Keep last N records (default: 1000, 0=unlimited)
   - `CLAUDE_C_DB_MAX_SIZE_MB` - Max database size in MB (default: 100, 0=unlimited)
   - `CLAUDE_C_DB_AUTO_ROTATE` - Enable auto-rotation (default: 1, set to 0 to disable)
+- **Tools**: `CLAUDE_C_GREP_MAX_RESULTS` - Max grep results (default: 100)
 - **Theme**: `CLAUDE_C_THEME` pointing to Kitty .conf file
 
 **Defaults:**
