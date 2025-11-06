@@ -2201,18 +2201,6 @@ static TUIColorPair infer_color_from_prefix(const char *prefix) {
     if (strstr(prefix, "Error")) {
         return COLOR_PAIR_ERROR;
     }
-    if (strcmp(prefix, "[+]") == 0) {
-        return COLOR_PAIR_USER;
-    }
-    if (strcmp(prefix, "[-]") == 0) {
-        return COLOR_PAIR_ERROR;
-    }
-    if (strcmp(prefix, "[@]") == 0) {
-        return COLOR_PAIR_STATUS;
-    }
-    if (strcmp(prefix, "[~]") == 0) {
-        return COLOR_PAIR_FOREGROUND;
-    }
     if (strstr(prefix, "Diff")) {
         return COLOR_PAIR_STATUS;
     }
@@ -2267,7 +2255,17 @@ static void dispatch_tui_message(TUIState *tui, TUIMessage *msg) {
                 }
             }
 
-            tui_add_conversation_line(tui, "", content, COLOR_PAIR_DEFAULT);
+            // Check for diff lines (no brackets, just colored by first character)
+            TUIColorPair diff_color = COLOR_PAIR_DEFAULT;
+            if (mutable_text[0] == '+' && mutable_text[1] != '+') {
+                diff_color = COLOR_PAIR_USER;  // Green for additions
+            } else if (mutable_text[0] == '-' && mutable_text[1] != '-') {
+                diff_color = COLOR_PAIR_ERROR;  // Red for deletions
+            } else if (mutable_text[0] == '@' && mutable_text[1] == '@') {
+                diff_color = COLOR_PAIR_STATUS;  // Status color for hunk headers
+            }
+
+            tui_add_conversation_line(tui, "", content, diff_color);
             break;
         }
 
