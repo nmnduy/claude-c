@@ -13,6 +13,7 @@
 #include <stdint.h>
 #include "claude_internal.h"
 #include "todo.h"
+#include "window_manager.h"
 
 // Forward declaration for WINDOW type (not actually used, kept for compatibility)
 typedef struct _win_st WINDOW;
@@ -50,31 +51,25 @@ typedef enum {
 
 // TUI State
 typedef struct {
-    WINDOW *conv_win;        // Conversation window (top of screen) - now a pad!
-    WINDOW *status_win;      // Status window (single-line separator)
-    WINDOW *input_win;       // Input window at bottom
-    TUIInputBuffer *input_buffer; // Persistent input buffer state
+    // Centralized window manager (owns ncurses windows)
+    WindowManager wm;
 
-    int screen_height;       // Terminal height
-    int screen_width;        // Terminal width
+    // Input buffer state
+    TUIInputBuffer *input_buffer;
 
-    int conv_height;         // Height of conversation window (viewport)
-    int input_height;        // Height of input window (dynamic 3-5 lines)
-    int status_height;       // Height of status window (currently 1)
+    // Conversation entries (source of truth used to rebuild pad on resize)
+    ConversationEntry *entries;
+    int entries_count;
+    int entries_capacity;
 
-    ConversationEntry *entries;    // Array of conversation entries
-    int entries_count;             // Number of entries
-    int entries_capacity;          // Capacity of entries array
-    int conv_scroll_offset;        // Scroll offset (lines from top)
-    int conv_total_lines;          // Total lines in pad
-    int conv_pad_capacity;         // Current pad capacity (lines)
-
+    // Status state
     char *status_message;    // Current status text (owned by TUI)
     int status_visible;      // Whether status should be shown
     int status_spinner_active;        // Spinner animation active flag
     int status_spinner_frame;         // Current spinner frame index
     uint64_t status_spinner_last_update_ns; // Last spinner frame update timestamp
 
+    // Modes
     TUIMode mode;            // Current input mode (NORMAL, INSERT, or COMMAND)
     int normal_mode_last_key; // Previous key in normal mode (for gg, G combos)
     char *command_buffer;    // Buffer for command mode input (starts with ':')

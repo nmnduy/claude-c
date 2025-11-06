@@ -54,31 +54,9 @@ static volatile sig_atomic_t g_resize_flag = 0;
 static void validate_tui_windows(TUIState *tui) {
 #ifdef DEBUG
     if (!tui) return;
-    
-    if (tui->is_initialized) {
-        // Conversation window MUST be a pad
-        if (tui->conv_win && !is_pad(tui->conv_win)) {
-            LOG_ERROR("[TUI] VALIDATION FAILED: conv_win is not a pad! "
-                     "This will cause conversation loss. "
-                     "Check for incorrect newwin() instead of newpad().");
-        }
-        
-        // Input and status windows should NOT be pads
-        if (tui->input_win && is_pad(tui->input_win)) {
-            LOG_WARN("[TUI] VALIDATION: input_win appears to be a pad (unexpected)");
-        }
-        if (tui->status_win && is_pad(tui->status_win)) {
-            LOG_WARN("[TUI] VALIDATION: status_win appears to be a pad (unexpected)");
-        }
-        
-        // Check window dimensions are sane
-        if (tui->conv_height <= 0 || tui->conv_height > tui->screen_height) {
-            LOG_WARN("[TUI] VALIDATION: conv_height=%d is out of range (screen=%d)", 
-                    tui->conv_height, tui->screen_height);
-        }
-    }
+    window_manager_validate(&tui->wm);
 #else
-    (void)tui;  // Suppress unused parameter warning in release builds
+    (void)tui;
 #endif
 }
 
@@ -116,15 +94,15 @@ static uint64_t status_spinner_interval_ns(void) {
 }
 
 static void render_status_window(TUIState *tui) {
-    if (!tui || !tui->status_win) {
+    if (!tui || !tui->wm.status_win) {
         return;
     }
 
     int height, width;
-    getmaxyx(tui->status_win, height, width);
+    getmaxyx(tui->wm.status_win, height, width);
     (void)height;
 
-    werase(tui->status_win);
+    werase(tui->wm.status_win);
 
     int col = 0;
     
@@ -159,9 +137,9 @@ static void render_status_window(TUIState *tui) {
     // Render status message on the left (if visible)
     if (tui->status_visible && tui->status_message && tui->status_message[0] != '\0') {
         if (has_colors()) {
-            wattron(tui->status_win, COLOR_PAIR(NCURSES_PAIR_STATUS) | A_BOLD);
+            wattron(tui->wm.status_win, COLOR_PAIR(NCURSES_PAIR_STATUS) | A_BOLD);
         } else {
-            wattron(tui->status_win, A_BOLD);
+            wattron(tui->wm.status_win, A_BOLD);
         }
 
         if (tui->status_spinner_active) {
@@ -174,11 +152,11 @@ static void render_status_window(TUIState *tui) {
             }
             const char *frame = frames[tui->status_spinner_frame % frame_count];
             if (width > 0) {
-                mvwaddnstr(tui->status_win, 0, col, frame, width - col);
+                mvwaddnstr(tui->wm.status_win, 0, col, frame, width - col);
                 col += 1;
             }
             if (col < width) {
-                mvwaddch(tui->status_win, 0, col, ' ');
+                mvwaddch(tui->wm.status_win, 0, col, ' ');
                 col += 1;
             }
         }
@@ -190,13 +168,13 @@ static void render_status_window(TUIState *tui) {
             msg_len = max_status_len;
         }
         if (msg_len > 0 && col < width) {
-            mvwaddnstr(tui->status_win, 0, col, tui->status_message, msg_len);
+            mvwaddnstr(tui->wm.status_win, 0, col, tui->status_message, msg_len);
         }
 
         if (has_colors()) {
-            wattroff(tui->status_win, COLOR_PAIR(NCURSES_PAIR_STATUS) | A_BOLD);
+            wattroff(tui->wm.status_win, COLOR_PAIR(NCURSES_PAIR_STATUS) | A_BOLD);
         } else {
-            wattroff(tui->status_win, A_BOLD);
+            wattroff(tui->wm.status_win, A_BOLD);
         }
     }
     
@@ -217,7 +195,7 @@ static void render_status_window(TUIState *tui) {
     }
     */
 
-    wrefresh(tui->status_win);
+    wrefresh(tui->wm.status_win);
 }
 
 static uint64_t monotonic_time_ns(void) {
@@ -263,7 +241,7 @@ static void status_spinner_tick(TUIState *tui) {
     if (!tui || !tui->status_spinner_active || !tui->status_visible) {
         return;
     }
-    if (tui->status_height <= 0 || !tui->status_win) {
+    if (tui->wm.status_height <= 0 || !tui->wm.status_win) {
         return;
     }
 
@@ -437,74 +415,12 @@ static void free_conversation_entries(TUIState *tui) {
 }
 
 // Expand pad capacity if needed
-static int expand_pad_if_needed(TUIState *tui, int needed_lines) {
-    if (!tui) return -1;
-    
-    // If we have enough capacity, nothing to do
-    if (needed_lines <= tui->conv_pad_capacity) {
-        return 0;
-    }
-    
-    // Calculate new capacity (double until it fits)
-    int new_capacity = tui->conv_pad_capacity;
-    while (new_capacity < needed_lines) {
-        new_capacity *= 2;
-    }
-    
-    // Get current width
-    int max_y, max_x;
-    getmaxyx(tui->conv_win, max_y, max_x);
-    (void)max_y;
-    
-    // Create new larger pad
-    WINDOW *new_pad = newpad(new_capacity, max_x);
-    if (!new_pad) {
-        LOG_ERROR("[TUI] Failed to create expanded pad");
-        return -1;
-    }
-    
-    // Copy content from old pad to new pad
-    // We need to read from old pad and write to new pad
-    for (int y = 0; y < tui->conv_total_lines && y < tui->conv_pad_capacity; y++) {
-        for (int x = 0; x < max_x; x++) {
-            chtype ch = mvwinch(tui->conv_win, y, x);
-            mvwaddch(new_pad, y, x, ch);
-        }
-    }
-    
-    // Delete old pad and replace
-    delwin(tui->conv_win);
-    tui->conv_win = new_pad;
-    tui->conv_pad_capacity = new_capacity;
-    
-    LOG_DEBUG("[TUI] Expanded pad capacity to %d lines", new_capacity);
-    return 0;
-}
+// Pad capacity growth is centralized in WindowManager now.
 
 // Helper: Refresh conversation window viewport (using pad)
 static void refresh_conversation_viewport(TUIState *tui) {
-    if (!tui || !tui->conv_win) return;
-
-    int max_x;
-    getmaxyx(stdscr, tui->screen_height, max_x);
-    
-    // Clamp scroll offset
-    int max_scroll = tui->conv_total_lines - tui->conv_height;
-    if (max_scroll < 0) max_scroll = 0;
-    
-    if (tui->conv_scroll_offset < 0) {
-        tui->conv_scroll_offset = 0;
-    }
-    if (tui->conv_scroll_offset > max_scroll) {
-        tui->conv_scroll_offset = max_scroll;
-    }
-    
-    // Refresh pad viewport
-    // prefresh(pad, pad_y, pad_x, screen_y1, screen_x1, screen_y2, screen_x2)
-    prefresh(tui->conv_win, 
-             tui->conv_scroll_offset, 0,        // pad position (y, x)
-             0, 0,                               // screen top-left
-             tui->conv_height - 1, max_x - 1);  // screen bottom-right
+    if (!tui) return;
+    window_manager_refresh_conversation(&tui->wm);
 }
 
 // UTF-8 helper functions (from lineedit.c)
@@ -599,112 +515,28 @@ static int calculate_needed_lines(const char *buffer, int buffer_len, int availa
 static int resize_input_window(TUIState *tui, int desired_lines) {
     if (!tui || !tui->is_initialized) return -1;
 
-    // Clamp to min/max (1-3 lines of content, +2 for borders)
-    int min_window_height = INPUT_WIN_MIN_HEIGHT;  // 1 line + borders
-    int max_window_height = INPUT_WIN_MAX_HEIGHT;  // 3 lines + borders
-    int new_window_height = desired_lines + 2;  // +2 for borders
-
-    if (new_window_height < min_window_height) {
-        new_window_height = min_window_height;
-    } else if (new_window_height > max_window_height) {
-        new_window_height = max_window_height;
-    }
-
-    // Only resize if height actually changed
-    if (new_window_height == tui->input_height) {
-        return 0;
-    }
-
-    // Get screen dimensions
-    int max_y, max_x;
-    getmaxyx(stdscr, max_y, max_x);
-    
-    // Update input height
-    tui->input_height = new_window_height;
-    
-    // Recalculate conversation window height
-    int new_conv_height = max_y - new_window_height - tui->status_height - CONV_WIN_PADDING;
-    if (new_conv_height < 5) new_conv_height = 5;
-
-    // Update conversation window viewport height if changed
-    // IMPORTANT: conv_win is a PAD, not a regular window!
-    // Pads don't need to be resized when the viewport changes.
-    // The pad has its own capacity (conv_pad_capacity) independent of the viewport.
-    // We only need to update the viewport dimensions and refresh.
-    if (new_conv_height != tui->conv_height) {
-        LOG_DEBUG("[TUI] Updating conversation viewport height: %d -> %d", 
-                  tui->conv_height, new_conv_height);
-        tui->conv_height = new_conv_height;
-        
-        // Adjust scroll offset to keep content visible after viewport change
-        int max_scroll = tui->conv_total_lines - tui->conv_height;
-        if (max_scroll < 0) max_scroll = 0;
-        if (tui->conv_scroll_offset > max_scroll) {
-            tui->conv_scroll_offset = max_scroll;
-        }
-        
-        // Refresh the viewport with new dimensions
-        if (tui->conv_win) {
-            refresh_conversation_viewport(tui);
-        }
-        
-        // Validate that conv_win is still a pad (catches bugs early)
-        validate_tui_windows(tui);
-    }
-
-    // Recreate status window to account for new offsets
-    if (tui->status_win) {
-        delwin(tui->status_win);
-        tui->status_win = NULL;
-    }
-    if (tui->status_height > 0) {
-        tui->status_win = newwin(tui->status_height, max_x, tui->conv_height, 0);
-        if (tui->status_win) {
-            render_status_window(tui);
-        }
-    }
-
-    // Delete old input window
-    if (tui->input_win) {
-        delwin(tui->input_win);
-    }
-
-    // Create new input window with adjusted height
-    tui->input_win = newwin(new_window_height, max_x, max_y - new_window_height, 0);
-
-    if (!tui->input_win) {
-        LOG_ERROR("Failed to resize input window");
+    if (window_manager_resize_input(&tui->wm, desired_lines) != 0) {
+        LOG_ERROR("Failed to resize input window via WindowManager");
         return -1;
     }
 
-    // Update input state
-    if (tui->input_buffer) {
-        tui->input_buffer->win = tui->input_win;
+    // Update input buffer to new window geometry
+    if (tui->input_buffer && tui->wm.input_win) {
         int h, w;
-        getmaxyx(tui->input_win, h, w);
+        getmaxyx(tui->wm.input_win, h, w);
+        tui->input_buffer->win = tui->wm.input_win;
         tui->input_buffer->win_width = w - 2;
         tui->input_buffer->win_height = h - 2;
     }
 
-    // Enable keypad for new window
-    keypad(tui->input_win, TRUE);
-
-    // Refresh stdscr to clear old area
-    touchwin(stdscr);
-    if (tui->status_height > 0) {
-        render_status_window(tui);
-    }
-    refresh();
-
-    LOG_DEBUG("[TUI] Input window resized (new_input_h=%d, conv_h=%d, status_h=%d)",
-              tui->input_height, tui->conv_height, tui->status_height);
-
+    // Ensure content lines are up to date before refresh
+    window_manager_refresh_all(&tui->wm);
     return 0;
 }
 
 // Initialize input buffer
 static int input_init(TUIState *tui) {
-    if (!tui || !tui->input_win) {
+    if (!tui || !tui->wm.input_win) {
         return -1;
     }
 
@@ -723,7 +555,7 @@ static int input_init(TUIState *tui) {
     input->buffer[0] = '\0';
     input->length = 0;
     input->cursor = 0;
-    input->win = tui->input_win;
+    input->win = tui->wm.input_win;
     input->view_offset = 0;
     input->line_scroll_offset = 0;
     input->paste_mode = 0;
@@ -739,7 +571,7 @@ static int input_init(TUIState *tui) {
 
     // Get window dimensions
     int h, w;
-    getmaxyx(tui->input_win, h, w);
+    getmaxyx(tui->wm.input_win, h, w);
     input->win_width = w - 2;  // Account for borders
     input->win_height = h - 2;
 
@@ -1178,64 +1010,25 @@ int tui_init(TUIState *tui) {
     // Initialize colors from colorscheme
     init_ncurses_colors();
 
-    // Get screen dimensions
-    int max_y, max_x;
-    getmaxyx(stdscr, max_y, max_x);
+    // Initialize WindowManager (owner of ncurses windows)
+    WindowManagerConfig cfg = DEFAULT_WINDOW_CONFIG;
+    cfg.min_conv_height = 5;
+    cfg.min_input_height = INPUT_WIN_MIN_HEIGHT;
+    cfg.max_input_height = INPUT_WIN_MAX_HEIGHT;
+    cfg.status_height = STATUS_WIN_HEIGHT;
+    cfg.padding = CONV_WIN_PADDING;
 
-    tui->screen_height = max_y;
-    tui->screen_width = max_x;
-    tui->input_height = INPUT_WIN_MIN_HEIGHT;  // Start with minimum height
-    tui->status_height = STATUS_WIN_HEIGHT;
-
-    // Ensure we have enough space for status window; disable if terminal too small
-    if (max_y - tui->input_height - CONV_WIN_PADDING - tui->status_height < 5) {
-        LOG_WARN("[TUI] Terminal height too small for status window, disabling status line");
-        tui->status_height = 0;
-    }
-
-    // Calculate conversation window height (screen - input - status - padding)
-    tui->conv_height = max_y - tui->input_height - tui->status_height - CONV_WIN_PADDING;
-    if (tui->conv_height < 5) tui->conv_height = 5;  // Minimum height
-
-    // Create conversation pad (large virtual window for scrolling)
-    // Start with reasonable capacity, will expand as needed
-    tui->conv_pad_capacity = 1000;  // Initial capacity
-    tui->conv_total_lines = 0;      // No content yet
-    tui->conv_win = newpad(tui->conv_pad_capacity, max_x);
-    if (!tui->conv_win) {
+    if (window_manager_init(&tui->wm, &cfg) != 0) {
         endwin();
         return -1;
     }
-    scrollok(tui->conv_win, TRUE);
-
-    // Create status window if enabled
-    if (tui->status_height > 0) {
-        tui->status_win = newwin(tui->status_height, max_x, tui->conv_height, 0);
-        if (!tui->status_win) {
-            delwin(tui->conv_win);
-            endwin();
-            return -1;
-        }
-    } else {
-        tui->status_win = NULL;
-    }
-
-    // Create input window (bottom of screen)
-    tui->input_win = newwin(INPUT_WIN_MIN_HEIGHT, max_x, max_y - INPUT_WIN_MIN_HEIGHT, 0);
-    if (!tui->input_win) {
-        delwin(tui->conv_win);
-        if (tui->status_win) {
-            delwin(tui->status_win);
-        }
-        endwin();
-        return -1;
-    }
+    // Start with zero content lines
+    window_manager_set_content_lines(&tui->wm, 0);
 
     // Initialize conversation entries
     tui->entries = NULL;
     tui->entries_count = 0;
     tui->entries_capacity = 0;
-    tui->conv_scroll_offset = 0;
     tui->status_message = NULL;
     tui->status_visible = 0;
     tui->status_spinner_active = 0;
@@ -1253,11 +1046,7 @@ int tui_init(TUIState *tui) {
 
     // Initialize input buffer
     if (input_init(tui) != 0) {
-        delwin(tui->conv_win);
-        if (tui->status_win) {
-            delwin(tui->status_win);
-        }
-        delwin(tui->input_win);
+        window_manager_destroy(&tui->wm);
         endwin();
         return -1;
     }
@@ -1270,13 +1059,13 @@ int tui_init(TUIState *tui) {
     tui->is_initialized = 1;
 
     LOG_DEBUG("[TUI] Initialized (screen=%dx%d, conv_h=%d, status_h=%d, input_h=%d)",
-              tui->screen_width, tui->screen_height, tui->conv_height,
-              tui->status_height, tui->input_height);
+              tui->wm.screen_width, tui->wm.screen_height, tui->wm.conv_viewport_height,
+              tui->wm.status_height, tui->wm.input_height);
 
     // Validate initial window setup
     validate_tui_windows(tui);
 
-    if (tui->status_height > 0) {
+    if (tui->wm.status_height > 0) {
         render_status_window(tui);
     }
 
@@ -1302,21 +1091,8 @@ void tui_cleanup(TUIState *tui) {
     free(tui->command_buffer);
     tui->command_buffer = NULL;
 
-    // Destroy status window
-    if (tui->status_win) {
-        delwin(tui->status_win);
-        tui->status_win = NULL;
-    }
-
-    // Destroy windows
-    if (tui->conv_win) {
-        delwin(tui->conv_win);
-        tui->conv_win = NULL;
-    }
-    if (tui->input_win) {
-        delwin(tui->input_win);
-        tui->input_win = NULL;
-    }
+    // Destroy ncurses windows via window manager
+    window_manager_destroy(&tui->wm);
 
     // Disable bracketed paste mode
     printf("\033[?2004l");
@@ -1344,7 +1120,7 @@ void tui_add_conversation_line(TUIState *tui, const char *prefix, const char *te
 
     // Get pad dimensions
     int pad_height, pad_width;
-    getmaxyx(tui->conv_win, pad_height, pad_width);
+    getmaxyx(tui->wm.conv_pad, pad_height, pad_width);
     (void)pad_height;
     
     // Calculate how many lines this entry will take when wrapped
@@ -1357,9 +1133,13 @@ void tui_add_conversation_line(TUIState *tui, const char *prefix, const char *te
         estimated_lines = ((prefix_len + text_len) / pad_width) + 2; // +2 for newline and safety
     }
     
-    // Expand pad if needed
-    if (tui->conv_total_lines + estimated_lines >= tui->conv_pad_capacity) {
-        expand_pad_if_needed(tui, tui->conv_total_lines + estimated_lines + 100);
+    // Ensure pad has enough capacity (centralized via WindowManager)
+    int current_lines = window_manager_get_content_lines(&tui->wm);
+    int needed_capacity = current_lines + estimated_lines + 100;
+    if (needed_capacity > tui->wm.conv_pad_capacity) {
+        if (window_manager_ensure_pad_capacity(&tui->wm, needed_capacity) != 0) {
+            LOG_ERROR("[TUI] Failed to ensure pad capacity via WindowManager");
+        }
     }
     
     // Map color pair
@@ -1397,18 +1177,18 @@ void tui_add_conversation_line(TUIState *tui, const char *prefix, const char *te
     }
     
     // Move to end of pad
-    wmove(tui->conv_win, tui->conv_total_lines, 0);
-    int start_line = tui->conv_total_lines;
+    int start_line = window_manager_get_content_lines(&tui->wm);
+    wmove(tui->wm.conv_pad, start_line, 0);
     
     // Write prefix if present
     if (prefix && prefix[0] != '\0') {
         if (has_colors()) {
-            wattron(tui->conv_win, COLOR_PAIR(mapped_pair) | A_BOLD);
+            wattron(tui->wm.conv_pad, COLOR_PAIR(mapped_pair) | A_BOLD);
         }
-        waddstr(tui->conv_win, prefix);
-        waddch(tui->conv_win, ' ');
+        waddstr(tui->wm.conv_pad, prefix);
+        waddch(tui->wm.conv_pad, ' ');
         if (has_colors()) {
-            wattroff(tui->conv_win, COLOR_PAIR(mapped_pair) | A_BOLD);
+            wattroff(tui->wm.conv_pad, COLOR_PAIR(mapped_pair) | A_BOLD);
         }
     }
     
@@ -1416,42 +1196,38 @@ void tui_add_conversation_line(TUIState *tui, const char *prefix, const char *te
     if (text && text[0] != '\0') {
         int text_pair = (prefix && prefix[0] != '\0') ? NCURSES_PAIR_FOREGROUND : mapped_pair;
         if (has_colors()) {
-            wattron(tui->conv_win, COLOR_PAIR(text_pair));
+            wattron(tui->wm.conv_pad, COLOR_PAIR(text_pair));
         }
-        waddstr(tui->conv_win, text);
+        waddstr(tui->wm.conv_pad, text);
         if (has_colors()) {
-            wattroff(tui->conv_win, COLOR_PAIR(text_pair));
+            wattroff(tui->wm.conv_pad, COLOR_PAIR(text_pair));
         }
     }
     
     // Add newline
-    waddch(tui->conv_win, '\n');
+    waddch(tui->wm.conv_pad, '\n');
     
     // Update total lines (get actual cursor position after wrapping)
     int cur_y, cur_x;
-    getyx(tui->conv_win, cur_y, cur_x);
+    getyx(tui->wm.conv_pad, cur_y, cur_x);
     (void)cur_x;
-    tui->conv_total_lines = cur_y;
+    window_manager_set_content_lines(&tui->wm, cur_y);
     
     LOG_DEBUG("[TUI] Added line, total_lines now %d (estimated %d, actual %d)", 
-              tui->conv_total_lines, estimated_lines, cur_y - start_line);
+              window_manager_get_content_lines(&tui->wm), estimated_lines, cur_y - start_line);
 
     // Auto-scroll to bottom (show latest messages)
-    int max_scroll = tui->conv_total_lines - tui->conv_height;
-    if (max_scroll < 0) max_scroll = 0;
-    tui->conv_scroll_offset = max_scroll;
+    window_manager_scroll_to_bottom(&tui->wm);
+    window_manager_refresh_conversation(&tui->wm);
 
-    // Refresh viewport
-    refresh_conversation_viewport(tui);
-
-    if (tui->status_height > 0) {
+    if (tui->wm.status_height > 0) {
         render_status_window(tui);
     }
 
     // Redraw input window to ensure it stays visible
-    if (tui->input_win) {
-        touchwin(tui->input_win);
-        wrefresh(tui->input_win);
+    if (tui->wm.input_win) {
+        touchwin(tui->wm.input_win);
+        wrefresh(tui->wm.input_win);
     }
 }
 
@@ -1510,7 +1286,7 @@ void tui_update_status(TUIState *tui, const char *status_text) {
         tui->status_visible = 0;
         free(tui->status_message);
         tui->status_message = NULL;
-        if (tui->status_height > 0) {
+        if (tui->wm.status_height > 0) {
             render_status_window(tui);
         }
         return;
@@ -1534,7 +1310,7 @@ void tui_update_status(TUIState *tui, const char *status_text) {
 
     tui->status_visible = 1;
 
-    if (tui->status_height > 0) {
+    if (tui->wm.status_height > 0) {
         render_status_window(tui);
     }
 }
@@ -1542,12 +1318,7 @@ void tui_update_status(TUIState *tui, const char *status_text) {
 
 void tui_refresh(TUIState *tui) {
     if (!tui || !tui->is_initialized) return;
-
-    if (tui->input_win) {
-        touchwin(tui->input_win);
-        wrefresh(tui->input_win);
-    }
-    refresh();
+    window_manager_refresh_all(&tui->wm);
 }
 
 void tui_clear_conversation(TUIState *tui) {
@@ -1556,15 +1327,10 @@ void tui_clear_conversation(TUIState *tui) {
     // Free all conversation entries
     free_conversation_entries(tui);
     
-    // Reset scroll offset and line count
-    tui->conv_scroll_offset = 0;
-    tui->conv_total_lines = 0;
-
-    // Clear the pad
-    if (tui->conv_win) {
-        werase(tui->conv_win);
-        refresh_conversation_viewport(tui);
-    }
+    // Clear pad and reset content lines
+    werase(tui->wm.conv_pad);
+    window_manager_set_content_lines(&tui->wm, 0);
+    refresh_conversation_viewport(tui);
 
     // Add a system message indicating the clear
     tui_add_conversation_line(tui, "[System]", "Conversation history cleared", COLOR_PAIR_STATUS);
@@ -1573,44 +1339,18 @@ void tui_clear_conversation(TUIState *tui) {
 void tui_handle_resize(TUIState *tui) {
     if (!tui || !tui->is_initialized) return;
 
-    // Properly handle ncurses resize
-    // This sequence is important for correct resize handling
-    endwin();         // End the current ncurses session
-    refresh();        // Refresh stdscr to get new dimensions
-    clear();          // Clear the screen
-
-    // Update screen dimensions
-    int max_y, max_x;
-    getmaxyx(stdscr, max_y, max_x);
-    tui->screen_height = max_y;
-    tui->screen_width = max_x;
-
-    int new_status_height = STATUS_WIN_HEIGHT;
-    if (max_y - tui->input_height - CONV_WIN_PADDING - new_status_height < 5) {
-        if (tui->status_height != 0) {
-            LOG_WARN("[TUI] Resize reduced status window due to limited height");
-        }
-        new_status_height = 0;
+    // Handle screen resize via WindowManager
+    if (window_manager_resize_screen(&tui->wm) != 0) {
+        LOG_ERROR("[TUI] WindowManager screen resize failed");
+        return;
     }
-    tui->status_height = new_status_height;
 
-    // Recalculate conversation window height
-    tui->conv_height = max_y - tui->input_height - tui->status_height - CONV_WIN_PADDING;
-    if (tui->conv_height < 5) tui->conv_height = 5;
-
-    // Resize pad to new width (keep capacity)
-    if (tui->conv_win) {
-        delwin(tui->conv_win);
-        tui->conv_win = newpad(tui->conv_pad_capacity, max_x);
-        if (tui->conv_win) {
-            scrollok(tui->conv_win, TRUE);
-            
-            // Rebuild pad content from stored entries
-            tui->conv_total_lines = 0;
-            for (int i = 0; i < tui->entries_count; i++) {
+    // Rebuild pad content from stored entries (ensures wrapping updates with new width)
+    if (tui->wm.conv_pad) {
+        werase(tui->wm.conv_pad);
+        for (int i = 0; i < tui->entries_count; i++) {
                 ConversationEntry *entry = &tui->entries[i];
-                
-                // Map color pair
+
                 int mapped_pair = NCURSES_PAIR_FOREGROUND;
                 switch (entry->color_pair) {
                     case COLOR_PAIR_DEFAULT:
@@ -1643,99 +1383,44 @@ void tui_handle_resize(TUIState *tui) {
                         mapped_pair = NCURSES_PAIR_TODO_PENDING;
                         break;
                 }
-                
-                // Write prefix if present
+
                 if (entry->prefix && entry->prefix[0] != '\0') {
                     if (has_colors()) {
-                        wattron(tui->conv_win, COLOR_PAIR(mapped_pair) | A_BOLD);
+                        wattron(tui->wm.conv_pad, COLOR_PAIR(mapped_pair) | A_BOLD);
                     }
-                    waddstr(tui->conv_win, entry->prefix);
-                    waddch(tui->conv_win, ' ');
+                    waddstr(tui->wm.conv_pad, entry->prefix);
+                    waddch(tui->wm.conv_pad, ' ');
                     if (has_colors()) {
-                        wattroff(tui->conv_win, COLOR_PAIR(mapped_pair) | A_BOLD);
+                        wattroff(tui->wm.conv_pad, COLOR_PAIR(mapped_pair) | A_BOLD);
                     }
                 }
-                
-                // Write text
+
                 if (entry->text && entry->text[0] != '\0') {
                     int text_pair = (entry->prefix && entry->prefix[0] != '\0') ? NCURSES_PAIR_FOREGROUND : mapped_pair;
                     if (has_colors()) {
-                        wattron(tui->conv_win, COLOR_PAIR(text_pair));
+                        wattron(tui->wm.conv_pad, COLOR_PAIR(text_pair));
                     }
-                    waddstr(tui->conv_win, entry->text);
+                    waddstr(tui->wm.conv_pad, entry->text);
                     if (has_colors()) {
-                        wattroff(tui->conv_win, COLOR_PAIR(text_pair));
+                        wattroff(tui->wm.conv_pad, COLOR_PAIR(text_pair));
                     }
                 }
-                
-                // Add newline
-                waddch(tui->conv_win, '\n');
+
+                waddch(tui->wm.conv_pad, '\n');
             }
-            
-            // Update total lines
+
             int cur_y, cur_x;
-            getyx(tui->conv_win, cur_y, cur_x);
+            getyx(tui->wm.conv_pad, cur_y, cur_x);
             (void)cur_x;
-            tui->conv_total_lines = cur_y;
-            
-            // Maintain scroll position (clamp to new max)
-            int max_scroll = tui->conv_total_lines - tui->conv_height;
-            if (max_scroll < 0) max_scroll = 0;
-            if (tui->conv_scroll_offset > max_scroll) {
-                tui->conv_scroll_offset = max_scroll;
-            }
-            
-            refresh_conversation_viewport(tui);
+            window_manager_set_content_lines(&tui->wm, cur_y);
         }
-    }
-    
-    // Validate pad was correctly recreated
+
     validate_tui_windows(tui);
-
-    // Resize and reposition status window
-    if (tui->status_win) {
-        delwin(tui->status_win);
-        tui->status_win = NULL;
-    }
-    if (tui->status_height > 0) {
-        tui->status_win = newwin(tui->status_height, max_x, tui->conv_height, 0);
-        if (tui->status_win) {
-            render_status_window(tui);
-        }
-    }
-
-    // Resize and reposition input window
-    if (tui->input_win) {
-        // Delete and recreate window to avoid ncurses resize issues
-        delwin(tui->input_win);
-        tui->input_win = newwin(tui->input_height, max_x, max_y - tui->input_height, 0);
-
-        if (tui->input_win) {
-            // Re-enable keypad for the new window
-            keypad(tui->input_win, TRUE);
-
-            // Update input state dimensions
-            if (tui->input_buffer) {
-                int h, w;
-                getmaxyx(tui->input_win, h, w);
-                tui->input_buffer->win_width = w - 2;
-                tui->input_buffer->win_height = h - 2;
-                tui->input_buffer->win = tui->input_win;
-            }
-            
-            // Force redraw of input window
-            touchwin(tui->input_win);
-            wrefresh(tui->input_win);
-        }
-    }
-
-    LOG_DEBUG("[TUI] Resize handled (screen=%dx%d, conv_h=%d, status_h=%d, input_h=%d)",
-              tui->screen_width, tui->screen_height, tui->conv_height,
-              tui->status_height, tui->input_height);
-
-    // Final refresh to ensure everything is visible
-    refresh();
-    doupdate();  // Update physical screen
+    window_manager_refresh_all(&tui->wm);
+    LOG_DEBUG("[TUI] Resize handled via WM (screen=%dx%d, conv_h=%d, status_h=%d, input_h=%d)",
+              tui->wm.screen_width, tui->wm.screen_height, tui->wm.conv_viewport_height,
+              tui->wm.status_height, tui->wm.input_height);
+    return;
 }
 
 void tui_show_startup_banner(TUIState *tui, const char *version, const char *model, const char *working_dir) {
@@ -1762,29 +1447,14 @@ void tui_show_startup_banner(TUIState *tui, const char *version, const char *mod
 
 
 void tui_scroll_conversation(TUIState *tui, int direction) {
-    if (!tui || !tui->is_initialized || !tui->conv_win) return;
-
-    // Calculate max scroll offset based on total lines
-    int max_offset = tui->conv_total_lines - tui->conv_height;
-    if (max_offset < 0) max_offset = 0;
-
-    // Update scroll offset (line-based, not entry-based!)
-    tui->conv_scroll_offset += direction;
-
-    // Clamp to valid range
-    if (tui->conv_scroll_offset < 0) {
-        tui->conv_scroll_offset = 0;
-    } else if (tui->conv_scroll_offset > max_offset) {
-        tui->conv_scroll_offset = max_offset;
-    }
-
-    // Refresh viewport with new offset
-    refresh_conversation_viewport(tui);
+    if (!tui || !tui->is_initialized || !tui->wm.conv_pad) return;
+    window_manager_scroll(&tui->wm, direction);
+    window_manager_refresh_conversation(&tui->wm);
 
     // Refresh input window to keep cursor visible
-    if (tui->input_win) {
-        touchwin(tui->input_win);
-        wrefresh(tui->input_win);
+    if (tui->wm.input_win) {
+        touchwin(tui->wm.input_win);
+        wrefresh(tui->wm.input_win);
     }
 }
 
@@ -1793,14 +1463,14 @@ void tui_scroll_conversation(TUIState *tui, int direction) {
 // ============================================================================
 
 int tui_poll_input(TUIState *tui) {
-    if (!tui || !tui->is_initialized || !tui->input_win) {
+    if (!tui || !tui->is_initialized || !tui->wm.input_win) {
         return ERR;
     }
     
     // Make wgetch() non-blocking temporarily
-    nodelay(tui->input_win, TRUE);
-    int ch = wgetch(tui->input_win);
-    nodelay(tui->input_win, FALSE);
+    nodelay(tui->wm.input_win, TRUE);
+    int ch = wgetch(tui->wm.input_win);
+    nodelay(tui->wm.input_win, FALSE);
     
     return ch;
 }
@@ -1818,7 +1488,7 @@ static int handle_command_mode_input(TUIState *tui, int ch, const char *prompt) 
         if (tui->command_buffer) {
             tui->command_buffer[0] = '\0';
         }
-        if (tui->status_height > 0) {
+        if (tui->wm.status_height > 0) {
             render_status_window(tui);
         }
         input_redraw(tui, prompt);
@@ -1833,7 +1503,7 @@ static int handle_command_mode_input(TUIState *tui, int ch, const char *prompt) 
             tui->mode = TUI_MODE_NORMAL;
             tui->command_buffer_len = 0;
             tui->command_buffer[0] = '\0';
-            if (tui->status_height > 0) {
+            if (tui->wm.status_height > 0) {
                 render_status_window(tui);
             }
             input_redraw(tui, prompt);
@@ -1863,7 +1533,7 @@ static int handle_command_mode_input(TUIState *tui, int ch, const char *prompt) 
         tui->mode = TUI_MODE_NORMAL;
         tui->command_buffer_len = 0;
         tui->command_buffer[0] = '\0';
-        if (tui->status_height > 0) {
+        if (tui->wm.status_height > 0) {
             render_status_window(tui);
         }
         input_redraw(tui, prompt);
@@ -1884,12 +1554,12 @@ static int handle_command_mode_input(TUIState *tui, int ch, const char *prompt) 
 // Handle normal mode input
 // Returns: 0 to continue, 1 to switch to insert mode, -1 on error/quit
 static int handle_normal_mode_input(TUIState *tui, int ch, const char *prompt) {
-    if (!tui || !tui->conv_win) {
+    if (!tui || !tui->wm.conv_pad) {
         return 0;
     }
     
     int max_y, max_x;
-    getmaxyx(tui->conv_win, max_y, max_x);
+    getmaxyx(tui->wm.conv_pad, max_y, max_x);
     (void)max_x;
     
     // Calculate scrolling parameters
@@ -1899,7 +1569,7 @@ static int handle_normal_mode_input(TUIState *tui, int ch, const char *prompt) {
     // Handle key combinations (like gg, G)
     if (tui->normal_mode_last_key == 'g' && ch == 'g') {
         // gg: Go to top
-        tui->conv_scroll_offset = 0;
+        window_manager_scroll_to_top(&tui->wm);
         tui->normal_mode_last_key = 0;
         refresh_conversation_viewport(tui);
         input_redraw(tui, prompt);
@@ -1919,7 +1589,7 @@ static int handle_normal_mode_input(TUIState *tui, int ch, const char *prompt) {
         case 'o':  // Enter insert mode (open line below)
         case 'O':  // Enter insert mode (open line above)
             tui->mode = TUI_MODE_INSERT;
-            if (tui->status_height > 0) {
+            if (tui->wm.status_height > 0) {
                 render_status_window(tui);
             }
             input_redraw(tui, prompt);  // Redraw to show input box
@@ -1940,7 +1610,7 @@ static int handle_normal_mode_input(TUIState *tui, int ch, const char *prompt) {
             tui->command_buffer[0] = ':';
             tui->command_buffer[1] = '\0';
             tui->command_buffer_len = 1;
-            if (tui->status_height > 0) {
+            if (tui->wm.status_height > 0) {
                 render_status_window(tui);
             }
             input_redraw(tui, "");  // Redraw to show command buffer
@@ -1987,13 +1657,9 @@ static int handle_normal_mode_input(TUIState *tui, int ch, const char *prompt) {
             break;
             
         case 'G':  // Go to bottom
-            {
-                int max_offset = tui->conv_total_lines - tui->conv_height;
-                if (max_offset < 0) max_offset = 0;
-                tui->conv_scroll_offset = max_offset;
-                refresh_conversation_viewport(tui);
-                input_redraw(tui, prompt);
-            }
+            window_manager_scroll_to_bottom(&tui->wm);
+            refresh_conversation_viewport(tui);
+            input_redraw(tui, prompt);
             break;
             
         case 'q':  // Quit (when input is empty)
@@ -2060,7 +1726,7 @@ static int check_paste_timeout(TUIState *tui, const char *prompt) {
 }
 
 int tui_process_input_char(TUIState *tui, int ch, const char *prompt) {
-    if (!tui || !tui->is_initialized || !tui->input_win) {
+    if (!tui || !tui->is_initialized || !tui->wm.input_win) {
         return -1;
     }
 
@@ -2240,21 +1906,21 @@ int tui_process_input_char(TUIState *tui, int ch, const char *prompt) {
     } else if (ch == 7) {  // Ctrl+G: Enter NORMAL mode
         tui->mode = TUI_MODE_NORMAL;
         tui->normal_mode_last_key = 0;
-        if (tui->status_height > 0) {
+        if (tui->wm.status_height > 0) {
             render_status_window(tui);
         }
         input_redraw(tui, prompt);
         return 0;
     } else if (ch == 27) {  // ESC sequence (Alt key combinations, bracketed paste, or interrupt)
         // Set nodelay to check for following character
-        nodelay(tui->input_win, TRUE);
-        int next_ch = wgetch(tui->input_win);
+        nodelay(tui->wm.input_win, TRUE);
+        int next_ch = wgetch(tui->wm.input_win);
         
         LOG_DEBUG("[TUI] ESC sequence detected, next_ch=%d", next_ch);
         
         // If standalone ESC (no following character), signal interrupt
         if (next_ch == ERR) {
-            nodelay(tui->input_win, FALSE);
+            nodelay(tui->wm.input_win, FALSE);
             
             // In INSERT mode, return special code 2 to signal interrupt request
             // The event loop will call the interrupt callback
@@ -2270,13 +1936,13 @@ int tui_process_input_char(TUIState *tui, int ch, const char *prompt) {
         if (next_ch == '[') {
             // Could be bracketed paste sequence or other CSI sequence
             // Read the sequence with a small delay to allow characters to arrive
-            nodelay(tui->input_win, FALSE);
+            nodelay(tui->wm.input_win, FALSE);
             timeout(100);  // 100ms timeout for sequence
             
-            int ch1 = wgetch(tui->input_win);
-            int ch2 = wgetch(tui->input_win);
-            int ch3 = wgetch(tui->input_win);
-            int ch4 = wgetch(tui->input_win);
+            int ch1 = wgetch(tui->wm.input_win);
+            int ch2 = wgetch(tui->wm.input_win);
+            int ch3 = wgetch(tui->wm.input_win);
+            int ch4 = wgetch(tui->wm.input_win);
             
             timeout(-1);  // Back to blocking
             
@@ -2318,7 +1984,7 @@ int tui_process_input_char(TUIState *tui, int ch, const char *prompt) {
             return 0;
         }
         
-        nodelay(tui->input_win, FALSE);
+        nodelay(tui->wm.input_win, FALSE);
 
         // Handle Alt key combinations
         if (next_ch == 'b' || next_ch == 'B') {  // Alt+b: backward word
