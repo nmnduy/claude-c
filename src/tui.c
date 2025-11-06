@@ -388,15 +388,30 @@ static void free_conversation_entries(TUIState *tui) {
     tui->entries_capacity = 0;
 }
 
+// Estimate how many entries can fit in the window
+// This is conservative - assumes at least 2 lines per entry on average
+static int estimate_visible_entries(TUIState *tui, int window_height) {
+    if (!tui || window_height <= 0) return 0;
+    
+    // Conservative estimate: assume entries take 2-3 lines on average
+    // At minimum, we want to show at least a few entries
+    int estimated = window_height / 2;
+    if (estimated < 3 && tui->entries_count >= 3) {
+        estimated = 3;  // Try to show at least 3 entries if we have them
+    }
+    if (estimated > tui->entries_count) {
+        estimated = tui->entries_count;
+    }
+    
+    return estimated;
+}
 
-
-// Simple approach: just render messages sequentially, scrolling shows last N entries
+// Helper: Render conversation window without custom text wrapping
+// Text wraps naturally at terminal width, like standard terminal output
 static void render_conversation_window(TUIState *tui) {
     if (!tui || !tui->conv_win) return;
 
-    // Clear window
     werase(tui->conv_win);
-    wmove(tui->conv_win, 0, 0);
 
     int max_y, max_x;
     getmaxyx(tui->conv_win, max_y, max_x);
@@ -407,7 +422,6 @@ static void render_conversation_window(TUIState *tui) {
     }
 
     // Calculate which entry to start from based on scroll offset
-    // Scroll offset is now in entries, not lines
     int start_entry = tui->conv_scroll_offset;
     if (start_entry < 0) start_entry = 0;
     if (start_entry >= tui->entries_count) {
@@ -419,16 +433,19 @@ static void render_conversation_window(TUIState *tui) {
     }
 
     // Render entries starting from start_entry
-    // Let ncurses handle wrapping naturally
-    int cur_y, cur_x;
+    // Let ncurses handle wrapping, track cursor position
+    wmove(tui->conv_win, 0, 0);
+    
     for (int i = start_entry; i < tui->entries_count; i++) {
         ConversationEntry *entry = &tui->entries[i];
         
-        // Check if we've run out of space before adding this entry
+        // Check if we have space before rendering
+        int cur_y, cur_x;
         getyx(tui->conv_win, cur_y, cur_x);
         (void)cur_x;
-        if (cur_y >= max_y - 1) {  // Leave room for at least one line
-            break;
+        
+        if (cur_y >= max_y) {
+            break;  // Out of space
         }
         
         // Map TUIColorPair to ncurses color pair
@@ -465,7 +482,7 @@ static void render_conversation_window(TUIState *tui) {
             entry->color_pair != COLOR_PAIR_FOREGROUND) {
             text_pair = mapped_pair;
         }
-        
+
         // Print prefix if present
         if (prefix_has_text) {
             if (has_colors()) {
@@ -478,7 +495,7 @@ static void render_conversation_window(TUIState *tui) {
             }
         }
         
-        // Print text
+        // Print text - let it wrap naturally at terminal width
         if (entry->text && entry->text[0] != '\0') {
             if (has_colors()) {
                 wattron(tui->conv_win, COLOR_PAIR(text_pair));
@@ -495,7 +512,6 @@ static void render_conversation_window(TUIState *tui) {
     
     wrefresh(tui->conv_win);
 }
-
 
 // UTF-8 helper functions (from lineedit.c)
 static int utf8_char_length(unsigned char first_byte) {
@@ -1314,9 +1330,9 @@ void tui_add_conversation_line(TUIState *tui, const char *prefix, const char *te
     }
 
     // Auto-scroll to bottom (show latest messages)
-    // Scroll offset is now in entries, not lines
-    // Show the last entries that fit in the window
-    tui->conv_scroll_offset = tui->entries_count - 1;
+    // Start from an entry that should show recent messages
+    int visible_entries = estimate_visible_entries(tui, tui->conv_height);
+    tui->conv_scroll_offset = tui->entries_count - visible_entries;
     if (tui->conv_scroll_offset < 0) {
         tui->conv_scroll_offset = 0;
     }
@@ -1516,9 +1532,10 @@ void tui_show_startup_banner(TUIState *tui, const char *version, const char *mod
 void tui_scroll_conversation(TUIState *tui, int direction) {
     if (!tui || !tui->is_initialized || !tui->conv_win) return;
 
-    // Calculate max scroll offset based on number of entries
-    // Scroll offset is now in entries, not lines
-    int max_offset = tui->entries_count - 1;
+    // Calculate max scroll offset based on entries
+    // We allow scrolling to show the last entry at the bottom
+    int visible_entries = estimate_visible_entries(tui, tui->conv_height);
+    int max_offset = tui->entries_count - visible_entries;
     if (max_offset < 0) max_offset = 0;
 
     // Update scroll offset
@@ -1741,7 +1758,8 @@ static int handle_normal_mode_input(TUIState *tui, int ch, const char *prompt) {
             
         case 'G':  // Go to bottom
             {
-                int max_offset = tui->entries_count - 1;
+                int visible_entries = estimate_visible_entries(tui, tui->conv_height);
+                int max_offset = tui->entries_count - visible_entries;
                 if (max_offset < 0) max_offset = 0;
                 tui->conv_scroll_offset = max_offset;
                 render_conversation_window(tui);
