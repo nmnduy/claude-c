@@ -805,7 +805,12 @@ static int show_diff(const char *file_path, const char *original_content) {
 // ============================================================================
 
 static cJSON* tool_bash(cJSON *params, ConversationState *state) {
-    (void)state;  // Unused parameter
+    // Check for interrupt before starting
+    if (state && state->interrupt_requested) {
+        cJSON *error = cJSON_CreateObject();
+        cJSON_AddStringToObject(error, "error", "Operation interrupted by user");
+        return error;
+    }
 
     const cJSON *cmd_json = cJSON_GetObjectItem(params, "command");
     if (!cmd_json || !cJSON_IsString(cmd_json)) {
@@ -829,6 +834,15 @@ static cJSON* tool_bash(cJSON *params, ConversationState *state) {
     size_t total_size = 0;
 
     while (fgets(buffer, sizeof(buffer), pipe)) {
+        // Check for interrupt during long-running command
+        if (state && state->interrupt_requested) {
+            free(output);
+            pclose(pipe);
+            cJSON *error = cJSON_CreateObject();
+            cJSON_AddStringToObject(error, "error", "Operation interrupted by user");
+            return error;
+        }
+        
         // Add cancellation point to allow thread cancellation during long reads
         pthread_testcancel();
 
@@ -2445,6 +2459,13 @@ static ApiResponse* call_api_with_retries(ConversationState *state) {
               state->provider->name, state->model);
 
     while (1) {
+        // Check for interrupt request
+        if (state->interrupt_requested) {
+            LOG_INFO("API call interrupted by user request");
+            print_error("Operation interrupted by user");
+            return NULL;
+        }
+        
         // Check if we've exceeded max retry duration
         struct timespec now;
         clock_gettime(CLOCK_MONOTONIC, &now);
@@ -2866,6 +2887,7 @@ int conversation_state_init(ConversationState *state) {
     }
 
     state->conv_mutex_initialized = 1;
+    state->interrupt_requested = 0;  // Initialize interrupt flag
     return 0;
 }
 
@@ -3337,6 +3359,13 @@ static void process_response(ConversationState *state,
         int started_threads = 0;
 
         for (int i = 0; i < tool_count; i++) {
+            // Check for interrupt before starting each tool
+            if (state->interrupt_requested) {
+                LOG_INFO("Tool execution interrupted by user request");
+                ui_show_error(tui, queue, "Tool execution interrupted by user");
+                break;  // Stop launching new tools
+            }
+            
             ToolCall *tool = &tool_calls_array[i];
             InternalContent *result_slot = &results[i];
             result_slot->type = INTERNAL_TOOL_RESPONSE;
@@ -3405,6 +3434,18 @@ static void process_response(ConversationState *state,
         int interrupted = 0;
         if (tracker_initialized && started_threads > 0) {
             while (1) {
+                // Check for interrupt request
+                if (state->interrupt_requested) {
+                    LOG_INFO("Tool execution interrupted by user request");
+                    interrupted = 1;
+                    // Cancel the tracker to signal all tools to stop
+                    pthread_mutex_lock(&tracker.mutex);
+                    tracker.cancelled = 1;
+                    pthread_cond_broadcast(&tracker.cond);
+                    pthread_mutex_unlock(&tracker.mutex);
+                    break;
+                }
+                
                 int done = 0;
                 int cancelled = 0;
 
@@ -3615,6 +3656,29 @@ typedef struct {
     int instruction_queue_capacity;
 } InteractiveContext;
 
+// Interrupt callback invoked by the TUI event loop when the user presses Esc in INSERT mode
+static int interrupt_callback(void *user_data) {
+    InteractiveContext *ctx = (InteractiveContext *)user_data;
+    if (!ctx || !ctx->state) {
+        return 0;
+    }
+    
+    ConversationState *state = ctx->state;
+    TUIMessageQueue *queue = ctx->tui_queue;
+    
+    LOG_INFO("User requested interrupt (Esc pressed)");
+    
+    // Set the interrupt flag to stop ongoing operations
+    state->interrupt_requested = 1;
+    
+    // Post status message  
+    ui_set_status(NULL, queue, "Interrupt requested - canceling operations...");
+    
+    // Note: The flag will be reset when user submits new input
+    
+    return 0;  // Continue running (don't exit)
+}
+
 // Submit callback invoked by the TUI event loop when the user presses Enter
 static int submit_input_callback(const char *input, void *user_data) {
     InteractiveContext *ctx = (InteractiveContext *)user_data;
@@ -3630,6 +3694,9 @@ static int submit_input_callback(const char *input, void *user_data) {
     ConversationState *state = ctx->state;
     AIWorkerContext *worker = ctx->worker;
     TUIMessageQueue *queue = ctx->tui_queue;
+    
+    // Reset interrupt flag when new input is submitted
+    state->interrupt_requested = 0;
 
     char *input_copy = strdup(input);
     if (!input_copy) {
@@ -3837,7 +3904,7 @@ static void interactive_mode(ConversationState *state) {
     };
 
     void *event_loop_queue = tui_queue_initialized ? (void *)&tui_queue : NULL;
-    tui_event_loop(&tui, prompt, submit_input_callback, &ctx, event_loop_queue);
+    tui_event_loop(&tui, prompt, submit_input_callback, interrupt_callback, &ctx, event_loop_queue);
 
     if (worker_started) {
         ai_worker_stop(&worker_ctx);
