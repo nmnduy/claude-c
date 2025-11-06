@@ -47,6 +47,9 @@ struct TodoList;
 // BedrockConfig is defined in aws_bedrock.h (opaque pointer)
 struct BedrockConfigStruct;
 
+// MCPConfig is defined in mcp.h (opaque pointer)
+struct MCPConfig;
+
 // Provider is defined in provider.h
 typedef struct Provider Provider;
 
@@ -179,6 +182,7 @@ typedef struct ConversationState {
     pthread_mutex_t conv_mutex;     // Synchronize access to conversation data
     int conv_mutex_initialized;     // Tracks mutex initialization
     volatile sig_atomic_t interrupt_requested;  // Flag to interrupt ongoing API calls
+    struct MCPConfig *mcp_config;   // MCP server configuration (NULL if not enabled)
 } ConversationState;
 
 // ============================================================================
@@ -261,6 +265,6 @@ void api_response_free(ApiResponse *response);
 void add_cache_control(cJSON *obj);
 
 // Get tool definitions for the API request
-cJSON* get_tool_definitions(int enable_caching);
+cJSON* get_tool_definitions(ConversationState *state, int enable_caching);
 
 #endif // CLAUDE_INTERNAL_H

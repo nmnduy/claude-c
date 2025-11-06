@@ -62,9 +62,13 @@ void todo_clear(TodoList *list);
 // Get count of items by status
 size_t todo_count_by_status(const TodoList *list, TodoStatus status);
 
-// Render TODO list to string
+// Render TODO list to string (with ANSI colors for terminal output)
 // Returns: Allocated string that must be freed by caller, NULL if no todos
 char* todo_render_to_string(const TodoList *list);
+
+// Render TODO list to string (plain text, no ANSI codes, for TUI)
+// Returns: Allocated string that must be freed by caller, NULL if no todos
+char* todo_render_to_string_plain(const TodoList *list);
 
 // Render TODO list to terminal as plain conversation output
 void todo_render(const TodoList *list);

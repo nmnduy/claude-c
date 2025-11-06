@@ -8,6 +8,7 @@ A lightweight, modular implementation of a coding agent that interacts with an O
 
 - **Modular architecture**: Clean separation into focused modules (~2000+ lines total)
 - **Core tools**: Bash, Read, Write, Edit, Glob, Grep with advanced features
+- **MCP support**: Connect to external Model Context Protocol servers for additional tools
 - **Voice input**: Record and transcribe audio using OpenAI Whisper API
 - **Vendor support**: OpenAI and AWS Bedrock
 - **Efficient**: Direct API calls with libcurl, minimal dependencies
@@ -153,6 +154,26 @@ The interactive mode supports:
 ### Color Theme Support
 
 The TUI uses **Kitty terminal's theme format** - a simple, dependency-free configuration format. See [docs/COLOR_THEMES.md](docs/COLOR_THEMES.md) for detailed configuration options and available themes.
+
+### MCP (Model Context Protocol) Support
+
+Connect claude-c to external MCP servers for additional tools and capabilities:
+
+```bash
+# Enable MCP
+export CLAUDE_MCP_ENABLED=1
+
+# Configure servers
+mkdir -p ~/.config/claude-c
+cp examples/mcp_servers.json ~/.config/claude-c/
+
+# Run with MCP
+./claude-c
+```
+
+Available servers include filesystem access, GitHub integration, database queries, web search, and more.
+
+**Documentation**: See [README_MCP.md](README_MCP.md) for detailed setup and [docs/mcp.md](docs/mcp.md) for technical details.
 
 ## Memory footprint
 
