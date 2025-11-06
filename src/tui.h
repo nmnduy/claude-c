@@ -28,7 +28,10 @@ typedef enum {
     COLOR_PAIR_TOOL = 5,       // Yellow for tool execution indicators
     COLOR_PAIR_ERROR = 6,      // Red for errors
     COLOR_PAIR_STATUS = 7,     // Cyan for status messages
-    COLOR_PAIR_PROMPT = 8      // Green for input prompt
+    COLOR_PAIR_PROMPT = 8,     // Green for input prompt
+    COLOR_PAIR_TODO_COMPLETED = 9,   // Green for completed tasks
+    COLOR_PAIR_TODO_IN_PROGRESS = 10, // Yellow for in-progress tasks
+    COLOR_PAIR_TODO_PENDING = 11     // Cyan/Blue for pending tasks
 } TUIColorPair;
 
 // Conversation message entry
@@ -174,5 +177,10 @@ int tui_event_loop(TUIState *tui, const char *prompt,
 
 // Drain any remaining messages after the event loop stops
 void tui_drain_message_queue(TUIState *tui, const char *prompt, void *msg_queue);
+
+// Render a TODO list with colored items based on status
+// list: TodoList to render
+// Each item will be rendered with its status-specific color
+void tui_render_todo_list(TUIState *tui, const TodoList *list);
 
 #endif // TUI_H

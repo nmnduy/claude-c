@@ -45,6 +45,9 @@ static volatile sig_atomic_t g_resize_flag = 0;
 #define NCURSES_PAIR_STATUS 4
 #define NCURSES_PAIR_ERROR 5
 #define NCURSES_PAIR_PROMPT 6
+#define NCURSES_PAIR_TODO_COMPLETED 7
+#define NCURSES_PAIR_TODO_IN_PROGRESS 8
+#define NCURSES_PAIR_TODO_PENDING 9
 
 // Signal handler for window resize
 #ifdef SIGWINCH
@@ -312,6 +315,10 @@ static void init_ncurses_colors(void) {
             init_pair(NCURSES_PAIR_STATUS, 19, -1);
             init_pair(NCURSES_PAIR_ERROR, 20, -1);
             init_pair(NCURSES_PAIR_PROMPT, 17, -1);  // Use USER color for prompt
+            // TODO color pairs
+            init_pair(NCURSES_PAIR_TODO_COMPLETED, 17, -1);    // Green (same as USER)
+            init_pair(NCURSES_PAIR_TODO_IN_PROGRESS, 19, -1);  // Yellow (same as STATUS)
+            init_pair(NCURSES_PAIR_TODO_PENDING, 18, -1);      // Cyan (same as ASSISTANT)
 
             LOG_DEBUG("[TUI] Custom colors initialized successfully");
         } else {
@@ -323,6 +330,10 @@ static void init_ncurses_colors(void) {
             init_pair(NCURSES_PAIR_STATUS, COLOR_YELLOW, -1);
             init_pair(NCURSES_PAIR_ERROR, COLOR_RED, -1);
             init_pair(NCURSES_PAIR_PROMPT, COLOR_GREEN, -1);
+            // TODO color pairs
+            init_pair(NCURSES_PAIR_TODO_COMPLETED, COLOR_GREEN, -1);
+            init_pair(NCURSES_PAIR_TODO_IN_PROGRESS, COLOR_YELLOW, -1);
+            init_pair(NCURSES_PAIR_TODO_PENDING, COLOR_CYAN, -1);
         }
     } else {
         LOG_DEBUG("[TUI] No theme loaded, using standard ncurses colors");
@@ -333,6 +344,10 @@ static void init_ncurses_colors(void) {
         init_pair(NCURSES_PAIR_STATUS, COLOR_YELLOW, -1);
         init_pair(NCURSES_PAIR_ERROR, COLOR_RED, -1);
         init_pair(NCURSES_PAIR_PROMPT, COLOR_GREEN, -1);
+        // TODO color pairs
+        init_pair(NCURSES_PAIR_TODO_COMPLETED, COLOR_GREEN, -1);
+        init_pair(NCURSES_PAIR_TODO_IN_PROGRESS, COLOR_YELLOW, -1);
+        init_pair(NCURSES_PAIR_TODO_PENDING, COLOR_CYAN, -1);
     }
 }
 
@@ -1321,6 +1336,15 @@ void tui_add_conversation_line(TUIState *tui, const char *prefix, const char *te
         case COLOR_PAIR_PROMPT:
             mapped_pair = NCURSES_PAIR_PROMPT;
             break;
+        case COLOR_PAIR_TODO_COMPLETED:
+            mapped_pair = NCURSES_PAIR_TODO_COMPLETED;
+            break;
+        case COLOR_PAIR_TODO_IN_PROGRESS:
+            mapped_pair = NCURSES_PAIR_TODO_IN_PROGRESS;
+            break;
+        case COLOR_PAIR_TODO_PENDING:
+            mapped_pair = NCURSES_PAIR_TODO_PENDING;
+            break;
     }
     
     // Move to end of pad
@@ -1379,6 +1403,50 @@ void tui_add_conversation_line(TUIState *tui, const char *prefix, const char *te
     if (tui->input_win) {
         touchwin(tui->input_win);
         wrefresh(tui->input_win);
+    }
+}
+
+void tui_render_todo_list(TUIState *tui, const TodoList *list) {
+    if (!tui || !list || list->count == 0) {
+        return;  // No todos to display
+    }
+
+    // Add header line
+    tui_add_conversation_line(tui, "[Assistant]", "Here are the current tasks:", COLOR_PAIR_ASSISTANT);
+
+    // Render each todo item with its status-specific color
+    for (size_t i = 0; i < list->count; i++) {
+        const TodoItem *item = &list->items[i];
+        char line[1024];
+        TUIColorPair color;
+        const char *symbol;
+        const char *text;
+
+        // Determine color, symbol, and text based on status
+        switch (item->status) {
+            case TODO_COMPLETED:
+                color = COLOR_PAIR_TODO_COMPLETED;
+                symbol = "✓";
+                text = item->content;
+                break;
+            case TODO_IN_PROGRESS:
+                color = COLOR_PAIR_TODO_IN_PROGRESS;
+                symbol = "⋯";
+                text = item->active_form;
+                break;
+            case TODO_PENDING:
+            default:
+                color = COLOR_PAIR_TODO_PENDING;
+                symbol = "○";
+                text = item->content;
+                break;
+        }
+
+        // Format the line with indentation
+        snprintf(line, sizeof(line), "    %s %s", symbol, text);
+        
+        // Add line without prefix (so the color applies to the whole line)
+        tui_add_conversation_line(tui, NULL, line, color);
     }
 }
 
@@ -1515,6 +1583,15 @@ void tui_handle_resize(TUIState *tui) {
                         break;
                     case COLOR_PAIR_PROMPT:
                         mapped_pair = NCURSES_PAIR_PROMPT;
+                        break;
+                    case COLOR_PAIR_TODO_COMPLETED:
+                        mapped_pair = NCURSES_PAIR_TODO_COMPLETED;
+                        break;
+                    case COLOR_PAIR_TODO_IN_PROGRESS:
+                        mapped_pair = NCURSES_PAIR_TODO_IN_PROGRESS;
+                        break;
+                    case COLOR_PAIR_TODO_PENDING:
+                        mapped_pair = NCURSES_PAIR_TODO_PENDING;
                         break;
                 }
                 
