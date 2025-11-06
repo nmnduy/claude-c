@@ -35,6 +35,7 @@
 #include "colorscheme.h"
 #include "fallback_colors.h"
 #include "patch_parser.h"
+#include "tool_utils.h"
 
 #ifdef TEST_BUILD
 // Disable unused function warnings for test builds since not all functions are used by tests
@@ -427,14 +428,7 @@ static char* get_tool_details(const char *tool_name, cJSON *arguments) {
     if (strcmp(tool_name, "Bash") == 0) {
         cJSON *command = cJSON_GetObjectItem(arguments, "command");
         if (cJSON_IsString(command)) {
-            const char *cmd = command->valuestring;
-            // Truncate long commands to first 50 characters
-            if (strlen(cmd) > 50) {
-                snprintf(details, sizeof(details), "%.47s...", cmd);
-            } else {
-                strncpy(details, cmd, sizeof(details) - 1);
-                details[sizeof(details) - 1] = '\0';
-            }
+            summarize_bash_command(command->valuestring, details, sizeof(details));
         }
     } else if (strcmp(tool_name, "Read") == 0) {
         cJSON *file_path = cJSON_GetObjectItem(arguments, "file_path");
