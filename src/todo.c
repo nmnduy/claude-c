@@ -145,9 +145,10 @@ char* todo_render_to_string(const TodoList *list) {
     }
 
     // Calculate approximate buffer size needed
+    // Account for ANSI codes (up to 20 chars per color code) + indentation
     size_t buffer_size = 256;  // Base size for intro text
     for (size_t i = 0; i < list->count; i++) {
-        buffer_size += strlen(list->items[i].content) + strlen(list->items[i].active_form) + 50;
+        buffer_size += strlen(list->items[i].content) + strlen(list->items[i].active_form) + 150;
     }
 
     char *result = malloc(buffer_size);
@@ -161,7 +162,27 @@ char* todo_render_to_string(const TodoList *list) {
     offset += (size_t)snprintf(result + offset, buffer_size - offset,
                                "Here are the current tasks:\n");
 
-    // Render each item with appropriate indicator
+    // Get color codes for bullet points
+    char color_completed[32] = {0};
+    char color_in_progress[32] = {0};
+    char color_pending[32] = {0};
+    char color_foreground[32] = {0};
+    
+    // Try to get colors from theme, fall back to ANSI codes
+    if (get_colorscheme_color(COLORSCHEME_USER, color_completed, sizeof(color_completed)) != 0) {
+        snprintf(color_completed, sizeof(color_completed), "%s", ANSI_FALLBACK_GREEN);
+    }
+    if (get_colorscheme_color(COLORSCHEME_STATUS, color_in_progress, sizeof(color_in_progress)) != 0) {
+        snprintf(color_in_progress, sizeof(color_in_progress), "%s", ANSI_FALLBACK_YELLOW);
+    }
+    if (get_colorscheme_color(COLORSCHEME_ASSISTANT, color_pending, sizeof(color_pending)) != 0) {
+        snprintf(color_pending, sizeof(color_pending), "%s", ANSI_FALLBACK_CYAN);
+    }
+    if (get_colorscheme_color(COLORSCHEME_FOREGROUND, color_foreground, sizeof(color_foreground)) != 0) {
+        snprintf(color_foreground, sizeof(color_foreground), "%s", ANSI_FALLBACK_FOREGROUND);
+    }
+
+    // Render each item with colored bullets and indentation
     for (size_t i = 0; i < list->count; i++) {
         const TodoItem *item = &list->items[i];
 
@@ -169,21 +190,25 @@ char* todo_render_to_string(const TodoList *list) {
             default:
                 LOG_WARN("Unknown TODO status: %d", (int)item->status);
                 offset += (size_t)snprintf(result + offset, buffer_size - offset,
-                                 "• %s\n", item->content);
+                                 "    %s• %s%s\n", 
+                                 color_foreground, ANSI_RESET, item->content);
                 break;
             case TODO_COMPLETED:
                 offset += (size_t)snprintf(result + offset, buffer_size - offset,
-                                 "✓ %s\n", item->content);
+                                 "    %s✓%s %s\n", 
+                                 color_completed, color_foreground, item->content);
                 break;
 
             case TODO_IN_PROGRESS:
                 offset += (size_t)snprintf(result + offset, buffer_size - offset,
-                                 "⋯ %s\n", item->active_form);
+                                 "    %s⋯%s %s\n", 
+                                 color_in_progress, color_foreground, item->active_form);
                 break;
 
             case TODO_PENDING:
                 offset += (size_t)snprintf(result + offset, buffer_size - offset,
-                                 "○ %s\n", item->content);
+                                 "    %s○%s %s\n", 
+                                 color_pending, color_foreground, item->content);
                 break;
         }
     }
