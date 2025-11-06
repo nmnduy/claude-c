@@ -3387,7 +3387,7 @@ static void process_response(ConversationState *state,
 
             char *tool_details = get_tool_details(tool->name, input);
             char prefix_with_tool[128];
-            snprintf(prefix_with_tool, sizeof(prefix_with_tool), "[Tool: %s]", tool->name);
+            snprintf(prefix_with_tool, sizeof(prefix_with_tool), "[%s]", tool->name);
             ui_append_line(tui, queue, prefix_with_tool, tool_details, COLOR_PAIR_TOOL);
 
             if (!tracker_initialized) {
