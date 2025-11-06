@@ -388,19 +388,9 @@ static void emit_diff_line(const char *line,
 
     // Print with indentation and color if applicable
     if (g_active_tool_queue) {
-        // For TUI mode: use prefix-based coloring instead of ANSI codes
-        // The TUI's infer_color_from_prefix() will handle the coloring
-        const char *prefix = "";
-        if (trimmed[0] == '+' && trimmed[1] != '+') {
-            prefix = "[+]";
-        } else if (trimmed[0] == '-' && trimmed[1] != '-') {
-            prefix = "[-]";
-        } else if (trimmed[0] == '@' && trimmed[1] == '@') {
-            prefix = "[@]";
-        } else {
-            prefix = "[~]";
-        }
-        tool_emit_line(prefix, trimmed);
+        // For TUI mode: just pass the line as-is
+        // The TUI will detect diff prefixes and color appropriately
+        tool_emit_line("", trimmed);
     } else {
         // For non-TUI mode (direct stdout): use ANSI color codes
         const char *color = NULL;
@@ -800,10 +790,10 @@ static int show_diff(const char *file_path, const char *original_content) {
     unlink(temp_path);
 
     if (!has_diff) {
-        tool_emit_line("[~]", "(No changes - files are identical)");
+        tool_emit_line(" ", "(No changes - files are identical)");
     } else if (result == 0) {
         // diff exit code 0 means no differences found
-        tool_emit_line("[~]", "(No differences found)");
+        tool_emit_line(" ", "(No differences found)");
     }
 
 
@@ -1094,8 +1084,8 @@ STATIC cJSON* tool_write(cJSON *params, ConversationState *state) {
             // New file creation
             char header[PATH_MAX + 64];
             snprintf(header, sizeof(header), "--- Created new file: %s ---", resolved_path);
-            tool_emit_line("[~]", header);
-            tool_emit_line("[~]", "New file written - no previous content to compare");
+            tool_emit_line(" ", header);
+            tool_emit_line(" ", "New file written - no previous content to compare");
         }
     }
 
