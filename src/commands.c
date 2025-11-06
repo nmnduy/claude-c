@@ -170,20 +170,7 @@ static int cmd_voice(ConversationState *state, const char *args) {
 
 static int cmd_help(ConversationState *state, const char *args) {
     (void)state; (void)args;
-    char color_buf[32];
-    const char *status_color;
-    if (get_colorscheme_color(COLORSCHEME_STATUS, color_buf, sizeof(color_buf)) == 0) {
-        status_color = color_buf;
-    } else {
-        LOG_WARN("Using fallback ANSI color for STATUS (help command)");
-        status_color = ANSI_FALLBACK_STATUS;
-    }
-    printf("\n%sCommands:%s\n", status_color, ANSI_RESET);
-    for (int i = 0; i < command_count; i++) {
-        const Command *cmd = command_registry[i];
-        printf("  %-18s - %s\n", cmd->usage, cmd->description);
-    }
-    printf("  Ctrl+D             - Exit\n\n");
+    // Suppress non-TUI help text output
     return 0;
 }
 
@@ -276,7 +263,6 @@ int commands_execute(ConversationState *state, const char *input) {
     char err_msg[256];
     snprintf(err_msg, sizeof(err_msg), "Unknown command: %.*s", (int)cmd_len, cmd_line);
     print_error(err_msg);
-    printf("Type /help for available commands\n\n");
     return -1;
 }
 

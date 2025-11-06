@@ -4223,6 +4223,13 @@ int main(int argc, char *argv[]) {
         printf("                                     Default: 600000 (10 minutes)\n\n");
         printf("  UI Customization:\n");
         printf("    CLAUDE_C_THEME       Optional: Path to Kitty theme file\n\n");
+
+        printf("Interactive Tips:\n");
+        printf("  Ctrl+G to enter Normal mode (vim-style), 'i' to insert\n");
+        printf("  Scroll with j/k (line), Ctrl+D/U (half page), gg/G (top/bottom)\n");
+        printf("  Or use PageUp/PageDown or Arrow keys to scroll\n");
+        printf("  Type /help for commands (e.g., /clear, /exit, /add-dir, /voice)\n");
+        printf("  Press ESC to cancel a running API/tool action\n\n");
         return 0;
     }
 
