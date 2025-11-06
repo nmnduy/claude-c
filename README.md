@@ -144,7 +144,8 @@ export CLAUDE_C_THEME="./colorschemes/dracula.conf"
 
 The interactive mode supports:
 - Multi-turn conversations
-- ESC key interruption: Press ESC to stop the agent during API calls or tool execution
+- **ESC key interruption**: Press ESC to stop the agent during API calls or tool execution
+- **Normal mode navigation**: Press `Ctrl+G` to enter Normal mode for Vim-like scrolling (j/k, Ctrl+D/U, gg/G), press `i` to return to Insert mode
 - Slash commands: `/clear`, `/exit`, `/quit`, `/help`, `/add-dir`, `/voice`
 - Voice input: Use `/voice` to record and transcribe audio (requires PortAudio and OPENAI_API_KEY)
 - Readline-style editing: Ctrl+A, Ctrl+E, Alt+B, Alt+F, etc.
