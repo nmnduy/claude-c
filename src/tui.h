@@ -13,6 +13,7 @@
 #include <stdint.h>
 #include "claude_internal.h"
 #include "todo.h"
+#include "window_manager.h"
 
 // Forward declaration for WINDOW type (not actually used, kept for compatibility)
 typedef struct _win_st WINDOW;
@@ -50,6 +51,12 @@ typedef enum {
 
 // TUI State
 typedef struct {
+    // Centralized window manager (new). When initialized, it owns ncurses windows.
+    WindowManager wm;
+
+    // When non-zero, TUI delegates window lifecycle to WindowManager
+    int use_window_manager;
+
     WINDOW *conv_win;        // Conversation window (top of screen) - now a pad!
     WINDOW *status_win;      // Status window (single-line separator)
     WINDOW *input_win;       // Input window at bottom
