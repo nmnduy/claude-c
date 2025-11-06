@@ -2008,14 +2008,22 @@ int tui_process_input_char(TUIState *tui, int ch, const char *prompt) {
             input->rapid_input_count = 0;  // Reset on submit
             return 1;  // Signal submission
         }
-    } else if (ch == 27) {  // ESC sequence (Alt key combinations or bracketed paste)
+    } else if (ch == 7) {  // Ctrl+G: Enter NORMAL mode
+        tui->mode = TUI_MODE_NORMAL;
+        tui->normal_mode_last_key = 0;
+        if (tui->status_height > 0) {
+            render_status_window(tui);
+        }
+        input_redraw(tui, prompt);
+        return 0;
+    } else if (ch == 27) {  // ESC sequence (Alt key combinations, bracketed paste, or interrupt)
         // Set nodelay to check for following character
         nodelay(tui->input_win, TRUE);
         int next_ch = wgetch(tui->input_win);
         
         LOG_DEBUG("[TUI] ESC sequence detected, next_ch=%d", next_ch);
         
-        // If standalone ESC (no following character), handle based on mode
+        // If standalone ESC (no following character), signal interrupt
         if (next_ch == ERR) {
             nodelay(tui->input_win, FALSE);
             
@@ -2026,13 +2034,7 @@ int tui_process_input_char(TUIState *tui, int ch, const char *prompt) {
                 return 2;  // Signal interrupt
             }
             
-            // In other modes, switch to NORMAL mode
-            tui->mode = TUI_MODE_NORMAL;
-            tui->normal_mode_last_key = 0;
-            if (tui->status_height > 0) {
-                render_status_window(tui);
-            }
-            input_redraw(tui, prompt);
+            // In other modes, also signal interrupt (or ignore)
             return 0;
         }
         
@@ -2422,13 +2424,7 @@ int tui_event_loop(TUIState *tui, const char *prompt,
                         running = 0;
                     }
                 }
-                // Switch to NORMAL mode after interrupt
-                tui->mode = TUI_MODE_NORMAL;
-                tui->normal_mode_last_key = 0;
-                if (tui->status_height > 0) {
-                    render_status_window(tui);
-                }
-                tui_redraw_input(tui, prompt);
+                // Stay in INSERT mode after interrupt (user can press Ctrl+G to enter NORMAL mode if desired)
                 break;  // Stop processing after interrupt
             } else if (result == -1) {
                 // EOF/quit signal
