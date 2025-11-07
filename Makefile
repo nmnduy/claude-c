@@ -120,6 +120,7 @@ TEST_EVENT_LOOP_SRC = tests/test_event_loop.c
 TEST_STUBS_SRC = tests/test_stubs.c
 TEST_MCP_SRC = tests/test_mcp.c
 TEST_WM_SRC = tests/test_window_manager.c
+TEST_CANCEL_FLOW_TARGET = $(BUILD_DIR)/test_cancel_flow
 TEST_BASH_SUMMARY_TARGET = $(BUILD_DIR)/test_bash_summary
 QUERY_TOOL_SRC = tools/query_logs.c
 
@@ -135,7 +136,7 @@ debug: check-deps $(BUILD_DIR)/claude-c-debug
 
 query-tool: check-deps $(QUERY_TOOL)
 
-test: test-edit test-read test-todo test-paste test-timing test-openai-format test-write-diff-integration test-rotation test-patch-parser test-thread-cancel test-aws-cred-rotation test-message-queue test-wrap test-mcp test-wm test-bash-summary
+test: test-edit test-read test-todo test-paste test-timing test-openai-format test-write-diff-integration test-rotation test-patch-parser test-thread-cancel test-aws-cred-rotation test-message-queue test-wrap test-mcp test-wm test-bash-summary test-cancel-flow
 
 test-edit: check-deps $(TEST_EDIT_TARGET)
 	@echo ""
@@ -629,6 +630,25 @@ $(TEST_OPENAI_FORMAT_TARGET): $(TEST_OPENAI_FORMAT_SRC)
 	@echo ""
 	@echo "✓ OpenAI format test build successful!"
 	@echo ""
+
+# Test target for cancel flow -> tool_result formatting
+$(TEST_CANCEL_FLOW_TARGET): $(SRC) tests/test_cancel_flow.c $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(TODO_OBJ) $(PATCH_PARSER_OBJ) $(MESSAGE_QUEUE_OBJ)
+	@mkdir -p $(BUILD_DIR)
+	@echo "Compiling claude.c for cancel flow testing..."
+	@$(CC) $(CFLAGS) -DTEST_BUILD -c -o $(BUILD_DIR)/claude_cancel_flow_test.o $(SRC)
+	@echo "Compiling cancel flow test suite..."
+	@$(CC) $(CFLAGS) -I./src -c -o $(BUILD_DIR)/test_cancel_flow.o tests/test_cancel_flow.c
+	@echo "Linking test executable..."
+	@$(CC) -o $(TEST_CANCEL_FLOW_TARGET) $(BUILD_DIR)/claude_cancel_flow_test.o $(BUILD_DIR)/test_cancel_flow.o $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(TODO_OBJ) $(PATCH_PARSER_OBJ) $(MESSAGE_QUEUE_OBJ) $(LDFLAGS)
+	@echo ""
+	@echo "✓ Cancel flow test build successful!"
+	@echo ""
+
+test-cancel-flow: check-deps $(TEST_CANCEL_FLOW_TARGET)
+	@echo ""
+	@echo "Running cancel flow tests..."
+	@echo ""
+	@./$(TEST_CANCEL_FLOW_TARGET)
 
 # Test target for Write tool diff integration
 $(TEST_WRITE_DIFF_INTEGRATION_TARGET): $(SRC) $(TEST_WRITE_DIFF_INTEGRATION_SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(TODO_OBJ) $(PATCH_PARSER_OBJ) $(MESSAGE_QUEUE_OBJ)

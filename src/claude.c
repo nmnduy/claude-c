@@ -3564,12 +3564,28 @@ static void process_response(ConversationState *state,
         }
 
         int started_threads = 0;
+        int interrupted = 0;  // Track if user requested interruption during scheduling/waiting
 
         for (int i = 0; i < tool_count; i++) {
             // Check for interrupt before starting each tool
             if (state->interrupt_requested) {
-                LOG_INFO("Tool execution interrupted by user request");
+                LOG_INFO("Tool execution interrupted by user request (before starting remaining tools)");
                 ui_show_error(tui, queue, "Tool execution interrupted by user");
+                interrupted = 1;
+
+                // For any tools not yet started, emit a cancelled tool_result so the
+                // conversation remains consistent (every tool_call gets a tool_result)
+                for (int k = i; k < tool_count; k++) {
+                    ToolCall *tcancel = &tool_calls_array[k];
+                    InternalContent *slot = &results[k];
+                    slot->type = INTERNAL_TOOL_RESPONSE;
+                    slot->tool_id = tcancel->id ? strdup(tcancel->id) : strdup("unknown");
+                    slot->tool_name = tcancel->name ? strdup(tcancel->name) : strdup("tool");
+                    cJSON *err = cJSON_CreateObject();
+                    cJSON_AddStringToObject(err, "error", "Tool execution cancelled before start");
+                    slot->tool_output = err;
+                    slot->is_error = 1;
+                }
                 break;  // Stop launching new tools
             }
             
@@ -3638,7 +3654,6 @@ static void process_response(ConversationState *state,
             started_threads++;
         }
 
-        int interrupted = 0;
         if (tracker_initialized && started_threads > 0) {
             while (1) {
                 // Check for interrupt request
@@ -3719,6 +3734,8 @@ static void process_response(ConversationState *state,
             }
         }
 
+        // If interrupted at any point, ensure UI reflects it but continue to add
+        // tool_result messages so the conversation stays consistent.
         if (interrupted) {
             if (!tui && !queue) {
                 if (tool_spinner) {
@@ -3727,11 +3744,6 @@ static void process_response(ConversationState *state,
             } else {
                 ui_set_status(tui, queue, "Interrupted by user (ESC) - tools terminated");
             }
-
-            free(threads);
-            free(args);
-            free_internal_contents(results, tool_count);
-            return;
         }
 
         if (!tui && !queue) {
@@ -3753,6 +3765,8 @@ static void process_response(ConversationState *state,
         free(threads);
         free(args);
 
+        // Record tool results even in the interrupt path so that every tool_call
+        // has a corresponding tool_result. This prevents 400s due to missing results.
         add_tool_results(state, results, tool_count);
 
         // Check if TodoWrite was executed and display the updated TODO list
@@ -3779,23 +3793,26 @@ static void process_response(ConversationState *state,
             }
         }
 
-        Spinner *followup_spinner = NULL;
-        if (!tui && !queue) {
-            followup_spinner = spinner_start("Processing tool results...", SPINNER_CYAN);
-        } else {
-            ui_set_status(tui, queue, "Processing tool results...");
-        }
-        ApiResponse *next_response = call_api(state);
-        if (!tui && !queue) {
-            spinner_stop(followup_spinner, NULL, 1);
-        } else {
-            ui_set_status(tui, queue, "");
+        ApiResponse *next_response = NULL;
+        if (!interrupted) {
+            Spinner *followup_spinner = NULL;
+            if (!tui && !queue) {
+                followup_spinner = spinner_start("Processing tool results...", SPINNER_CYAN);
+            } else {
+                ui_set_status(tui, queue, "Processing tool results...");
+            }
+            next_response = call_api(state);
+            if (!tui && !queue) {
+                spinner_stop(followup_spinner, NULL, 1);
+            } else {
+                ui_set_status(tui, queue, "");
+            }
         }
 
         if (next_response) {
             process_response(state, next_response, tui, queue, worker_ctx);
             api_response_free(next_response);
-        } else {
+        } else if (!interrupted) {
             const char *error_msg = "API call failed after executing tools. Check logs for details.";
             ui_show_error(tui, queue, error_msg);
             LOG_ERROR("API call returned NULL after tool execution");
