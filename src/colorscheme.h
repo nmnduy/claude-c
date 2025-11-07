@@ -47,6 +47,7 @@ typedef struct {
     RGB status_rgb;
     RGB error_rgb;
     RGB header_rgb;
+    RGB tool_rgb;        // Tool tags (magenta/pink)
     RGB diff_add_rgb;    // Added lines (green)
     RGB diff_remove_rgb; // Removed lines (red)
     RGB diff_header_rgb; // Diff metadata (cyan)
@@ -142,7 +143,7 @@ static int get_colorscheme_color(ColorschemeElement element, char *buf, size_t b
             rgb = g_theme.assistant_rgb;
             break;
         case COLORSCHEME_TOOL:
-            rgb = g_theme.status_rgb;  // Use status color for tools
+            rgb = g_theme.tool_rgb;  // Use tool color (magenta/pink)
             break;
         case COLORSCHEME_ERROR:
             rgb = g_theme.error_rgb;
@@ -190,7 +191,7 @@ static int load_kitty_theme_buf(const char *buf_data, Theme *theme) {
     char line[1024];
     int line_num = 0; (void)line_num;
     int parsed_count = 0;
-    int found_foreground = 0, found_color1 = 0, found_color2 = 0, found_color3 = 0, found_color6 = 0;
+    int found_foreground = 0, found_color1 = 0, found_color2 = 0, found_color3 = 0, found_color5 = 0, found_color6 = 0;
     while (fgets(line, sizeof(line), f)) {
         line_num++;
         size_t len = strlen(line);
@@ -209,6 +210,8 @@ static int load_kitty_theme_buf(const char *buf_data, Theme *theme) {
                 theme->user_rgb = rgb; parsed_count++; found_color2 = 1;
             } else if (strcmp(key, "color3") == 0) {
                 theme->status_rgb = rgb; parsed_count++; found_color3 = 1;
+            } else if (strcmp(key, "color5") == 0) {
+                theme->tool_rgb = rgb; parsed_count++; found_color5 = 1;
             } else if (strcmp(key, "color1") == 0) {
                 theme->error_rgb = rgb; parsed_count++; found_color1 = 1;
             } else if (strcmp(key, "color6") == 0) {
@@ -258,6 +261,7 @@ static int load_kitty_theme(const char *filepath, Theme *theme) {
     int found_color1 = 0;  // red (errors)
     int found_color2 = 0;  // green (user)
     int found_color3 = 0;  // yellow (status)
+    int found_color5 = 0;  // magenta (tool tags)
     int found_color6 = 0;  // cyan (headers/assistant fallback)
 
     while (fgets(line, sizeof(line), f)) {
@@ -302,6 +306,12 @@ static int load_kitty_theme(const char *filepath, Theme *theme) {
                 parsed_count++;
                 found_color3 = 1;
                 LOG_DEBUG("[THEME]   -> Set status_rgb = RGB(%d,%d,%d)", rgb.r, rgb.g, rgb.b);
+            }
+            else if (strcmp(key, "color5") == 0) {
+                theme->tool_rgb = rgb;
+                parsed_count++;
+                found_color5 = 1;
+                LOG_DEBUG("[THEME]   -> Set tool_rgb = RGB(%d,%d,%d)", rgb.r, rgb.g, rgb.b);
             }
             else if (strcmp(key, "color1") == 0) {
                 theme->error_rgb = rgb;

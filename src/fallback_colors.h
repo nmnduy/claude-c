@@ -25,8 +25,8 @@
 // Assistant messages - Blue (standard terminal color)
 #define ANSI_FALLBACK_ASSISTANT "\033[34m"
 
-// Tool execution - Yellow (standard terminal color)
-#define ANSI_FALLBACK_TOOL "\033[33m"
+// Tool execution - Magenta (distinct from assistant cyan)
+#define ANSI_FALLBACK_TOOL "\033[35m"
 
 // Error messages - Red (standard terminal color)
 #define ANSI_FALLBACK_ERROR "\033[31m"

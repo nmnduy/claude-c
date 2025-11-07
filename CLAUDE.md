@@ -18,7 +18,8 @@ Project instructions for Claude Code when working with this codebase.
 
 **Current tasks**: `./todo.md`
 **Main implementation**: `src/claude.c` (core agent loop, API calls)
-**Tools**: `src/tool_*.c` (Bash, Read, Write, Edit, Glob, Grep)
+**Tools**: Built-in tools in `src/claude.c`, MCP support in `src/mcp.h`, `src/mcp.c`
+**MCP integration**: `docs/mcp.md` (external tool servers)
 **TODO system**: `src/todo.h`, `src/todo.c`
 **TUI & Normal Mode**: `src/tui.h`, `src/tui.c`, `docs/normal-mode.md`
 **Color themes**: `src/colorscheme.h`, `colorschemes/*.conf`
@@ -86,7 +87,9 @@ export OPENAI_API_KEY="your-api-key"
   - `CLAUDE_C_DB_MAX_RECORDS` - Keep last N records (default: 1000, 0=unlimited)
   - `CLAUDE_C_DB_MAX_SIZE_MB` - Max database size in MB (default: 100, 0=unlimited)
   - `CLAUDE_C_DB_AUTO_ROTATE` - Enable auto-rotation (default: 1, set to 0 to disable)
+- **Tools**: `CLAUDE_C_GREP_MAX_RESULTS` - Max grep results (default: 100)
 - **Theme**: `CLAUDE_C_THEME` pointing to Kitty .conf file
+- **MCP**: `CLAUDE_MCP_ENABLED=1` to enable, `CLAUDE_MCP_CONFIG` for config path
 
 **Defaults:**
 - Logs: `./.claude-c/logs/claude.log` (project-local)
@@ -137,6 +140,39 @@ export CLAUDE_C_THEME="./colorschemes/dracula.conf"
 - Part of `ConversationState` structure
 - Rendered via `tui_render_todo_list()`
 - Run tests: `make test-todo`
+
+## MCP (Model Context Protocol)
+
+**Purpose**: Connect to external servers for additional resources
+**Implementation**: `src/mcp.h`, `src/mcp.c`
+**Documentation**: `docs/mcp.md`
+**Example config**: `examples/mcp_servers.json`
+
+**Key features:**
+- Multiple server support (stdio transport)
+- Resource-based access (list/read operations)
+- Compatible with Claude Desktop config format
+- Matches TypeScript Claude Code implementation
+
+**Quick start:**
+```bash
+export CLAUDE_MCP_ENABLED=1
+mkdir -p ~/.config/claude-c
+cp examples/mcp_servers.json ~/.config/claude-c/
+./build/claude-c
+```
+
+**Configuration**: `~/.config/claude-c/mcp_servers.json`
+- Server definitions with command, args, and environment
+- See `docs/mcp.md` for details and available servers
+
+**Tools provided:**
+- `ListMcpResources` - List available resources from MCP servers (with optional server filter)
+- `ReadMcpResource` - Read a specific resource by server name and URI
+
+**Usage:**
+- Resources include metadata: server, uri, name, description, mimeType
+- Supports text-based resources (binary blob support planned)
 
 ## Context Building
 

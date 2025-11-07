@@ -4,8 +4,8 @@ CC ?= gcc
 CLANG = clang
 CFLAGS = -Werror -Wall -Wextra -Wpedantic -Wformat=2 -Wconversion -Wshadow -Wcast-qual -Wcast-align -Wstrict-prototypes -Wmissing-prototypes -Wmissing-declarations -Wuninitialized -Warray-bounds -Wvla -Wwrite-strings -Wnull-dereference -Wimplicit-fallthrough -Wsign-conversion -Wsign-compare -Wfloat-equal -Wpointer-arith -Wbad-function-cast -Wstrict-overflow -Waggregate-return -Wredundant-decls -Wnested-externs -Winline -Wswitch-enum -Wswitch-default -Wenum-conversion -Wdisabled-optimization -O2 -std=c11 -D_POSIX_C_SOURCE=200809L -D_DEFAULT_SOURCE=1 -Wno-aggregate-return $(SANITIZERS)
 DEBUG_CFLAGS = -Werror -Wall -Wextra -Wpedantic -Wformat=2 -Wconversion -Wshadow -Wcast-qual -Wcast-align -Wstrict-prototypes -Wmissing-prototypes -Wmissing-declarations -Wuninitialized -Warray-bounds -Wvla -Wwrite-strings -Wnull-dereference -Wimplicit-fallthrough -Wsign-conversion -Wsign-compare -Wfloat-equal -Wpointer-arith -Wbad-function-cast -Wstrict-overflow -Waggregate-return -Wredundant-decls -Wnested-externs -Winline -Wswitch-enum -Wswitch-default -Wenum-conversion -Wdisabled-optimization -g -O0 -std=c11 -D_POSIX_C_SOURCE=200809L -D_DEFAULT_SOURCE=1 -fsanitize=address -fno-omit-frame-pointer
-LDFLAGS = -lcurl -lpthread -lsqlite3 -lssl -lcrypto -lncurses $(SANITIZERS)
-DEBUG_LDFLAGS = -lcurl -lpthread -lsqlite3 -lssl -lcrypto -lncurses -fsanitize=address
+LDFLAGS = -lcurl -lpthread -lsqlite3 -lssl -lcrypto -lncurses -lportaudio $(SANITIZERS)
+DEBUG_LDFLAGS = -lcurl -lpthread -lsqlite3 -lssl -lcrypto -lncurses -lportaudio -fsanitize=address
 
 # Installation prefix (can be overridden via command line)
 INSTALL_PREFIX ?= $(HOME)/.local
@@ -59,6 +59,8 @@ TEST_AWS_CRED_ROTATION_TARGET = $(BUILD_DIR)/test_aws_credential_rotation
 TEST_MESSAGE_QUEUE_TARGET = $(BUILD_DIR)/test_message_queue
 TEST_EVENT_LOOP_TARGET = $(BUILD_DIR)/test_event_loop
 TEST_TEXT_WRAP_TARGET = $(BUILD_DIR)/test_text_wrap
+TEST_MCP_TARGET = $(BUILD_DIR)/test_mcp
+TEST_WM_TARGET = $(BUILD_DIR)/test_window_manager
 QUERY_TOOL = $(BUILD_DIR)/query_logs
 SRC = src/claude.c
 LOGGER_SRC = src/logger.c
@@ -93,6 +95,14 @@ MESSAGE_QUEUE_SRC = src/message_queue.c
 MESSAGE_QUEUE_OBJ = $(BUILD_DIR)/message_queue.o
 AI_WORKER_SRC = src/ai_worker.c
 AI_WORKER_OBJ = $(BUILD_DIR)/ai_worker.o
+VOICE_INPUT_SRC = src/voice_input.c
+VOICE_INPUT_OBJ = $(BUILD_DIR)/voice_input.o
+MCP_SRC = src/mcp.c
+MCP_OBJ = $(BUILD_DIR)/mcp.o
+WINDOW_MANAGER_SRC = src/window_manager.c
+WINDOW_MANAGER_OBJ = $(BUILD_DIR)/window_manager.o
+TOOL_UTILS_SRC = src/tool_utils.c
+TOOL_UTILS_OBJ = $(BUILD_DIR)/tool_utils.o
 TEST_EDIT_SRC = tests/test_edit.c
 TEST_READ_SRC = tests/test_read.c
 TEST_TODO_SRC = tests/test_todo.c
@@ -108,9 +118,13 @@ TEST_AWS_CRED_ROTATION_SRC = tests/test_aws_credential_rotation.c
 TEST_MESSAGE_QUEUE_SRC = tests/test_message_queue.c
 TEST_EVENT_LOOP_SRC = tests/test_event_loop.c
 TEST_STUBS_SRC = tests/test_stubs.c
+TEST_MCP_SRC = tests/test_mcp.c
+TEST_WM_SRC = tests/test_window_manager.c
+TEST_CANCEL_FLOW_TARGET = $(BUILD_DIR)/test_cancel_flow
+TEST_BASH_SUMMARY_TARGET = $(BUILD_DIR)/test_bash_summary
 QUERY_TOOL_SRC = tools/query_logs.c
 
-.PHONY: all clean check-deps install test test-edit test-read test-todo test-todo-write test-paste test-retry-jitter test-openai-format test-write-diff-integration test-rotation test-patch-parser test-thread-cancel test-aws-cred-rotation test-message-queue test-event-loop test-wrap query-tool debug analyze sanitize-ub sanitize-all sanitize-leak valgrind memscan version show-version update-version bump-version bump-patch build clang ci-test ci-gcc ci-clang ci-gcc-sanitize ci-clang-sanitize ci-all fmt-whitespace
+.PHONY: all clean check-deps install test test-edit test-read test-todo test-todo-write test-paste test-retry-jitter test-openai-format test-write-diff-integration test-rotation test-patch-parser test-thread-cancel test-aws-cred-rotation test-message-queue test-event-loop test-wrap test-mcp test-bash-summary query-tool debug analyze sanitize-ub sanitize-all sanitize-leak valgrind memscan version show-version update-version bump-version bump-patch build clang ci-test ci-gcc ci-clang ci-gcc-sanitize ci-clang-sanitize ci-all fmt-whitespace
 
 all: check-deps $(TARGET)
 
@@ -122,7 +136,7 @@ debug: check-deps $(BUILD_DIR)/claude-c-debug
 
 query-tool: check-deps $(QUERY_TOOL)
 
-test: test-edit test-read test-todo test-paste test-timing test-openai-format test-write-diff-integration test-rotation test-patch-parser test-thread-cancel test-aws-cred-rotation test-message-queue test-wrap
+test: test-edit test-read test-todo test-paste test-timing test-openai-format test-write-diff-integration test-rotation test-patch-parser test-thread-cancel test-aws-cred-rotation test-message-queue test-wrap test-mcp test-wm test-bash-summary test-cancel-flow
 
 test-edit: check-deps $(TEST_EDIT_TARGET)
 	@echo ""
@@ -221,9 +235,21 @@ test-wrap: check-deps $(TEST_TEXT_WRAP_TARGET)
 	@echo ""
 	@./$(TEST_TEXT_WRAP_TARGET)
 
-$(TARGET): $(SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(COMMANDS_OBJ) $(COMPLETION_OBJ) $(TUI_OBJ) $(TODO_OBJ) $(AWS_BEDROCK_OBJ) $(PROVIDER_OBJ) $(OPENAI_PROVIDER_OBJ) $(OPENAI_MESSAGES_OBJ) $(BEDROCK_PROVIDER_OBJ) $(BUILTIN_THEMES_OBJ) $(PATCH_PARSER_OBJ) $(MESSAGE_QUEUE_OBJ) $(AI_WORKER_OBJ) $(VERSION_H)
+test-mcp: check-deps $(TEST_MCP_TARGET)
+	@echo ""
+	@echo "Running MCP integration tests..."
+	@echo ""
+	@./$(TEST_MCP_TARGET)
+
+test-wm: check-deps $(TEST_WM_TARGET)
+	@echo ""
+	@echo "Running Window Manager tests..."
+	@echo ""
+	@./$(TEST_WM_TARGET)
+
+$(TARGET): $(SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(COMMANDS_OBJ) $(COMPLETION_OBJ) $(TUI_OBJ) $(WINDOW_MANAGER_OBJ) $(TODO_OBJ) $(AWS_BEDROCK_OBJ) $(PROVIDER_OBJ) $(OPENAI_PROVIDER_OBJ) $(OPENAI_MESSAGES_OBJ) $(BEDROCK_PROVIDER_OBJ) $(BUILTIN_THEMES_OBJ) $(PATCH_PARSER_OBJ) $(MESSAGE_QUEUE_OBJ) $(AI_WORKER_OBJ) $(VOICE_INPUT_OBJ) $(MCP_OBJ) $(TOOL_UTILS_OBJ) $(VERSION_H)
 	@mkdir -p $(BUILD_DIR)
-	$(CC) $(CFLAGS) -o $(TARGET) $(SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(COMMANDS_OBJ) $(COMPLETION_OBJ) $(TUI_OBJ) $(TODO_OBJ) $(AWS_BEDROCK_OBJ) $(PROVIDER_OBJ) $(OPENAI_PROVIDER_OBJ) $(OPENAI_MESSAGES_OBJ) $(BEDROCK_PROVIDER_OBJ) $(BUILTIN_THEMES_OBJ) $(PATCH_PARSER_OBJ) $(MESSAGE_QUEUE_OBJ) $(AI_WORKER_OBJ) $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $(TARGET) $(SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(COMMANDS_OBJ) $(COMPLETION_OBJ) $(TUI_OBJ) $(WINDOW_MANAGER_OBJ) $(TODO_OBJ) $(AWS_BEDROCK_OBJ) $(PROVIDER_OBJ) $(OPENAI_PROVIDER_OBJ) $(OPENAI_MESSAGES_OBJ) $(BEDROCK_PROVIDER_OBJ) $(BUILTIN_THEMES_OBJ) $(PATCH_PARSER_OBJ) $(MESSAGE_QUEUE_OBJ) $(AI_WORKER_OBJ) $(VOICE_INPUT_OBJ) $(MCP_OBJ) $(TOOL_UTILS_OBJ) $(LDFLAGS)
 	@echo ""
 	@echo "✓ Build successful!"
 	@echo "Version: $(VERSION)"
@@ -275,7 +301,7 @@ $(VERSION_H): $(VERSION_FILE)
 	@echo "✓ Version: $(VERSION)"
 
 # Debug build with AddressSanitizer for finding memory bugs
-$(BUILD_DIR)/claude-c-debug: $(SRC) $(LOGGER_SRC) $(PERSISTENCE_SRC) $(MIGRATIONS_SRC) $(COMMANDS_SRC) $(COMPLETION_SRC) $(TUI_SRC) $(TODO_SRC) $(AWS_BEDROCK_SRC) $(PROVIDER_SRC) $(OPENAI_PROVIDER_SRC) $(OPENAI_MESSAGES_SRC) $(BEDROCK_PROVIDER_SRC) $(BUILTIN_THEMES_SRC) $(PATCH_PARSER_SRC) $(MESSAGE_QUEUE_SRC) $(AI_WORKER_SRC)
+$(BUILD_DIR)/claude-c-debug: $(SRC) $(LOGGER_SRC) $(PERSISTENCE_SRC) $(MIGRATIONS_SRC) $(COMMANDS_SRC) $(COMPLETION_SRC) $(TUI_SRC) $(TODO_SRC) $(AWS_BEDROCK_SRC) $(PROVIDER_SRC) $(OPENAI_PROVIDER_SRC) $(OPENAI_MESSAGES_SRC) $(BEDROCK_PROVIDER_SRC) $(BUILTIN_THEMES_SRC) $(PATCH_PARSER_SRC) $(MESSAGE_QUEUE_SRC) $(AI_WORKER_SRC) $(VOICE_INPUT_SRC) $(MCP_SRC) $(TOOL_UTILS_SRC)
 	@mkdir -p $(BUILD_DIR)
 	@echo "Building with AddressSanitizer (debug mode)..."
 	$(CC) $(DEBUG_CFLAGS) -c -o $(BUILD_DIR)/logger_debug.o $(LOGGER_SRC)
@@ -294,7 +320,9 @@ $(BUILD_DIR)/claude-c-debug: $(SRC) $(LOGGER_SRC) $(PERSISTENCE_SRC) $(MIGRATION
 	$(CC) $(DEBUG_CFLAGS) -c -o $(BUILD_DIR)/patch_parser_debug.o $(PATCH_PARSER_SRC)
 	$(CC) $(DEBUG_CFLAGS) -c -o $(BUILD_DIR)/message_queue_debug.o $(MESSAGE_QUEUE_SRC)
 	$(CC) $(DEBUG_CFLAGS) -c -o $(BUILD_DIR)/ai_worker_debug.o $(AI_WORKER_SRC)
-	$(CC) $(DEBUG_CFLAGS) -o $(BUILD_DIR)/claude-c-debug $(SRC) $(BUILD_DIR)/logger_debug.o $(BUILD_DIR)/persistence_debug.o $(BUILD_DIR)/migrations_debug.o $(BUILD_DIR)/commands_debug.o $(BUILD_DIR)/completion_debug.o $(BUILD_DIR)/tui_debug.o $(BUILD_DIR)/todo_debug.o $(BUILD_DIR)/aws_bedrock_debug.o $(BUILD_DIR)/provider_debug.o $(BUILD_DIR)/openai_provider_debug.o $(BUILD_DIR)/openai_messages_debug.o $(BUILD_DIR)/bedrock_provider_debug.o $(BUILD_DIR)/builtin_themes_debug.o $(BUILD_DIR)/patch_parser_debug.o $(BUILD_DIR)/message_queue_debug.o $(BUILD_DIR)/ai_worker_debug.o $(DEBUG_LDFLAGS)
+	$(CC) $(DEBUG_CFLAGS) -c -o $(BUILD_DIR)/voice_input_debug.o $(VOICE_INPUT_SRC)
+	$(CC) $(DEBUG_CFLAGS) -c -o $(BUILD_DIR)/mcp_debug.o $(MCP_SRC)
+	$(CC) $(DEBUG_CFLAGS) -o $(BUILD_DIR)/claude-c-debug $(SRC) $(BUILD_DIR)/logger_debug.o $(BUILD_DIR)/persistence_debug.o $(BUILD_DIR)/migrations_debug.o $(BUILD_DIR)/commands_debug.o $(BUILD_DIR)/completion_debug.o $(BUILD_DIR)/tui_debug.o $(BUILD_DIR)/todo_debug.o $(BUILD_DIR)/aws_bedrock_debug.o $(BUILD_DIR)/provider_debug.o $(BUILD_DIR)/openai_provider_debug.o $(BUILD_DIR)/openai_messages_debug.o $(BUILD_DIR)/bedrock_provider_debug.o $(BUILD_DIR)/builtin_themes_debug.o $(BUILD_DIR)/patch_parser_debug.o $(BUILD_DIR)/message_queue_debug.o $(BUILD_DIR)/ai_worker_debug.o $(BUILD_DIR)/voice_input_debug.o $(BUILD_DIR)/mcp_debug.o $(TOOL_UTILS_SRC) $(DEBUG_LDFLAGS)
 	@echo ""
 	@echo "✓ Debug build successful with AddressSanitizer!"
 	@echo "Run: ./$(BUILD_DIR)/claude-c-debug \"your prompt here\""
@@ -307,10 +335,10 @@ $(BUILD_DIR)/claude-c-debug: $(SRC) $(LOGGER_SRC) $(PERSISTENCE_SRC) $(MIGRATION
 	@echo ""
 
 # Build with clang compiler
-$(BUILD_DIR)/claude-c-clang: $(SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(COMMANDS_OBJ) $(COMPLETION_OBJ) $(TUI_OBJ) $(TODO_OBJ) $(AWS_BEDROCK_OBJ) $(PROVIDER_OBJ) $(OPENAI_PROVIDER_OBJ) $(OPENAI_MESSAGES_OBJ) $(BEDROCK_PROVIDER_OBJ) $(BUILTIN_THEMES_OBJ) $(PATCH_PARSER_OBJ) $(AI_WORKER_OBJ) $(MESSAGE_QUEUE_OBJ) $(VERSION_H)
+$(BUILD_DIR)/claude-c-clang: $(SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(COMMANDS_OBJ) $(COMPLETION_OBJ) $(TUI_OBJ) $(WINDOW_MANAGER_OBJ) $(TODO_OBJ) $(AWS_BEDROCK_OBJ) $(PROVIDER_OBJ) $(OPENAI_PROVIDER_OBJ) $(OPENAI_MESSAGES_OBJ) $(BEDROCK_PROVIDER_OBJ) $(BUILTIN_THEMES_OBJ) $(PATCH_PARSER_OBJ) $(AI_WORKER_OBJ) $(MESSAGE_QUEUE_OBJ) $(VOICE_INPUT_OBJ) $(MCP_OBJ) $(TOOL_UTILS_SRC) $(VERSION_H)
 	@mkdir -p $(BUILD_DIR)
 	@echo "Building with clang compiler..."
-	$(CLANG) $(CFLAGS) -o $(BUILD_DIR)/claude-c-clang $(SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(COMMANDS_OBJ) $(COMPLETION_OBJ) $(TUI_OBJ) $(TODO_OBJ) $(AWS_BEDROCK_OBJ) $(PROVIDER_OBJ) $(OPENAI_PROVIDER_OBJ) $(OPENAI_MESSAGES_OBJ) $(BEDROCK_PROVIDER_OBJ) $(BUILTIN_THEMES_OBJ) $(PATCH_PARSER_OBJ) $(MESSAGE_QUEUE_OBJ) $(AI_WORKER_OBJ) $(LDFLAGS)
+	$(CLANG) $(CFLAGS) -o $(BUILD_DIR)/claude-c-clang $(SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(COMMANDS_OBJ) $(COMPLETION_OBJ) $(TUI_OBJ) $(WINDOW_MANAGER_OBJ) $(TODO_OBJ) $(AWS_BEDROCK_OBJ) $(PROVIDER_OBJ) $(OPENAI_PROVIDER_OBJ) $(OPENAI_MESSAGES_OBJ) $(BEDROCK_PROVIDER_OBJ) $(BUILTIN_THEMES_OBJ) $(PATCH_PARSER_OBJ) $(MESSAGE_QUEUE_OBJ) $(AI_WORKER_OBJ) $(VOICE_INPUT_OBJ) $(MCP_OBJ) $(TOOL_UTILS_SRC) $(LDFLAGS)
 	@echo ""
 	@echo "✓ Clang build successful!"
 	@echo "Version: $(VERSION)"
@@ -435,9 +463,21 @@ $(TUI_OBJ): $(TUI_SRC) src/tui.h src/claude_internal.h
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c -o $(TUI_OBJ) $(TUI_SRC)
 
+
+$(WINDOW_MANAGER_OBJ): $(WINDOW_MANAGER_SRC) src/window_manager.h src/logger.h
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c -o $(WINDOW_MANAGER_OBJ) $(WINDOW_MANAGER_SRC)
 $(AI_WORKER_OBJ): $(AI_WORKER_SRC) src/ai_worker.h src/message_queue.h src/claude_internal.h
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c -o $(AI_WORKER_OBJ) $(AI_WORKER_SRC)
+
+$(VOICE_INPUT_OBJ): $(VOICE_INPUT_SRC) src/voice_input.h src/logger.h
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c -o $(VOICE_INPUT_OBJ) $(VOICE_INPUT_SRC)
+
+$(MCP_OBJ): $(MCP_SRC) src/mcp.h src/logger.h
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c -o $(MCP_OBJ) $(MCP_SRC)
 
 $(TODO_OBJ): $(TODO_SRC) src/todo.h
 	@mkdir -p $(BUILD_DIR)
@@ -475,6 +515,10 @@ $(MESSAGE_QUEUE_OBJ): $(MESSAGE_QUEUE_SRC) src/message_queue.h
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c -o $(MESSAGE_QUEUE_OBJ) $(MESSAGE_QUEUE_SRC)
 
+$(TOOL_UTILS_OBJ): $(TOOL_UTILS_SRC) src/tool_utils.h
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c -o $(TOOL_UTILS_OBJ) $(TOOL_UTILS_SRC)
+
 # Query tool - utility to inspect API call logs
 $(QUERY_TOOL): $(QUERY_TOOL_SRC) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ)
 	@mkdir -p $(BUILD_DIR)
@@ -483,6 +527,17 @@ $(QUERY_TOOL): $(QUERY_TOOL_SRC) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ)
 	@echo ""
 	@echo "✓ Query tool built successfully!"
 	@echo "Run: ./$(QUERY_TOOL) --help"
+	@echo ""
+
+# Test target for Window Manager - layout and pad capacity behavior
+$(TEST_WM_TARGET): $(TEST_WM_SRC) $(WINDOW_MANAGER_OBJ) $(LOGGER_OBJ)
+	@mkdir -p $(BUILD_DIR)
+	@echo "Compiling Window Manager tests..."
+	@$(CC) $(CFLAGS) -c -o $(BUILD_DIR)/test_window_manager.o $(TEST_WM_SRC)
+	@echo "Linking Window Manager test executable..."
+	@$(CC) -o $(TEST_WM_TARGET) $(BUILD_DIR)/test_window_manager.o $(WINDOW_MANAGER_OBJ) $(LOGGER_OBJ) $(LDFLAGS)
+	@echo ""
+	@echo "✓ Window Manager test build successful!"
 	@echo ""
 
 # Test target for Edit tool - compiles test suite with claude.c functions
@@ -576,15 +631,35 @@ $(TEST_OPENAI_FORMAT_TARGET): $(TEST_OPENAI_FORMAT_SRC)
 	@echo "✓ OpenAI format test build successful!"
 	@echo ""
 
+# Test target for cancel flow -> tool_result formatting
+$(TEST_CANCEL_FLOW_TARGET): $(SRC) tests/test_cancel_flow.c $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(TODO_OBJ) $(PATCH_PARSER_OBJ) $(MESSAGE_QUEUE_OBJ)
+	@mkdir -p $(BUILD_DIR)
+	@echo "Compiling claude.c for cancel flow testing..."
+	@$(CC) $(CFLAGS) -DTEST_BUILD -c -o $(BUILD_DIR)/claude_cancel_flow_test.o $(SRC)
+	@echo "Compiling cancel flow test suite..."
+	@$(CC) $(CFLAGS) -I./src -c -o $(BUILD_DIR)/test_cancel_flow.o tests/test_cancel_flow.c
+	@echo "Linking test executable..."
+	@$(CC) -o $(TEST_CANCEL_FLOW_TARGET) $(BUILD_DIR)/claude_cancel_flow_test.o $(BUILD_DIR)/test_cancel_flow.o $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(TODO_OBJ) $(PATCH_PARSER_OBJ) $(MESSAGE_QUEUE_OBJ) $(LDFLAGS)
+	@echo ""
+	@echo "✓ Cancel flow test build successful!"
+	@echo ""
+
+test-cancel-flow: check-deps $(TEST_CANCEL_FLOW_TARGET)
+	@echo ""
+	@echo "Running cancel flow tests..."
+	@echo ""
+	@./$(TEST_CANCEL_FLOW_TARGET)
+
 # Test target for Write tool diff integration
 $(TEST_WRITE_DIFF_INTEGRATION_TARGET): $(SRC) $(TEST_WRITE_DIFF_INTEGRATION_SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(TODO_OBJ) $(PATCH_PARSER_OBJ) $(MESSAGE_QUEUE_OBJ)
 	@mkdir -p $(BUILD_DIR)
 	@echo "Compiling claude.c for write diff testing..."
 	@$(CC) $(CFLAGS) -DTEST_BUILD -c -o $(BUILD_DIR)/claude_write_diff_test.o $(SRC)
+	@$(CC) $(CFLAGS) -c -o $(BUILD_DIR)/tool_utils_test.o $(TOOL_UTILS_SRC)
 	@echo "Compiling Write tool diff integration test suite..."
 	@$(CC) $(CFLAGS) -c -o $(BUILD_DIR)/test_write_diff_integration.o $(TEST_WRITE_DIFF_INTEGRATION_SRC)
 	@echo "Linking test executable..."
-	@$(CC) -o $(TEST_WRITE_DIFF_INTEGRATION_TARGET) $(BUILD_DIR)/claude_write_diff_test.o $(BUILD_DIR)/test_write_diff_integration.o $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(TODO_OBJ) $(PATCH_PARSER_OBJ) $(MESSAGE_QUEUE_OBJ) $(LDFLAGS)
+	@$(CC) -o $(TEST_WRITE_DIFF_INTEGRATION_TARGET) $(BUILD_DIR)/claude_write_diff_test.o $(BUILD_DIR)/tool_utils_test.o $(BUILD_DIR)/test_write_diff_integration.o $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(TODO_OBJ) $(PATCH_PARSER_OBJ) $(MESSAGE_QUEUE_OBJ) $(LDFLAGS)
 	@echo ""
 	@echo "✓ Write tool diff integration test build successful!"
 	@echo ""
@@ -603,10 +678,11 @@ $(TEST_PATCH_PARSER_TARGET): $(SRC) $(TEST_PATCH_PARSER_SRC) $(LOGGER_OBJ) $(PER
 	@mkdir -p $(BUILD_DIR)
 	@echo "Compiling claude.c for patch parser testing..."
 	@$(CC) $(CFLAGS) -DTEST_BUILD -c -o $(BUILD_DIR)/claude_patch_test.o $(SRC)
+	@$(CC) $(CFLAGS) -c -o $(BUILD_DIR)/tool_utils_patch_test.o $(TOOL_UTILS_SRC)
 	@echo "Compiling Patch Parser test suite..."
 	@$(CC) $(CFLAGS) -c -o $(BUILD_DIR)/test_patch_parser.o $(TEST_PATCH_PARSER_SRC)
 	@echo "Linking test executable..."
-	@$(CC) -o $(TEST_PATCH_PARSER_TARGET) $(BUILD_DIR)/claude_patch_test.o $(BUILD_DIR)/test_patch_parser.o $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(TODO_OBJ) $(PATCH_PARSER_OBJ) $(MESSAGE_QUEUE_OBJ) $(LDFLAGS)
+	@$(CC) -o $(TEST_PATCH_PARSER_TARGET) $(BUILD_DIR)/claude_patch_test.o $(BUILD_DIR)/tool_utils_patch_test.o $(BUILD_DIR)/test_patch_parser.o $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(TODO_OBJ) $(PATCH_PARSER_OBJ) $(MESSAGE_QUEUE_OBJ) $(LDFLAGS)
 	@echo ""
 	@echo "✓ Patch Parser test build successful!"
 	@echo ""
@@ -638,7 +714,7 @@ $(TEST_MESSAGE_QUEUE_TARGET): $(TEST_MESSAGE_QUEUE_SRC) $(MESSAGE_QUEUE_OBJ) $(L
 	@echo "✓ Message Queue test build successful!"
 	@echo ""
 
-$(TEST_EVENT_LOOP_TARGET): $(TEST_EVENT_LOOP_SRC) $(TEST_STUBS_SRC) $(TUI_OBJ) $(MESSAGE_QUEUE_OBJ) $(LOGGER_OBJ) $(TODO_OBJ) $(BUILTIN_THEMES_OBJ) $(PATCH_PARSER_OBJ)
+$(TEST_EVENT_LOOP_TARGET): $(TEST_EVENT_LOOP_SRC) $(TEST_STUBS_SRC) $(TUI_OBJ) $(WINDOW_MANAGER_OBJ) $(MESSAGE_QUEUE_OBJ) $(LOGGER_OBJ) $(TODO_OBJ) $(BUILTIN_THEMES_OBJ) $(PATCH_PARSER_OBJ)
 	@mkdir -p $(BUILD_DIR)
 	@echo "Compiling Event Loop test..."
 	@$(CC) $(CFLAGS) -Wno-unused-function -o $(TEST_EVENT_LOOP_TARGET) $(TEST_EVENT_LOOP_SRC) $(TEST_STUBS_SRC) $(TUI_OBJ) $(MESSAGE_QUEUE_OBJ) $(LOGGER_OBJ) $(TODO_OBJ) $(BUILTIN_THEMES_OBJ) $(PATCH_PARSER_OBJ) $(LDFLAGS)
@@ -652,6 +728,14 @@ $(TEST_TEXT_WRAP_TARGET): tests/test_text_wrap.c
 	@$(CC) -Wall -Wextra -O0 -g -o $(TEST_TEXT_WRAP_TARGET) tests/test_text_wrap.c -I./src
 	@echo ""
 	@echo "✓ Text Wrapping test build successful!"
+	@echo ""
+
+$(TEST_MCP_TARGET): $(TEST_MCP_SRC) $(MCP_OBJ)
+	@mkdir -p $(BUILD_DIR)
+	@echo "Compiling MCP integration tests..."
+	@$(CC) $(CFLAGS) -o $(TEST_MCP_TARGET) $(TEST_MCP_SRC) $(MCP_OBJ) $(LDFLAGS)
+	@echo ""
+	@echo "✓ MCP test build successful!"
 	@echo ""
 
 install: $(TARGET)
@@ -911,3 +995,18 @@ ci-test: ci-gcc ci-clang-sanitize
 	@echo ""
 	@echo "For full CI coverage, run: make ci-all"
 	@echo ""
+# Test target for Bash command summarization
+$(TEST_BASH_SUMMARY_TARGET): tests/test_bash_summary.c $(TOOL_UTILS_OBJ)
+	@mkdir -p $(BUILD_DIR)
+	@echo "Compiling Bash summary tests..."
+	@$(CC) $(CFLAGS) -c -o $(TOOL_UTILS_OBJ) $(TOOL_UTILS_SRC)
+	@$(CC) $(CFLAGS) -o $(TEST_BASH_SUMMARY_TARGET) tests/test_bash_summary.c $(TOOL_UTILS_OBJ)
+	@echo ""
+	@echo "✓ Bash summary test build successful!"
+	@echo ""
+
+test-bash-summary: $(TEST_BASH_SUMMARY_TARGET)
+	@echo ""
+	@echo "Running Bash summary tests..."
+	@echo ""
+	@./$(TEST_BASH_SUMMARY_TARGET)

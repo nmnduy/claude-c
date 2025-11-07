@@ -45,6 +45,22 @@ static volatile sig_atomic_t g_resize_flag = 0;
 #define NCURSES_PAIR_STATUS 4
 #define NCURSES_PAIR_ERROR 5
 #define NCURSES_PAIR_PROMPT 6
+#define NCURSES_PAIR_TODO_COMPLETED 7
+#define NCURSES_PAIR_TODO_IN_PROGRESS 8
+#define NCURSES_PAIR_TODO_PENDING 9
+// Dedicated tool color pair (separate from STATUS)
+#define NCURSES_PAIR_TOOL 10
+
+// Validate TUI window state (debug builds)
+// Uses ncurses is_pad() function to check window types
+static void validate_tui_windows(TUIState *tui) {
+#ifdef DEBUG
+    if (!tui) return;
+    window_manager_validate(&tui->wm);
+#else
+    (void)tui;
+#endif
+}
 
 // Signal handler for window resize
 #ifdef SIGWINCH
@@ -80,15 +96,15 @@ static uint64_t status_spinner_interval_ns(void) {
 }
 
 static void render_status_window(TUIState *tui) {
-    if (!tui || !tui->status_win) {
+    if (!tui || !tui->wm.status_win) {
         return;
     }
 
     int height, width;
-    getmaxyx(tui->status_win, height, width);
+    getmaxyx(tui->wm.status_win, height, width);
     (void)height;
 
-    werase(tui->status_win);
+    werase(tui->wm.status_win);
 
     int col = 0;
     
@@ -123,9 +139,9 @@ static void render_status_window(TUIState *tui) {
     // Render status message on the left (if visible)
     if (tui->status_visible && tui->status_message && tui->status_message[0] != '\0') {
         if (has_colors()) {
-            wattron(tui->status_win, COLOR_PAIR(NCURSES_PAIR_STATUS) | A_BOLD);
+            wattron(tui->wm.status_win, COLOR_PAIR(NCURSES_PAIR_STATUS) | A_BOLD);
         } else {
-            wattron(tui->status_win, A_BOLD);
+            wattron(tui->wm.status_win, A_BOLD);
         }
 
         if (tui->status_spinner_active) {
@@ -138,11 +154,11 @@ static void render_status_window(TUIState *tui) {
             }
             const char *frame = frames[tui->status_spinner_frame % frame_count];
             if (width > 0) {
-                mvwaddnstr(tui->status_win, 0, col, frame, width - col);
+                mvwaddnstr(tui->wm.status_win, 0, col, frame, width - col);
                 col += 1;
             }
             if (col < width) {
-                mvwaddch(tui->status_win, 0, col, ' ');
+                mvwaddch(tui->wm.status_win, 0, col, ' ');
                 col += 1;
             }
         }
@@ -154,13 +170,13 @@ static void render_status_window(TUIState *tui) {
             msg_len = max_status_len;
         }
         if (msg_len > 0 && col < width) {
-            mvwaddnstr(tui->status_win, 0, col, tui->status_message, msg_len);
+            mvwaddnstr(tui->wm.status_win, 0, col, tui->status_message, msg_len);
         }
 
         if (has_colors()) {
-            wattroff(tui->status_win, COLOR_PAIR(NCURSES_PAIR_STATUS) | A_BOLD);
+            wattroff(tui->wm.status_win, COLOR_PAIR(NCURSES_PAIR_STATUS) | A_BOLD);
         } else {
-            wattroff(tui->status_win, A_BOLD);
+            wattroff(tui->wm.status_win, A_BOLD);
         }
     }
     
@@ -181,7 +197,7 @@ static void render_status_window(TUIState *tui) {
     }
     */
 
-    wrefresh(tui->status_win);
+    wrefresh(tui->wm.status_win);
 }
 
 static uint64_t monotonic_time_ns(void) {
@@ -227,7 +243,7 @@ static void status_spinner_tick(TUIState *tui) {
     if (!tui || !tui->status_spinner_active || !tui->status_visible) {
         return;
     }
-    if (tui->status_height <= 0 || !tui->status_win) {
+    if (tui->wm.status_height <= 0 || !tui->wm.status_win) {
         return;
     }
 
@@ -305,13 +321,25 @@ static void init_ncurses_colors(void) {
                 rgb_to_ncurses(g_theme.error_rgb.g),
                 rgb_to_ncurses(g_theme.error_rgb.b));
 
+            // Tool color (use theme tool color for clear distinction)
+            init_color(21,
+                rgb_to_ncurses(g_theme.tool_rgb.r),
+                rgb_to_ncurses(g_theme.tool_rgb.g),
+                rgb_to_ncurses(g_theme.tool_rgb.b));
+
             // Initialize color pairs with custom colors
             init_pair(NCURSES_PAIR_FOREGROUND, 16, -1);  // -1 = default background
             init_pair(NCURSES_PAIR_USER, 17, -1);
             init_pair(NCURSES_PAIR_ASSISTANT, 18, -1);
             init_pair(NCURSES_PAIR_STATUS, 19, -1);
             init_pair(NCURSES_PAIR_ERROR, 20, -1);
+            // Use dedicated tool color pair (distinct from assistant)
+            init_pair(NCURSES_PAIR_TOOL, 21, -1);
             init_pair(NCURSES_PAIR_PROMPT, 17, -1);  // Use USER color for prompt
+            // TODO color pairs
+            init_pair(NCURSES_PAIR_TODO_COMPLETED, 17, -1);    // Green (same as USER)
+            init_pair(NCURSES_PAIR_TODO_IN_PROGRESS, 19, -1);  // Yellow (same as STATUS)
+            init_pair(NCURSES_PAIR_TODO_PENDING, 18, -1);      // Cyan (same as ASSISTANT)
 
             LOG_DEBUG("[TUI] Custom colors initialized successfully");
         } else {
@@ -322,7 +350,13 @@ static void init_ncurses_colors(void) {
             init_pair(NCURSES_PAIR_ASSISTANT, COLOR_CYAN, -1);
             init_pair(NCURSES_PAIR_STATUS, COLOR_YELLOW, -1);
             init_pair(NCURSES_PAIR_ERROR, COLOR_RED, -1);
+            // Use magenta for tool tag (distinct from assistant cyan)
+            init_pair(NCURSES_PAIR_TOOL, COLOR_MAGENTA, -1);
             init_pair(NCURSES_PAIR_PROMPT, COLOR_GREEN, -1);
+            // TODO color pairs
+            init_pair(NCURSES_PAIR_TODO_COMPLETED, COLOR_GREEN, -1);
+            init_pair(NCURSES_PAIR_TODO_IN_PROGRESS, COLOR_YELLOW, -1);
+            init_pair(NCURSES_PAIR_TODO_PENDING, COLOR_CYAN, -1);
         }
     } else {
         LOG_DEBUG("[TUI] No theme loaded, using standard ncurses colors");
@@ -333,6 +367,12 @@ static void init_ncurses_colors(void) {
         init_pair(NCURSES_PAIR_STATUS, COLOR_YELLOW, -1);
         init_pair(NCURSES_PAIR_ERROR, COLOR_RED, -1);
         init_pair(NCURSES_PAIR_PROMPT, COLOR_GREEN, -1);
+        // Ensure tool pair is initialized; use magenta for distinction
+        init_pair(NCURSES_PAIR_TOOL, COLOR_MAGENTA, -1);
+        // TODO color pairs
+        init_pair(NCURSES_PAIR_TODO_COMPLETED, COLOR_GREEN, -1);
+        init_pair(NCURSES_PAIR_TODO_IN_PROGRESS, COLOR_YELLOW, -1);
+        init_pair(NCURSES_PAIR_TODO_PENDING, COLOR_CYAN, -1);
     }
 }
 
@@ -388,104 +428,13 @@ static void free_conversation_entries(TUIState *tui) {
     tui->entries_capacity = 0;
 }
 
-// Calculate total visual lines needed for all entries
-// Natural wrapping: each entry is just one line (no custom wrapping)
-static int calculate_total_visual_lines(TUIState *tui, int max_x) {
-    (void)max_x;  // Unused when not wrapping
-    if (!tui) return 0;
-    
-    // Each entry is just one line - text wraps naturally at terminal width
-    return tui->entries_count;
-}
+// Expand pad capacity if needed
+// Pad capacity growth is centralized in WindowManager now.
 
-// Helper: Render conversation window without custom text wrapping
-// Text wraps naturally at terminal width, like standard terminal output
-static void render_conversation_window(TUIState *tui) {
-    if (!tui || !tui->conv_win) return;
-
-    werase(tui->conv_win);
-
-    int max_y, max_x;
-    getmaxyx(tui->conv_win, max_y, max_x);
-    (void)max_x;  // Unused when not doing custom wrapping
-
-    // Calculate which entry to start from based on scroll offset
-    int start_entry = tui->conv_scroll_offset;
-    if (start_entry < 0) start_entry = 0;
-    if (start_entry >= tui->entries_count) {
-        start_entry = tui->entries_count - 1;
-    }
-    if (start_entry < 0) start_entry = 0;
-
-    // Render entries starting from start_entry
-    int y = 0;
-    for (int i = start_entry; i < tui->entries_count && y < max_y; i++) {
-        ConversationEntry *entry = &tui->entries[i];
-        
-        // Map TUIColorPair to ncurses color pair
-        int mapped_pair = NCURSES_PAIR_FOREGROUND;
-        switch (entry->color_pair) {
-            case COLOR_PAIR_DEFAULT:
-            case COLOR_PAIR_FOREGROUND:
-                mapped_pair = NCURSES_PAIR_FOREGROUND;
-                break;
-            case COLOR_PAIR_USER:
-                mapped_pair = NCURSES_PAIR_USER;
-                break;
-            case COLOR_PAIR_ASSISTANT:
-                mapped_pair = NCURSES_PAIR_ASSISTANT;
-                break;
-            case COLOR_PAIR_TOOL:
-            case COLOR_PAIR_STATUS:
-                mapped_pair = NCURSES_PAIR_STATUS;
-                break;
-            case COLOR_PAIR_ERROR:
-                mapped_pair = NCURSES_PAIR_ERROR;
-                break;
-            case COLOR_PAIR_PROMPT:
-                mapped_pair = NCURSES_PAIR_PROMPT;
-                break;
-        }
-
-        const int prefix_pair = mapped_pair;
-        int text_pair = NCURSES_PAIR_FOREGROUND;
-        int prefix_has_text = entry->prefix && entry->prefix[0] != '\0';
-
-        if (!prefix_has_text &&
-            entry->color_pair != COLOR_PAIR_DEFAULT &&
-            entry->color_pair != COLOR_PAIR_FOREGROUND) {
-            text_pair = mapped_pair;
-        }
-
-        // Move to the line position
-        wmove(tui->conv_win, y, 0);
-        
-        // Print prefix if present
-        if (prefix_has_text) {
-            if (has_colors()) {
-                wattron(tui->conv_win, COLOR_PAIR(prefix_pair) | A_BOLD);
-            }
-            wprintw(tui->conv_win, "%s ", entry->prefix);
-            if (has_colors()) {
-                wattroff(tui->conv_win, COLOR_PAIR(prefix_pair) | A_BOLD);
-            }
-        }
-        
-        // Print text - let it wrap naturally at terminal width
-        if (entry->text && entry->text[0] != '\0') {
-            if (has_colors()) {
-                wattron(tui->conv_win, COLOR_PAIR(text_pair));
-            }
-            wprintw(tui->conv_win, "%s", entry->text);
-            if (has_colors()) {
-                wattroff(tui->conv_win, COLOR_PAIR(text_pair));
-            }
-        }
-        
-        y++;
-    }
-    
-    wrefresh(tui->conv_win);
+// Helper: Refresh conversation window viewport (using pad)
+static void refresh_conversation_viewport(TUIState *tui) {
+    if (!tui) return;
+    window_manager_refresh_conversation(&tui->wm);
 }
 
 // UTF-8 helper functions (from lineedit.c)
@@ -580,99 +529,28 @@ static int calculate_needed_lines(const char *buffer, int buffer_len, int availa
 static int resize_input_window(TUIState *tui, int desired_lines) {
     if (!tui || !tui->is_initialized) return -1;
 
-    // Clamp to min/max (1-3 lines of content, +2 for borders)
-    int min_window_height = INPUT_WIN_MIN_HEIGHT;  // 1 line + borders
-    int max_window_height = INPUT_WIN_MAX_HEIGHT;  // 3 lines + borders
-    int new_window_height = desired_lines + 2;  // +2 for borders
-
-    if (new_window_height < min_window_height) {
-        new_window_height = min_window_height;
-    } else if (new_window_height > max_window_height) {
-        new_window_height = max_window_height;
-    }
-
-    // Only resize if height actually changed
-    if (new_window_height == tui->input_height) {
-        return 0;
-    }
-
-    // Get screen dimensions
-    int max_y, max_x;
-    getmaxyx(stdscr, max_y, max_x);
-    
-    // Update input height
-    tui->input_height = new_window_height;
-    
-    // Recalculate conversation window height
-    int new_conv_height = max_y - new_window_height - tui->status_height - CONV_WIN_PADDING;
-    if (new_conv_height < 5) new_conv_height = 5;
-
-    // Resize conversation window if height changed
-    if (new_conv_height != tui->conv_height) {
-        tui->conv_height = new_conv_height;
-        if (tui->conv_win) {
-            delwin(tui->conv_win);
-            tui->conv_win = newwin(new_conv_height, max_x, 0, 0);
-            if (tui->conv_win) {
-                scrollok(tui->conv_win, TRUE);
-                render_conversation_window(tui);
-            }
-        }
-    }
-
-    // Recreate status window to account for new offsets
-    if (tui->status_win) {
-        delwin(tui->status_win);
-        tui->status_win = NULL;
-    }
-    if (tui->status_height > 0) {
-        tui->status_win = newwin(tui->status_height, max_x, tui->conv_height, 0);
-        if (tui->status_win) {
-            render_status_window(tui);
-        }
-    }
-
-    // Delete old input window
-    if (tui->input_win) {
-        delwin(tui->input_win);
-    }
-
-    // Create new input window with adjusted height
-    tui->input_win = newwin(new_window_height, max_x, max_y - new_window_height, 0);
-
-    if (!tui->input_win) {
-        LOG_ERROR("Failed to resize input window");
+    if (window_manager_resize_input(&tui->wm, desired_lines) != 0) {
+        LOG_ERROR("Failed to resize input window via WindowManager");
         return -1;
     }
 
-    // Update input state
-    if (tui->input_buffer) {
-        tui->input_buffer->win = tui->input_win;
+    // Update input buffer to new window geometry
+    if (tui->input_buffer && tui->wm.input_win) {
         int h, w;
-        getmaxyx(tui->input_win, h, w);
+        getmaxyx(tui->wm.input_win, h, w);
+        tui->input_buffer->win = tui->wm.input_win;
         tui->input_buffer->win_width = w - 2;
         tui->input_buffer->win_height = h - 2;
     }
 
-    // Enable keypad for new window
-    keypad(tui->input_win, TRUE);
-
-    // Refresh stdscr to clear old area
-    touchwin(stdscr);
-    if (tui->status_height > 0) {
-        render_status_window(tui);
-    }
-    refresh();
-
-    LOG_DEBUG("[TUI] Input window resized (new_input_h=%d, conv_h=%d, status_h=%d)",
-              tui->input_height, tui->conv_height, tui->status_height);
-
+    // Ensure content lines are up to date before refresh
+    window_manager_refresh_all(&tui->wm);
     return 0;
 }
 
 // Initialize input buffer
 static int input_init(TUIState *tui) {
-    if (!tui || !tui->input_win) {
+    if (!tui || !tui->wm.input_win) {
         return -1;
     }
 
@@ -691,7 +569,7 @@ static int input_init(TUIState *tui) {
     input->buffer[0] = '\0';
     input->length = 0;
     input->cursor = 0;
-    input->win = tui->input_win;
+    input->win = tui->wm.input_win;
     input->view_offset = 0;
     input->line_scroll_offset = 0;
     input->paste_mode = 0;
@@ -707,7 +585,7 @@ static int input_init(TUIState *tui) {
 
     // Get window dimensions
     int h, w;
-    getmaxyx(tui->input_win, h, w);
+    getmaxyx(tui->wm.input_win, h, w);
     input->win_width = w - 2;  // Account for borders
     input->win_height = h - 2;
 
@@ -1146,61 +1024,25 @@ int tui_init(TUIState *tui) {
     // Initialize colors from colorscheme
     init_ncurses_colors();
 
-    // Get screen dimensions
-    int max_y, max_x;
-    getmaxyx(stdscr, max_y, max_x);
+    // Initialize WindowManager (owner of ncurses windows)
+    WindowManagerConfig cfg = DEFAULT_WINDOW_CONFIG;
+    cfg.min_conv_height = 5;
+    cfg.min_input_height = INPUT_WIN_MIN_HEIGHT;
+    cfg.max_input_height = INPUT_WIN_MAX_HEIGHT;
+    cfg.status_height = STATUS_WIN_HEIGHT;
+    cfg.padding = CONV_WIN_PADDING;
 
-    tui->screen_height = max_y;
-    tui->screen_width = max_x;
-    tui->input_height = INPUT_WIN_MIN_HEIGHT;  // Start with minimum height
-    tui->status_height = STATUS_WIN_HEIGHT;
-
-    // Ensure we have enough space for status window; disable if terminal too small
-    if (max_y - tui->input_height - CONV_WIN_PADDING - tui->status_height < 5) {
-        LOG_WARN("[TUI] Terminal height too small for status window, disabling status line");
-        tui->status_height = 0;
-    }
-
-    // Calculate conversation window height (screen - input - status - padding)
-    tui->conv_height = max_y - tui->input_height - tui->status_height - CONV_WIN_PADDING;
-    if (tui->conv_height < 5) tui->conv_height = 5;  // Minimum height
-
-    // Create conversation window (top of screen)
-    tui->conv_win = newwin(tui->conv_height, max_x, 0, 0);
-    if (!tui->conv_win) {
+    if (window_manager_init(&tui->wm, &cfg) != 0) {
         endwin();
         return -1;
     }
-    scrollok(tui->conv_win, TRUE);
-
-    // Create status window if enabled
-    if (tui->status_height > 0) {
-        tui->status_win = newwin(tui->status_height, max_x, tui->conv_height, 0);
-        if (!tui->status_win) {
-            delwin(tui->conv_win);
-            endwin();
-            return -1;
-        }
-    } else {
-        tui->status_win = NULL;
-    }
-
-    // Create input window (bottom of screen)
-    tui->input_win = newwin(INPUT_WIN_MIN_HEIGHT, max_x, max_y - INPUT_WIN_MIN_HEIGHT, 0);
-    if (!tui->input_win) {
-        delwin(tui->conv_win);
-        if (tui->status_win) {
-            delwin(tui->status_win);
-        }
-        endwin();
-        return -1;
-    }
+    // Start with zero content lines
+    window_manager_set_content_lines(&tui->wm, 0);
 
     // Initialize conversation entries
     tui->entries = NULL;
     tui->entries_count = 0;
     tui->entries_capacity = 0;
-    tui->conv_scroll_offset = 0;
     tui->status_message = NULL;
     tui->status_visible = 0;
     tui->status_spinner_active = 0;
@@ -1218,11 +1060,7 @@ int tui_init(TUIState *tui) {
 
     // Initialize input buffer
     if (input_init(tui) != 0) {
-        delwin(tui->conv_win);
-        if (tui->status_win) {
-            delwin(tui->status_win);
-        }
-        delwin(tui->input_win);
+        window_manager_destroy(&tui->wm);
         endwin();
         return -1;
     }
@@ -1235,10 +1073,13 @@ int tui_init(TUIState *tui) {
     tui->is_initialized = 1;
 
     LOG_DEBUG("[TUI] Initialized (screen=%dx%d, conv_h=%d, status_h=%d, input_h=%d)",
-              tui->screen_width, tui->screen_height, tui->conv_height,
-              tui->status_height, tui->input_height);
+              tui->wm.screen_width, tui->wm.screen_height, tui->wm.conv_viewport_height,
+              tui->wm.status_height, tui->wm.input_height);
 
-    if (tui->status_height > 0) {
+    // Validate initial window setup
+    validate_tui_windows(tui);
+
+    if (tui->wm.status_height > 0) {
         render_status_window(tui);
     }
 
@@ -1264,21 +1105,8 @@ void tui_cleanup(TUIState *tui) {
     free(tui->command_buffer);
     tui->command_buffer = NULL;
 
-    // Destroy status window
-    if (tui->status_win) {
-        delwin(tui->status_win);
-        tui->status_win = NULL;
-    }
-
-    // Destroy windows
-    if (tui->conv_win) {
-        delwin(tui->conv_win);
-        tui->conv_win = NULL;
-    }
-    if (tui->input_win) {
-        delwin(tui->input_win);
-        tui->input_win = NULL;
-    }
+    // Destroy ncurses windows via window manager
+    window_manager_destroy(&tui->wm);
 
     // Disable bracketed paste mode
     printf("\033[?2004l");
@@ -1304,33 +1132,162 @@ void tui_add_conversation_line(TUIState *tui, const char *prefix, const char *te
         return;
     }
 
-    // Auto-scroll to bottom (show latest messages)
-    // Calculate total visual lines to properly position scroll
-    int max_x = 0;
-    if (tui->conv_win) {
-        int max_y;
-        getmaxyx(tui->conv_win, max_y, max_x);
+    // Get pad dimensions
+    int pad_height, pad_width;
+    getmaxyx(tui->wm.conv_pad, pad_height, pad_width);
+    (void)pad_height;
+    
+    // Calculate how many lines this entry will take when wrapped
+    int prefix_len = (prefix && prefix[0] != '\0') ? (int)strlen(prefix) + 1 : 0; // +1 for space
+    int text_len = (text && text[0] != '\0') ? (int)strlen(text) : 0;
+    
+    // Estimate wrapped lines (conservative)
+    int estimated_lines = 1; // At least 1 line
+    if (text_len > 0) {
+        estimated_lines = ((prefix_len + text_len) / pad_width) + 2; // +2 for newline and safety
     }
     
-    if (max_x > 0) {
-        int total_visual_lines = calculate_total_visual_lines(tui, max_x);
-        tui->conv_scroll_offset = total_visual_lines - tui->conv_height;
-        if (tui->conv_scroll_offset < 0) {
-            tui->conv_scroll_offset = 0;
+    // Ensure pad has enough capacity (centralized via WindowManager)
+    int current_lines = window_manager_get_content_lines(&tui->wm);
+    int needed_capacity = current_lines + estimated_lines + 100;
+    if (needed_capacity > tui->wm.conv_pad_capacity) {
+        if (window_manager_ensure_pad_capacity(&tui->wm, needed_capacity) != 0) {
+            LOG_ERROR("[TUI] Failed to ensure pad capacity via WindowManager");
         }
     }
+    
+    // Map color pair
+    int mapped_pair = NCURSES_PAIR_FOREGROUND;
+    switch (color_pair) {
+        case COLOR_PAIR_DEFAULT:
+        case COLOR_PAIR_FOREGROUND:
+            mapped_pair = NCURSES_PAIR_FOREGROUND;
+            break;
+        case COLOR_PAIR_USER:
+            mapped_pair = NCURSES_PAIR_USER;
+            break;
+        case COLOR_PAIR_ASSISTANT:
+            mapped_pair = NCURSES_PAIR_ASSISTANT;
+            break;
+        case COLOR_PAIR_TOOL:
+            mapped_pair = NCURSES_PAIR_TOOL;
+            break;
+        case COLOR_PAIR_STATUS:
+            mapped_pair = NCURSES_PAIR_STATUS;
+            break;
+        case COLOR_PAIR_ERROR:
+            mapped_pair = NCURSES_PAIR_ERROR;
+            break;
+        case COLOR_PAIR_PROMPT:
+            mapped_pair = NCURSES_PAIR_PROMPT;
+            break;
+        case COLOR_PAIR_TODO_COMPLETED:
+            mapped_pair = NCURSES_PAIR_TODO_COMPLETED;
+            break;
+        case COLOR_PAIR_TODO_IN_PROGRESS:
+            mapped_pair = NCURSES_PAIR_TODO_IN_PROGRESS;
+            break;
+        case COLOR_PAIR_TODO_PENDING:
+            mapped_pair = NCURSES_PAIR_TODO_PENDING;
+            break;
+    }
+    
+    // Move to end of pad
+    int start_line = window_manager_get_content_lines(&tui->wm);
+    wmove(tui->wm.conv_pad, start_line, 0);
+    
+    // Write prefix if present
+    if (prefix && prefix[0] != '\0') {
+        if (has_colors()) {
+            wattron(tui->wm.conv_pad, COLOR_PAIR(mapped_pair) | A_BOLD);
+        }
+        waddstr(tui->wm.conv_pad, prefix);
+        waddch(tui->wm.conv_pad, ' ');
+        if (has_colors()) {
+            wattroff(tui->wm.conv_pad, COLOR_PAIR(mapped_pair) | A_BOLD);
+        }
+    }
+    
+    // Write text
+    if (text && text[0] != '\0') {
+        int text_pair = (prefix && prefix[0] != '\0') ? NCURSES_PAIR_FOREGROUND : mapped_pair;
+        if (has_colors()) {
+            wattron(tui->wm.conv_pad, COLOR_PAIR(text_pair));
+        }
+        waddstr(tui->wm.conv_pad, text);
+        if (has_colors()) {
+            wattroff(tui->wm.conv_pad, COLOR_PAIR(text_pair));
+        }
+    }
+    
+    // Add newline
+    waddch(tui->wm.conv_pad, '\n');
+    
+    // Update total lines (get actual cursor position after wrapping)
+    int cur_y, cur_x;
+    getyx(tui->wm.conv_pad, cur_y, cur_x);
+    (void)cur_x;
+    window_manager_set_content_lines(&tui->wm, cur_y);
+    
+    LOG_DEBUG("[TUI] Added line, total_lines now %d (estimated %d, actual %d)", 
+              window_manager_get_content_lines(&tui->wm), estimated_lines, cur_y - start_line);
 
-    // Render the conversation window
-    render_conversation_window(tui);
+    // Auto-scroll to bottom (show latest messages)
+    window_manager_scroll_to_bottom(&tui->wm);
+    window_manager_refresh_conversation(&tui->wm);
 
-    if (tui->status_height > 0) {
+    if (tui->wm.status_height > 0) {
         render_status_window(tui);
     }
 
     // Redraw input window to ensure it stays visible
-    if (tui->input_win) {
-        touchwin(tui->input_win);
-        wrefresh(tui->input_win);
+    if (tui->wm.input_win) {
+        touchwin(tui->wm.input_win);
+        wrefresh(tui->wm.input_win);
+    }
+}
+
+void tui_render_todo_list(TUIState *tui, const TodoList *list) {
+    if (!tui || !list || list->count == 0) {
+        return;  // No todos to display
+    }
+
+    // Add header line
+    tui_add_conversation_line(tui, "[Assistant]", "Here are the current tasks:", COLOR_PAIR_ASSISTANT);
+
+    // Render each todo item with its status-specific color
+    for (size_t i = 0; i < list->count; i++) {
+        const TodoItem *item = &list->items[i];
+        char line[1024];
+        TUIColorPair color;
+        const char *symbol;
+        const char *text;
+
+        // Determine color, symbol, and text based on status
+        switch (item->status) {
+            case TODO_COMPLETED:
+                color = COLOR_PAIR_TODO_COMPLETED;
+                symbol = "✓";
+                text = item->content;
+                break;
+            case TODO_IN_PROGRESS:
+                color = COLOR_PAIR_TODO_IN_PROGRESS;
+                symbol = "⋯";
+                text = item->active_form;
+                break;
+            case TODO_PENDING:
+            default:
+                color = COLOR_PAIR_TODO_PENDING;
+                symbol = "○";
+                text = item->content;
+                break;
+        }
+
+        // Format the line with indentation
+        snprintf(line, sizeof(line), "    %s %s", symbol, text);
+        
+        // Add line without prefix (so the color applies to the whole line)
+        tui_add_conversation_line(tui, NULL, line, color);
     }
 }
 
@@ -1345,7 +1302,7 @@ void tui_update_status(TUIState *tui, const char *status_text) {
         tui->status_visible = 0;
         free(tui->status_message);
         tui->status_message = NULL;
-        if (tui->status_height > 0) {
+        if (tui->wm.status_height > 0) {
             render_status_window(tui);
         }
         return;
@@ -1369,7 +1326,7 @@ void tui_update_status(TUIState *tui, const char *status_text) {
 
     tui->status_visible = 1;
 
-    if (tui->status_height > 0) {
+    if (tui->wm.status_height > 0) {
         render_status_window(tui);
     }
 }
@@ -1377,12 +1334,7 @@ void tui_update_status(TUIState *tui, const char *status_text) {
 
 void tui_refresh(TUIState *tui) {
     if (!tui || !tui->is_initialized) return;
-
-    if (tui->input_win) {
-        touchwin(tui->input_win);
-        wrefresh(tui->input_win);
-    }
-    refresh();
+    window_manager_refresh_all(&tui->wm);
 }
 
 void tui_clear_conversation(TUIState *tui) {
@@ -1391,14 +1343,10 @@ void tui_clear_conversation(TUIState *tui) {
     // Free all conversation entries
     free_conversation_entries(tui);
     
-    // Reset scroll offset
-    tui->conv_scroll_offset = 0;
-
-    // Clear and refresh the conversation window
-    if (tui->conv_win) {
-        werase(tui->conv_win);
-        wrefresh(tui->conv_win);
-    }
+    // Clear pad and reset content lines
+    werase(tui->wm.conv_pad);
+    window_manager_set_content_lines(&tui->wm, 0);
+    refresh_conversation_viewport(tui);
 
     // Add a system message indicating the clear
     tui_add_conversation_line(tui, "[System]", "Conversation history cleared", COLOR_PAIR_STATUS);
@@ -1407,86 +1355,88 @@ void tui_clear_conversation(TUIState *tui) {
 void tui_handle_resize(TUIState *tui) {
     if (!tui || !tui->is_initialized) return;
 
-    // Properly handle ncurses resize
-    // This sequence is important for correct resize handling
-    endwin();         // End the current ncurses session
-    refresh();        // Refresh stdscr to get new dimensions
-    clear();          // Clear the screen
-
-    // Update screen dimensions
-    int max_y, max_x;
-    getmaxyx(stdscr, max_y, max_x);
-    tui->screen_height = max_y;
-    tui->screen_width = max_x;
-
-    int new_status_height = STATUS_WIN_HEIGHT;
-    if (max_y - tui->input_height - CONV_WIN_PADDING - new_status_height < 5) {
-        if (tui->status_height != 0) {
-            LOG_WARN("[TUI] Resize reduced status window due to limited height");
-        }
-        new_status_height = 0;
-    }
-    tui->status_height = new_status_height;
-
-    // Recalculate conversation window height
-    tui->conv_height = max_y - tui->input_height - tui->status_height - CONV_WIN_PADDING;
-    if (tui->conv_height < 5) tui->conv_height = 5;
-
-    // Resize and reposition conversation window
-    if (tui->conv_win) {
-        delwin(tui->conv_win);
-        tui->conv_win = newwin(tui->conv_height, max_x, 0, 0);
-        if (tui->conv_win) {
-            scrollok(tui->conv_win, TRUE);
-            render_conversation_window(tui);
-            wrefresh(tui->conv_win);  // Force refresh after render
-        }
+    // Handle screen resize via WindowManager
+    if (window_manager_resize_screen(&tui->wm) != 0) {
+        LOG_ERROR("[TUI] WindowManager screen resize failed");
+        return;
     }
 
-    // Resize and reposition status window
-    if (tui->status_win) {
-        delwin(tui->status_win);
-        tui->status_win = NULL;
-    }
-    if (tui->status_height > 0) {
-        tui->status_win = newwin(tui->status_height, max_x, tui->conv_height, 0);
-        if (tui->status_win) {
-            render_status_window(tui);
-        }
-    }
+    // Rebuild pad content from stored entries (ensures wrapping updates with new width)
+    if (tui->wm.conv_pad) {
+        werase(tui->wm.conv_pad);
+        for (int i = 0; i < tui->entries_count; i++) {
+                ConversationEntry *entry = &tui->entries[i];
 
-    // Resize and reposition input window
-    if (tui->input_win) {
-        // Delete and recreate window to avoid ncurses resize issues
-        delwin(tui->input_win);
-        tui->input_win = newwin(tui->input_height, max_x, max_y - tui->input_height, 0);
+                int mapped_pair = NCURSES_PAIR_FOREGROUND;
+                switch (entry->color_pair) {
+                    case COLOR_PAIR_DEFAULT:
+                    case COLOR_PAIR_FOREGROUND:
+                        mapped_pair = NCURSES_PAIR_FOREGROUND;
+                        break;
+                    case COLOR_PAIR_USER:
+                        mapped_pair = NCURSES_PAIR_USER;
+                        break;
+                    case COLOR_PAIR_ASSISTANT:
+                        mapped_pair = NCURSES_PAIR_ASSISTANT;
+                        break;
+                    case COLOR_PAIR_TOOL:
+                    case COLOR_PAIR_STATUS:
+                        mapped_pair = NCURSES_PAIR_STATUS;
+                        break;
+                    case COLOR_PAIR_ERROR:
+                        mapped_pair = NCURSES_PAIR_ERROR;
+                        break;
+                    case COLOR_PAIR_PROMPT:
+                        mapped_pair = NCURSES_PAIR_PROMPT;
+                        break;
+                    case COLOR_PAIR_TODO_COMPLETED:
+                        mapped_pair = NCURSES_PAIR_TODO_COMPLETED;
+                        break;
+                    case COLOR_PAIR_TODO_IN_PROGRESS:
+                        mapped_pair = NCURSES_PAIR_TODO_IN_PROGRESS;
+                        break;
+                    case COLOR_PAIR_TODO_PENDING:
+                        mapped_pair = NCURSES_PAIR_TODO_PENDING;
+                        break;
+                }
 
-        if (tui->input_win) {
-            // Re-enable keypad for the new window
-            keypad(tui->input_win, TRUE);
+                if (entry->prefix && entry->prefix[0] != '\0') {
+                    if (has_colors()) {
+                        wattron(tui->wm.conv_pad, COLOR_PAIR(mapped_pair) | A_BOLD);
+                    }
+                    waddstr(tui->wm.conv_pad, entry->prefix);
+                    waddch(tui->wm.conv_pad, ' ');
+                    if (has_colors()) {
+                        wattroff(tui->wm.conv_pad, COLOR_PAIR(mapped_pair) | A_BOLD);
+                    }
+                }
 
-            // Update input state dimensions
-            if (tui->input_buffer) {
-                int h, w;
-                getmaxyx(tui->input_win, h, w);
-                tui->input_buffer->win_width = w - 2;
-                tui->input_buffer->win_height = h - 2;
-                tui->input_buffer->win = tui->input_win;
+                if (entry->text && entry->text[0] != '\0') {
+                    int text_pair = (entry->prefix && entry->prefix[0] != '\0') ? NCURSES_PAIR_FOREGROUND : mapped_pair;
+                    if (has_colors()) {
+                        wattron(tui->wm.conv_pad, COLOR_PAIR(text_pair));
+                    }
+                    waddstr(tui->wm.conv_pad, entry->text);
+                    if (has_colors()) {
+                        wattroff(tui->wm.conv_pad, COLOR_PAIR(text_pair));
+                    }
+                }
+
+                waddch(tui->wm.conv_pad, '\n');
             }
-            
-            // Force redraw of input window
-            touchwin(tui->input_win);
-            wrefresh(tui->input_win);
+
+            int cur_y, cur_x;
+            getyx(tui->wm.conv_pad, cur_y, cur_x);
+            (void)cur_x;
+            window_manager_set_content_lines(&tui->wm, cur_y);
         }
-    }
 
-    LOG_DEBUG("[TUI] Resize handled (screen=%dx%d, conv_h=%d, status_h=%d, input_h=%d)",
-              tui->screen_width, tui->screen_height, tui->conv_height,
-              tui->status_height, tui->input_height);
-
-    // Final refresh to ensure everything is visible
-    refresh();
-    doupdate();  // Update physical screen
+    validate_tui_windows(tui);
+    window_manager_refresh_all(&tui->wm);
+    LOG_DEBUG("[TUI] Resize handled via WM (screen=%dx%d, conv_h=%d, status_h=%d, input_h=%d)",
+              tui->wm.screen_width, tui->wm.screen_height, tui->wm.conv_viewport_height,
+              tui->wm.status_height, tui->wm.input_height);
+    return;
 }
 
 void tui_show_startup_banner(TUIState *tui, const char *version, const char *model, const char *working_dir) {
@@ -1496,6 +1446,7 @@ void tui_show_startup_banner(TUIState *tui, const char *version, const char *mod
     char line1[256];
     char line2[256];
     char line3[256];
+    char tip_line[512];
     
     snprintf(line1, sizeof(line1), " ▐▛███▜▌   claude-c v%s", version);
     snprintf(line2, sizeof(line2), "▝▜█████▛▘  %s", model);
@@ -1509,37 +1460,51 @@ void tui_show_startup_banner(TUIState *tui, const char *version, const char *mod
     tui_add_conversation_line(tui, NULL, line2, COLOR_PAIR_ASSISTANT);
     tui_add_conversation_line(tui, NULL, line3, COLOR_PAIR_ASSISTANT);
     tui_add_conversation_line(tui, NULL, "", COLOR_PAIR_FOREGROUND);  // Blank line
+
+    // Tips array: randomly select one to display at startup
+    static const char *tips[] = {
+        "Ctrl+G to enter Normal mode (vim-style); press 'i' to insert.",
+        "Scroll: j/k (line), Ctrl+D/U (half page), gg/G (top/bottom).",
+        /* "Use PageUp/PageDown or Arrow keys to scroll.", */
+        "Type /help for commands (e.g., /clear, /exit, /add-dir, /voice).",
+        "Press ESC to cancel a running API/tool action.",
+        /* "Use /add-dir to attach a directory as context.", */
+        "Press Ctrl+D to exit quickly.",
+        /* "Use /voice to record and transcribe audio (requires PortAudio).", */
+        "Set CLAUDE_C_THEME to a Kitty theme file to customize colors.",
+        "Set CLAUDE_LOG_LEVEL=DEBUG for verbose logs.",
+        "API history stored in ./.claude-c/api_calls.db (configurable via CLAUDE_C_DB_PATH).",
+        "Normal mode: gg jumps to top, G to bottom.",
+        "Insert mode supports readline keys: Ctrl+A, Ctrl+E, Alt+B, Alt+F.",
+        /* "Switch models via OPENAI_MODEL or ANTHROPIC_MODEL environment variables.", */
+        /* "Enable Bedrock with CLAUDE_CODE_USE_BEDROCK=1 and ANTHROPIC_MODEL set.", */
+        "Interrupt long tool runs any time with ESC.",
+        "Disable prompt caching with DISABLE_PROMPT_CACHING=1 if needed.",
+        "Enable MCP with CLAUDE_MCP_ENABLED=1 and configure servers in ~/.config/claude-c/.",
+        "Use /clear to clear conversation; /quit or /exit to leave.",
+        "Use /help to see all available commands."
+    };
+    size_t tips_count = sizeof(tips) / sizeof(tips[0]);
+
+    // Compute a simple per-process pseudo-random index without relying on global srand
+    unsigned int seed = (unsigned int)(time(NULL) ^ getpid());
+    size_t tip_index = tips_count ? (seed % tips_count) : 0;
+    snprintf(tip_line, sizeof(tip_line), "Tip: %s", tips[tip_index]);
+
+    tui_add_conversation_line(tui, NULL, tip_line, COLOR_PAIR_STATUS);
+    tui_add_conversation_line(tui, NULL, "", COLOR_PAIR_FOREGROUND);
 }
 
 
 void tui_scroll_conversation(TUIState *tui, int direction) {
-    if (!tui || !tui->is_initialized || !tui->conv_win) return;
-
-    // Calculate max scroll offset based on visual lines
-    int max_y, max_x;
-    getmaxyx(tui->conv_win, max_y, max_x);
-    
-    int total_visual_lines = calculate_total_visual_lines(tui, max_x);
-    int max_offset = total_visual_lines - tui->conv_height;
-    if (max_offset < 0) max_offset = 0;
-
-    // Update scroll offset
-    tui->conv_scroll_offset += direction;
-
-    // Clamp to valid range
-    if (tui->conv_scroll_offset < 0) {
-        tui->conv_scroll_offset = 0;
-    } else if (tui->conv_scroll_offset > max_offset) {
-        tui->conv_scroll_offset = max_offset;
-    }
-
-    // Re-render conversation window
-    render_conversation_window(tui);
+    if (!tui || !tui->is_initialized || !tui->wm.conv_pad) return;
+    window_manager_scroll(&tui->wm, direction);
+    window_manager_refresh_conversation(&tui->wm);
 
     // Refresh input window to keep cursor visible
-    if (tui->input_win) {
-        touchwin(tui->input_win);
-        wrefresh(tui->input_win);
+    if (tui->wm.input_win) {
+        touchwin(tui->wm.input_win);
+        wrefresh(tui->wm.input_win);
     }
 }
 
@@ -1548,14 +1513,14 @@ void tui_scroll_conversation(TUIState *tui, int direction) {
 // ============================================================================
 
 int tui_poll_input(TUIState *tui) {
-    if (!tui || !tui->is_initialized || !tui->input_win) {
+    if (!tui || !tui->is_initialized || !tui->wm.input_win) {
         return ERR;
     }
     
     // Make wgetch() non-blocking temporarily
-    nodelay(tui->input_win, TRUE);
-    int ch = wgetch(tui->input_win);
-    nodelay(tui->input_win, FALSE);
+    nodelay(tui->wm.input_win, TRUE);
+    int ch = wgetch(tui->wm.input_win);
+    nodelay(tui->wm.input_win, FALSE);
     
     return ch;
 }
@@ -1573,7 +1538,7 @@ static int handle_command_mode_input(TUIState *tui, int ch, const char *prompt) 
         if (tui->command_buffer) {
             tui->command_buffer[0] = '\0';
         }
-        if (tui->status_height > 0) {
+        if (tui->wm.status_height > 0) {
             render_status_window(tui);
         }
         input_redraw(tui, prompt);
@@ -1588,7 +1553,7 @@ static int handle_command_mode_input(TUIState *tui, int ch, const char *prompt) 
             tui->mode = TUI_MODE_NORMAL;
             tui->command_buffer_len = 0;
             tui->command_buffer[0] = '\0';
-            if (tui->status_height > 0) {
+            if (tui->wm.status_height > 0) {
                 render_status_window(tui);
             }
             input_redraw(tui, prompt);
@@ -1618,7 +1583,7 @@ static int handle_command_mode_input(TUIState *tui, int ch, const char *prompt) 
         tui->mode = TUI_MODE_NORMAL;
         tui->command_buffer_len = 0;
         tui->command_buffer[0] = '\0';
-        if (tui->status_height > 0) {
+        if (tui->wm.status_height > 0) {
             render_status_window(tui);
         }
         input_redraw(tui, prompt);
@@ -1639,24 +1604,32 @@ static int handle_command_mode_input(TUIState *tui, int ch, const char *prompt) 
 // Handle normal mode input
 // Returns: 0 to continue, 1 to switch to insert mode, -1 on error/quit
 static int handle_normal_mode_input(TUIState *tui, int ch, const char *prompt) {
-    if (!tui || !tui->conv_win) {
+    if (!tui || !tui->wm.conv_pad) {
         return 0;
     }
     
-    int max_y, max_x;
-    getmaxyx(tui->conv_win, max_y, max_x);
-    (void)max_x;
-    
-    // Calculate scrolling parameters
-    int half_page = max_y / 2;
-    int full_page = max_y - 2;  // Leave a bit of overlap
+    // Calculate scrolling parameters based on the visible viewport height,
+    // not the pad capacity (using pad size could make half-page jumps too large
+    // or appear to do nothing depending on scroll position).
+    int viewport_h = tui->wm.conv_viewport_height;
+    if (viewport_h <= 0) {
+        // Fallback to a sane default if viewport height is unavailable
+        int pad_h, pad_w;
+        getmaxyx(tui->wm.conv_pad, pad_h, pad_w);
+        viewport_h = pad_h > 0 ? pad_h : 1;
+    }
+
+    int half_page = viewport_h / 2;
+    int full_page = viewport_h - 2;  // Leave a bit of overlap
+    if (half_page < 1) half_page = 1;
+    if (full_page < 1) full_page = 1;
     
     // Handle key combinations (like gg, G)
     if (tui->normal_mode_last_key == 'g' && ch == 'g') {
         // gg: Go to top
-        tui->conv_scroll_offset = 0;
+        window_manager_scroll_to_top(&tui->wm);
         tui->normal_mode_last_key = 0;
-        render_conversation_window(tui);
+        refresh_conversation_viewport(tui);
         input_redraw(tui, prompt);
         return 0;
     }
@@ -1674,7 +1647,7 @@ static int handle_normal_mode_input(TUIState *tui, int ch, const char *prompt) {
         case 'o':  // Enter insert mode (open line below)
         case 'O':  // Enter insert mode (open line above)
             tui->mode = TUI_MODE_INSERT;
-            if (tui->status_height > 0) {
+            if (tui->wm.status_height > 0) {
                 render_status_window(tui);
             }
             input_redraw(tui, prompt);  // Redraw to show input box
@@ -1695,7 +1668,7 @@ static int handle_normal_mode_input(TUIState *tui, int ch, const char *prompt) {
             tui->command_buffer[0] = ':';
             tui->command_buffer[1] = '\0';
             tui->command_buffer_len = 1;
-            if (tui->status_height > 0) {
+            if (tui->wm.status_height > 0) {
                 render_status_window(tui);
             }
             input_redraw(tui, "");  // Redraw to show command buffer
@@ -1742,14 +1715,9 @@ static int handle_normal_mode_input(TUIState *tui, int ch, const char *prompt) {
             break;
             
         case 'G':  // Go to bottom
-            {
-                int total_visual_lines = calculate_total_visual_lines(tui, max_x);
-                int max_offset = total_visual_lines - tui->conv_height;
-                if (max_offset < 0) max_offset = 0;
-                tui->conv_scroll_offset = max_offset;
-                render_conversation_window(tui);
-                input_redraw(tui, prompt);
-            }
+            window_manager_scroll_to_bottom(&tui->wm);
+            refresh_conversation_viewport(tui);
+            input_redraw(tui, prompt);
             break;
             
         case 'q':  // Quit (when input is empty)
@@ -1760,7 +1728,7 @@ static int handle_normal_mode_input(TUIState *tui, int ch, const char *prompt) {
             
         case KEY_RESIZE:
             tui_handle_resize(tui);
-            render_conversation_window(tui);
+            refresh_conversation_viewport(tui);
             render_status_window(tui);
             input_redraw(tui, prompt);
             break;
@@ -1816,7 +1784,7 @@ static int check_paste_timeout(TUIState *tui, const char *prompt) {
 }
 
 int tui_process_input_char(TUIState *tui, int ch, const char *prompt) {
-    if (!tui || !tui->is_initialized || !tui->input_win) {
+    if (!tui || !tui->is_initialized || !tui->wm.input_win) {
         return -1;
     }
 
@@ -1900,7 +1868,7 @@ int tui_process_input_char(TUIState *tui, int ch, const char *prompt) {
     // Handle special keys
     if (ch == KEY_RESIZE) {
         tui_handle_resize(tui);
-        render_conversation_window(tui);
+        refresh_conversation_viewport(tui);
         render_status_window(tui);
         input_redraw(tui, prompt);
         return 0;
@@ -1993,35 +1961,46 @@ int tui_process_input_char(TUIState *tui, int ch, const char *prompt) {
             input->rapid_input_count = 0;  // Reset on submit
             return 1;  // Signal submission
         }
-    } else if (ch == 27) {  // ESC sequence (Alt key combinations or bracketed paste)
+    } else if (ch == 7) {  // Ctrl+G: Enter NORMAL mode
+        tui->mode = TUI_MODE_NORMAL;
+        tui->normal_mode_last_key = 0;
+        if (tui->wm.status_height > 0) {
+            render_status_window(tui);
+        }
+        input_redraw(tui, prompt);
+        return 0;
+    } else if (ch == 27) {  // ESC sequence (Alt key combinations, bracketed paste, or interrupt)
         // Set nodelay to check for following character
-        nodelay(tui->input_win, TRUE);
-        int next_ch = wgetch(tui->input_win);
+        nodelay(tui->wm.input_win, TRUE);
+        int next_ch = wgetch(tui->wm.input_win);
         
         LOG_DEBUG("[TUI] ESC sequence detected, next_ch=%d", next_ch);
         
-        // If standalone ESC (no following character), switch to normal mode
+        // If standalone ESC (no following character), signal interrupt
         if (next_ch == ERR) {
-            nodelay(tui->input_win, FALSE);
-            tui->mode = TUI_MODE_NORMAL;
-            tui->normal_mode_last_key = 0;
-            if (tui->status_height > 0) {
-                render_status_window(tui);
+            nodelay(tui->wm.input_win, FALSE);
+            
+            // In INSERT mode, return special code 2 to signal interrupt request
+            // The event loop will call the interrupt callback
+            if (tui->mode == TUI_MODE_INSERT) {
+                LOG_DEBUG("[TUI] Esc pressed in INSERT mode - signaling interrupt");
+                return 2;  // Signal interrupt
             }
-            input_redraw(tui, prompt);
+            
+            // In other modes, also signal interrupt (or ignore)
             return 0;
         }
         
         if (next_ch == '[') {
             // Could be bracketed paste sequence or other CSI sequence
             // Read the sequence with a small delay to allow characters to arrive
-            nodelay(tui->input_win, FALSE);
+            nodelay(tui->wm.input_win, FALSE);
             timeout(100);  // 100ms timeout for sequence
             
-            int ch1 = wgetch(tui->input_win);
-            int ch2 = wgetch(tui->input_win);
-            int ch3 = wgetch(tui->input_win);
-            int ch4 = wgetch(tui->input_win);
+            int ch1 = wgetch(tui->wm.input_win);
+            int ch2 = wgetch(tui->wm.input_win);
+            int ch3 = wgetch(tui->wm.input_win);
+            int ch4 = wgetch(tui->wm.input_win);
             
             timeout(-1);  // Back to blocking
             
@@ -2063,7 +2042,7 @@ int tui_process_input_char(TUIState *tui, int ch, const char *prompt) {
             return 0;
         }
         
-        nodelay(tui->input_win, FALSE);
+        nodelay(tui->wm.input_win, FALSE);
 
         // Handle Alt key combinations
         if (next_ch == 'b' || next_ch == 'B') {  // Alt+b: backward word
@@ -2201,18 +2180,6 @@ static TUIColorPair infer_color_from_prefix(const char *prefix) {
     if (strstr(prefix, "Error")) {
         return COLOR_PAIR_ERROR;
     }
-    if (strstr(prefix, "Diff +")) {
-        return COLOR_PAIR_USER;
-    }
-    if (strstr(prefix, "Diff -")) {
-        return COLOR_PAIR_ERROR;
-    }
-    if (strstr(prefix, "Diff @")) {
-        return COLOR_PAIR_STATUS;
-    }
-    if (strstr(prefix, "Diff ~")) {
-        return COLOR_PAIR_FOREGROUND;
-    }
     if (strstr(prefix, "Diff")) {
         return COLOR_PAIR_STATUS;
     }
@@ -2221,6 +2188,30 @@ static TUIColorPair infer_color_from_prefix(const char *prefix) {
     }
     if (strstr(prefix, "Prompt")) {
         return COLOR_PAIR_PROMPT;
+    }
+    // Heuristic: any other bracketed role tag like "[Bash]", "[Read]" is a tool
+    if (prefix[0] == '[') {
+        const char *close = strchr(prefix, ']');
+        if (close && close > prefix + 1) {
+            // Extract inner label and compare against known non-tool roles
+            size_t len = (size_t)(close - (prefix + 1));
+            char buf[32];
+            if (len >= sizeof(buf)) len = sizeof(buf) - 1;
+            memcpy(buf, prefix + 1, len);
+            buf[len] = '\0';
+            // Normalize to lowercase for comparison
+            for (size_t i = 0; i < len; i++) {
+                if (buf[i] >= 'A' && buf[i] <= 'Z') buf[i] = (char)(buf[i] - 'A' + 'a');
+            }
+            if (strcmp(buf, "user") != 0 &&
+                strcmp(buf, "assistant") != 0 &&
+                strcmp(buf, "error") != 0 &&
+                strcmp(buf, "system") != 0 &&
+                strcmp(buf, "status") != 0 &&
+                strcmp(buf, "prompt") != 0) {
+                return COLOR_PAIR_TOOL;
+            }
+        }
     }
     return COLOR_PAIR_DEFAULT;
 }
@@ -2267,7 +2258,17 @@ static void dispatch_tui_message(TUIState *tui, TUIMessage *msg) {
                 }
             }
 
-            tui_add_conversation_line(tui, "", content, COLOR_PAIR_DEFAULT);
+            // Check for diff lines (no brackets, just colored by first character)
+            TUIColorPair diff_color = COLOR_PAIR_DEFAULT;
+            if (mutable_text[0] == '+' && mutable_text[1] != '+') {
+                diff_color = COLOR_PAIR_USER;  // Green for additions
+            } else if (mutable_text[0] == '-' && mutable_text[1] != '-') {
+                diff_color = COLOR_PAIR_ERROR;  // Red for deletions
+            } else if (mutable_text[0] == '@' && mutable_text[1] == '@') {
+                diff_color = COLOR_PAIR_STATUS;  // Status color for hunk headers
+            }
+
+            tui_add_conversation_line(tui, "", content, diff_color);
             break;
         }
 
@@ -2322,9 +2323,11 @@ static int process_tui_messages(TUIState *tui,
 }
 
 int tui_event_loop(TUIState *tui, const char *prompt, 
-                   InputSubmitCallback callback, void *user_data,
+                   InputSubmitCallback submit_callback,
+                   InterruptCallback interrupt_callback,
+                   void *user_data,
                    void *msg_queue_ptr) {
-    if (!tui || !tui->is_initialized || !callback) {
+    if (!tui || !tui->is_initialized || !submit_callback) {
         return -1;
     }
 
@@ -2336,7 +2339,7 @@ int tui_event_loop(TUIState *tui, const char *prompt,
     tui_clear_input_buffer(tui);
     
     // Initial draw (ensure all windows reflect current size)
-    render_conversation_window(tui);
+    refresh_conversation_viewport(tui);
     render_status_window(tui);
     tui_redraw_input(tui, prompt);
     
@@ -2348,7 +2351,7 @@ int tui_event_loop(TUIState *tui, const char *prompt,
         if (g_resize_flag) {
             g_resize_flag = 0;
             tui_handle_resize(tui);
-            render_conversation_window(tui);
+            refresh_conversation_viewport(tui);
             render_status_window(tui);
             tui_redraw_input(tui, prompt);
         }
@@ -2375,7 +2378,7 @@ int tui_event_loop(TUIState *tui, const char *prompt,
                 if (input && strlen(input) > 0) {
                     LOG_DEBUG("[TUI] Submitting input (%zu bytes)", strlen(input));
                     // Call the callback
-                    int callback_result = callback(input, user_data);
+                    int callback_result = submit_callback(input, user_data);
                     
                     // Clear input buffer after submission
                     tui_clear_input_buffer(tui);
@@ -2388,6 +2391,18 @@ int tui_event_loop(TUIState *tui, const char *prompt,
                     }
                 }
                 break;  // Stop processing after submission
+            } else if (result == 2) {
+                // Esc pressed - interrupt requested
+                LOG_DEBUG("[TUI] Interrupt requested (Esc pressed)");
+                if (interrupt_callback) {
+                    int interrupt_result = interrupt_callback(user_data);
+                    if (interrupt_result != 0) {
+                        LOG_DEBUG("[TUI] Interrupt callback requested exit (code=%d)", interrupt_result);
+                        running = 0;
+                    }
+                }
+                // Stay in INSERT mode after interrupt (user can press Ctrl+G to enter NORMAL mode if desired)
+                break;  // Stop processing after interrupt
             } else if (result == -1) {
                 // EOF/quit signal
                 LOG_DEBUG("[TUI] Input processing returned EOF/quit");

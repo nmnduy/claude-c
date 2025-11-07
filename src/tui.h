@@ -13,6 +13,7 @@
 #include <stdint.h>
 #include "claude_internal.h"
 #include "todo.h"
+#include "window_manager.h"
 
 // Forward declaration for WINDOW type (not actually used, kept for compatibility)
 typedef struct _win_st WINDOW;
@@ -25,10 +26,13 @@ typedef enum {
     COLOR_PAIR_FOREGROUND = 2, // Explicit foreground color
     COLOR_PAIR_USER = 3,       // Green for user role names
     COLOR_PAIR_ASSISTANT = 4,  // Blue for assistant role names
-    COLOR_PAIR_TOOL = 5,       // Yellow for tool execution indicators
+    COLOR_PAIR_TOOL = 5,       // Cyan for tool execution indicators (softer)
     COLOR_PAIR_ERROR = 6,      // Red for errors
     COLOR_PAIR_STATUS = 7,     // Cyan for status messages
-    COLOR_PAIR_PROMPT = 8      // Green for input prompt
+    COLOR_PAIR_PROMPT = 8,     // Green for input prompt
+    COLOR_PAIR_TODO_COMPLETED = 9,   // Green for completed tasks
+    COLOR_PAIR_TODO_IN_PROGRESS = 10, // Yellow for in-progress tasks
+    COLOR_PAIR_TODO_PENDING = 11     // Cyan/Blue for pending tasks
 } TUIColorPair;
 
 // Conversation message entry
@@ -47,29 +51,25 @@ typedef enum {
 
 // TUI State
 typedef struct {
-    WINDOW *conv_win;        // Conversation window (top of screen)
-    WINDOW *status_win;      // Status window (single-line separator)
-    WINDOW *input_win;       // Input window at bottom
-    TUIInputBuffer *input_buffer; // Persistent input buffer state
+    // Centralized window manager (owns ncurses windows)
+    WindowManager wm;
 
-    int screen_height;       // Terminal height
-    int screen_width;        // Terminal width
+    // Input buffer state
+    TUIInputBuffer *input_buffer;
 
-    int conv_height;         // Height of conversation window
-    int input_height;        // Height of input window (dynamic 3-5 lines)
-    int status_height;       // Height of status window (currently 1)
+    // Conversation entries (source of truth used to rebuild pad on resize)
+    ConversationEntry *entries;
+    int entries_count;
+    int entries_capacity;
 
-    ConversationEntry *entries;    // Array of conversation entries
-    int entries_count;             // Number of entries
-    int entries_capacity;          // Capacity of entries array
-    int conv_scroll_offset;        // Scroll offset (lines from top)
-
+    // Status state
     char *status_message;    // Current status text (owned by TUI)
     int status_visible;      // Whether status should be shown
     int status_spinner_active;        // Spinner animation active flag
     int status_spinner_frame;         // Current spinner frame index
     uint64_t status_spinner_last_update_ns; // Last spinner frame update timestamp
 
+    // Modes
     TUIMode mode;            // Current input mode (NORMAL, INSERT, or COMMAND)
     int normal_mode_last_key; // Previous key in normal mode (for gg, G combos)
     char *command_buffer;    // Buffer for command mode input (starts with ':')
@@ -151,18 +151,31 @@ void tui_redraw_input(TUIState *tui, const char *prompt);
 // Returns: 0 to continue, non-zero to exit event loop
 typedef int (*InputSubmitCallback)(const char *input, void *user_data);
 
+// Event loop callback for handling interrupt requests
+// Called when user presses Esc in INSERT mode
+// Returns: 0 to continue, non-zero to exit event loop
+typedef int (*InterruptCallback)(void *user_data);
+
 // Main event loop (non-blocking, ~60 FPS)
 // Processes input, handles resize, and processes TUI message queue
 // prompt: Input prompt to display
-// callback: Function to call when user submits input
-// user_data: Opaque pointer passed to callback
+// submit_callback: Function to call when user submits input
+// interrupt_callback: Function to call when user presses Esc (can be NULL)
+// user_data: Opaque pointer passed to callbacks
 // msg_queue: Optional TUI message queue to process (can be NULL)
 // Returns: 0 on normal exit, -1 on error
 int tui_event_loop(TUIState *tui, const char *prompt, 
-                   InputSubmitCallback callback, void *user_data,
+                   InputSubmitCallback submit_callback,
+                   InterruptCallback interrupt_callback,
+                   void *user_data,
                    void *msg_queue);
 
 // Drain any remaining messages after the event loop stops
 void tui_drain_message_queue(TUIState *tui, const char *prompt, void *msg_queue);
+
+// Render a TODO list with colored items based on status
+// list: TodoList to render
+// Each item will be rendered with its status-specific color
+void tui_render_todo_list(TUIState *tui, const TodoList *list);
 
 #endif // TUI_H

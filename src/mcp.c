@@ -1,0 +1,1140 @@
+/*
+ * mcp.c - Model Context Protocol (MCP) client implementation
+ *
+ * This implements a JSON-RPC 2.0 client for communicating with MCP servers.
+ * Supports stdio transport (process spawning) and basic server management.
+ */
+
+#ifdef __APPLE__
+    #define _DARWIN_C_SOURCE
+#else
+    #define _GNU_SOURCE
+#endif
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <errno.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <signal.h>
+#include <fcntl.h>
+#include <cjson/cJSON.h>
+#include "mcp.h"
+
+#ifndef TEST_BUILD
+#include "logger.h"
+#else
+// Stub logger for test builds
+#define LOG_INFO(...)
+#define LOG_DEBUG(...)
+#define LOG_WARN(...)
+#define LOG_ERROR(...)
+#endif
+
+// Global MCP state
+static int mcp_initialized = 0;
+static int mcp_enabled = 0;
+
+/*
+ * Initialize MCP subsystem
+ */
+int mcp_init(void) {
+    if (mcp_initialized) {
+        return 0;
+    }
+    
+    // Check if MCP is enabled via environment variable
+    const char *enabled = getenv("CLAUDE_MCP_ENABLED");
+    if (enabled && (strcmp(enabled, "1") == 0 || strcmp(enabled, "true") == 0)) {
+        mcp_enabled = 1;
+        LOG_INFO("MCP subsystem initialized and enabled");
+    } else {
+        mcp_enabled = 0;
+        LOG_DEBUG("MCP subsystem initialized but disabled (set CLAUDE_MCP_ENABLED=1 to enable)");
+    }
+    
+    mcp_initialized = 1;
+    return 0;
+}
+
+/*
+ * Clean up MCP subsystem
+ */
+void mcp_cleanup(void) {
+    if (!mcp_initialized) {
+        return;
+    }
+    
+    mcp_initialized = 0;
+    mcp_enabled = 0;
+    LOG_DEBUG("MCP subsystem cleaned up");
+}
+
+/*
+ * Check if MCP is enabled
+ */
+int mcp_is_enabled(void) {
+    return mcp_enabled;
+}
+
+/*
+ * Load MCP server configuration from JSON file
+ */
+MCPConfig* mcp_load_config(const char *config_path) {
+    FILE *fp = NULL;
+    char *content = NULL;
+    long file_size = 0;
+    cJSON *root = NULL;
+    cJSON *servers_obj = NULL;
+    MCPConfig *config = NULL;
+    
+    if (!config_path) {
+        // Try default locations
+        const char *home = getenv("HOME");
+        if (!home) {
+            LOG_ERROR("MCP: Cannot determine HOME directory");
+            return NULL;
+        }
+        
+        char default_path[1024];
+        snprintf(default_path, sizeof(default_path), "%s/.config/claude-c/mcp_servers.json", home);
+        config_path = default_path;
+    }
+    
+    // Check if file exists
+    if (access(config_path, F_OK) != 0) {
+        LOG_DEBUG("MCP: Config file not found: %s", config_path);
+        return NULL;
+    }
+    
+    LOG_INFO("MCP: Loading configuration from %s", config_path);
+    
+    // Read file
+    fp = fopen(config_path, "r");
+    if (!fp) {
+        LOG_ERROR("MCP: Failed to open config file: %s", strerror(errno));
+        return NULL;
+    }
+    
+    fseek(fp, 0, SEEK_END);
+    file_size = ftell(fp);
+    fseek(fp, 0, SEEK_SET);
+    
+    if (file_size <= 0 || file_size > 1024 * 1024) {  // Max 1MB config
+        LOG_ERROR("MCP: Invalid config file size: %ld", file_size);
+        fclose(fp);
+        return NULL;
+    }
+    
+    content = malloc((size_t)file_size + 1);
+    if (!content) {
+        LOG_ERROR("MCP: Failed to allocate memory for config");
+        fclose(fp);
+        return NULL;
+    }
+    
+    size_t read_size = fread(content, 1, (size_t)file_size, fp);
+    fclose(fp);
+    fp = NULL;
+    
+    if ((long)read_size != file_size) {
+        LOG_ERROR("MCP: Failed to read config file");
+        free(content);
+        return NULL;
+    }
+    content[file_size] = '\0';
+    
+    // Parse JSON
+    root = cJSON_Parse(content);
+    free(content);
+    content = NULL;
+    
+    if (!root) {
+        LOG_ERROR("MCP: Failed to parse config JSON: %s", cJSON_GetErrorPtr());
+        return NULL;
+    }
+    
+    // Get mcpServers object
+    servers_obj = cJSON_GetObjectItem(root, "mcpServers");
+    if (!servers_obj || !cJSON_IsObject(servers_obj)) {
+        LOG_ERROR("MCP: Config missing 'mcpServers' object");
+        cJSON_Delete(root);
+        return NULL;
+    }
+    
+    // Count servers
+    int server_count = cJSON_GetArraySize(servers_obj);
+    if (server_count <= 0) {
+        LOG_WARN("MCP: No servers configured");
+        cJSON_Delete(root);
+        return NULL;
+    }
+    
+    // Allocate config
+    config = calloc(1, sizeof(MCPConfig));
+    if (!config) {
+        LOG_ERROR("MCP: Failed to allocate config");
+        cJSON_Delete(root);
+        return NULL;
+    }
+    
+    config->servers = calloc((size_t)server_count, sizeof(MCPServer*));
+    if (!config->servers) {
+        LOG_ERROR("MCP: Failed to allocate server array");
+        free(config);
+        cJSON_Delete(root);
+        return NULL;
+    }
+    
+    // Parse each server
+    int idx = 0;
+    cJSON *server_item = NULL;
+    cJSON_ArrayForEach(server_item, servers_obj) {
+        const char *server_name = server_item->string;
+        if (!server_name) continue;
+        
+        MCPServer *server = calloc(1, sizeof(MCPServer));
+        if (!server) {
+            LOG_ERROR("MCP: Failed to allocate server");
+            continue;
+        }
+        
+        server->name = strdup(server_name);
+        server->transport = MCP_TRANSPORT_STDIO;  // Default to stdio
+        server->stdin_fd = -1;
+        server->stdout_fd = -1;
+        server->connected = 0;
+        server->message_id = 1;
+        
+        // Parse command
+        cJSON *command = cJSON_GetObjectItem(server_item, "command");
+        if (command && cJSON_IsString(command)) {
+            server->command = strdup(command->valuestring);
+        }
+        
+        // Parse args
+        cJSON *args = cJSON_GetObjectItem(server_item, "args");
+        if (args && cJSON_IsArray(args)) {
+            server->args_count = cJSON_GetArraySize(args);
+            server->args = calloc((size_t)server->args_count, sizeof(char*));
+            if (server->args) {
+                int i = 0;
+                cJSON *arg = NULL;
+                cJSON_ArrayForEach(arg, args) {
+                    if (cJSON_IsString(arg)) {
+                        server->args[i++] = strdup(arg->valuestring);
+                    }
+                }
+            }
+        }
+        
+        // Parse env
+        cJSON *env = cJSON_GetObjectItem(server_item, "env");
+        if (env && cJSON_IsObject(env)) {
+            server->env_count = cJSON_GetArraySize(env);
+            if (server->env_count > 0) {
+                server->env = calloc((size_t)server->env_count, sizeof(char*));
+                if (server->env) {
+                    int i = 0;
+                    cJSON *env_item = NULL;
+                    cJSON_ArrayForEach(env_item, env) {
+                        const char *key = env_item->string;
+                        if (key && cJSON_IsString(env_item)) {
+                            char env_str[1024];
+                            snprintf(env_str, sizeof(env_str), "%s=%s", key, env_item->valuestring);
+                            server->env[i++] = strdup(env_str);
+                        }
+                    }
+                }
+            }
+        }
+        
+        config->servers[idx++] = server;
+        LOG_INFO("MCP: Configured server '%s' (command: %s)", server->name, server->command ? server->command : "none");
+    }
+    
+    config->server_count = idx;
+    cJSON_Delete(root);
+    
+    LOG_INFO("MCP: Loaded %d server(s) from config", config->server_count);
+    return config;
+}
+
+/*
+ * Free MCP configuration
+ */
+void mcp_free_config(MCPConfig *config) {
+    if (!config) return;
+    
+    for (int i = 0; i < config->server_count; i++) {
+        MCPServer *server = config->servers[i];
+        if (!server) continue;
+        
+        // Disconnect if connected
+        if (server->connected) {
+            mcp_disconnect_server(server);
+        }
+        
+        free(server->name);
+        free(server->command);
+        free(server->url);
+        
+        if (server->args) {
+            for (int j = 0; j < server->args_count; j++) {
+                free(server->args[j]);
+            }
+            free(server->args);
+        }
+        
+        if (server->env) {
+            for (int j = 0; j < server->env_count; j++) {
+                free(server->env[j]);
+            }
+            free(server->env);
+        }
+        
+        if (server->tools) {
+            for (int j = 0; j < server->tool_count; j++) {
+                free(server->tools[j]);
+            }
+            free(server->tools);
+        }
+        
+        if (server->tool_schemas) {
+            cJSON_Delete(server->tool_schemas);
+        }
+        
+        free(server);
+    }
+    
+    free(config->servers);
+    free(config);
+}
+
+/*
+ * Connect to an MCP server (stdio transport)
+ */
+int mcp_connect_server(MCPServer *server) {
+    if (!server || !server->command) {
+        LOG_ERROR("MCP: Invalid server or missing command");
+        return -1;
+    }
+    
+    if (server->connected) {
+        LOG_WARN("MCP: Server '%s' already connected", server->name);
+        return 0;
+    }
+    
+    LOG_INFO("MCP: Connecting to server '%s'...", server->name);
+    
+    // Create pipes for stdin/stdout
+    int stdin_pipe[2] = {-1, -1};
+    int stdout_pipe[2] = {-1, -1};
+    
+    if (pipe(stdin_pipe) < 0) {
+        LOG_ERROR("MCP: Failed to create stdin pipe: %s", strerror(errno));
+        return -1;
+    }
+    
+    if (pipe(stdout_pipe) < 0) {
+        LOG_ERROR("MCP: Failed to create stdout pipe: %s", strerror(errno));
+        close(stdin_pipe[0]);
+        close(stdin_pipe[1]);
+        return -1;
+    }
+    
+    // Fork process
+    pid_t pid = fork();
+    if (pid < 0) {
+        LOG_ERROR("MCP: Failed to fork: %s", strerror(errno));
+        close(stdin_pipe[0]);
+        close(stdin_pipe[1]);
+        close(stdout_pipe[0]);
+        close(stdout_pipe[1]);
+        return -1;
+    }
+    
+    if (pid == 0) {
+        // Child process
+        
+        // Redirect stdin/stdout
+        dup2(stdin_pipe[0], STDIN_FILENO);
+        dup2(stdout_pipe[1], STDOUT_FILENO);
+        
+        // Close unused pipe ends
+        close(stdin_pipe[0]);
+        close(stdin_pipe[1]);
+        close(stdout_pipe[0]);
+        close(stdout_pipe[1]);
+        
+        // Build argv
+        char **argv = calloc((size_t)(server->args_count + 2), sizeof(char*));
+        if (!argv) {
+            exit(1);
+        }
+        
+        argv[0] = server->command;
+        for (int i = 0; i < server->args_count; i++) {
+            argv[i + 1] = server->args[i];
+        }
+        argv[server->args_count + 1] = NULL;
+        
+        // Set environment if provided
+        if (server->env_count > 0) {
+            for (int i = 0; i < server->env_count; i++) {
+                putenv(server->env[i]);
+            }
+        }
+        
+        // Execute command
+        execvp(server->command, argv);
+        
+        // If we get here, exec failed
+        fprintf(stderr, "MCP: Failed to exec %s: %s\n", server->command, strerror(errno));
+        exit(1);
+    }
+    
+    // Parent process
+    close(stdin_pipe[0]);   // Close read end of stdin pipe
+    close(stdout_pipe[1]);  // Close write end of stdout pipe
+    
+    server->pid = pid;
+    server->stdin_fd = stdin_pipe[1];
+    server->stdout_fd = stdout_pipe[0];
+    server->connected = 1;
+    
+    // Set non-blocking mode for stdout
+    int flags = fcntl(server->stdout_fd, F_GETFL, 0);
+    if (flags >= 0) {
+        fcntl(server->stdout_fd, F_SETFL, flags | O_NONBLOCK);
+    }
+    
+    LOG_INFO("MCP: Connected to server '%s' (pid: %d)", server->name, server->pid);
+    
+    // Send initialize request
+    cJSON *request = cJSON_CreateObject();
+    cJSON_AddStringToObject(request, "jsonrpc", "2.0");
+    cJSON_AddNumberToObject(request, "id", server->message_id++);
+    cJSON_AddStringToObject(request, "method", "initialize");
+    
+    cJSON *params = cJSON_CreateObject();
+    cJSON_AddStringToObject(params, "protocolVersion", "2024-11-05");
+    cJSON_AddStringToObject(params, "clientInfo", "claude-c/1.0");
+    cJSON_AddItemToObject(request, "params", params);
+    
+    char *request_str = cJSON_PrintUnformatted(request);
+    cJSON_Delete(request);
+    
+    if (request_str) {
+        // Write request with newline (JSON-RPC over stdio uses line-delimited JSON)
+        dprintf(server->stdin_fd, "%s\n", request_str);
+        free(request_str);
+        
+        // TODO: Read and validate initialize response
+        // For now, assume success
+    }
+    
+    return 0;
+}
+
+/*
+ * Disconnect from an MCP server
+ */
+void mcp_disconnect_server(MCPServer *server) {
+    if (!server || !server->connected) {
+        return;
+    }
+    
+    LOG_INFO("MCP: Disconnecting from server '%s'", server->name);
+    
+    // Close pipes
+    if (server->stdin_fd >= 0) {
+        close(server->stdin_fd);
+        server->stdin_fd = -1;
+    }
+    
+    if (server->stdout_fd >= 0) {
+        close(server->stdout_fd);
+        server->stdout_fd = -1;
+    }
+    
+    // Kill process if still running
+    if (server->pid > 0) {
+        kill(server->pid, SIGTERM);
+        
+        // Wait for process to exit (with timeout)
+        int status = 0;
+        for (int i = 0; i < 10; i++) {
+            if (waitpid(server->pid, &status, WNOHANG) > 0) {
+                break;
+            }
+            usleep(100000);  // 100ms
+        }
+        
+        // Force kill if still running
+        kill(server->pid, SIGKILL);
+        waitpid(server->pid, &status, 0);
+        
+        server->pid = 0;
+    }
+    
+    server->connected = 0;
+    LOG_INFO("MCP: Disconnected from server '%s'", server->name);
+}
+
+/*
+ * Send JSON-RPC request and read response
+ */
+static cJSON* mcp_send_request(MCPServer *server, const char *method, cJSON *params) {
+    if (!server || !server->connected) {
+        LOG_ERROR("MCP: Server not connected");
+        return NULL;
+    }
+    
+    // Build request
+    cJSON *request = cJSON_CreateObject();
+    cJSON_AddStringToObject(request, "jsonrpc", "2.0");
+    cJSON_AddNumberToObject(request, "id", server->message_id++);
+    cJSON_AddStringToObject(request, "method", method);
+    
+    if (params) {
+        cJSON_AddItemToObject(request, "params", cJSON_Duplicate(params, 1));
+    }
+    
+    char *request_str = cJSON_PrintUnformatted(request);
+    cJSON_Delete(request);
+    
+    if (!request_str) {
+        LOG_ERROR("MCP: Failed to serialize request");
+        return NULL;
+    }
+    
+    // Send request
+    LOG_DEBUG("MCP: Sending request to '%s': %s", server->name, request_str);
+    dprintf(server->stdin_fd, "%s\n", request_str);
+    free(request_str);
+    
+    // Read response (line-delimited JSON)
+    char buffer[65536] = {0};
+    size_t total_read = 0;
+    
+    // Wait for response (with timeout)
+    for (int i = 0; i < 50; i++) {  // 5 second timeout
+        ssize_t n = read(server->stdout_fd, buffer + total_read, sizeof(buffer) - total_read - 1);
+        if (n > 0) {
+            total_read += (size_t)n;
+            
+            // Check if we have a complete line
+            if (strchr(buffer, '\n')) {
+                break;
+            }
+        }
+        usleep(100000);  // 100ms
+    }
+    
+    if (total_read == 0) {
+        LOG_ERROR("MCP: No response from server '%s'", server->name);
+        return NULL;
+    }
+    
+    buffer[total_read] = '\0';
+    LOG_DEBUG("MCP: Received response from '%s': %s", server->name, buffer);
+    
+    // Parse response
+    cJSON *response = cJSON_Parse(buffer);
+    if (!response) {
+        LOG_ERROR("MCP: Failed to parse response: %s", cJSON_GetErrorPtr());
+        return NULL;
+    }
+    
+    // Check for JSON-RPC error
+    cJSON *error = cJSON_GetObjectItem(response, "error");
+    if (error) {
+        cJSON *message = cJSON_GetObjectItem(error, "message");
+        LOG_ERROR("MCP: Server returned error: %s", 
+                 message && cJSON_IsString(message) ? message->valuestring : "unknown");
+        cJSON_Delete(response);
+        return NULL;
+    }
+    
+    return response;
+}
+
+/*
+ * Discover tools from a connected MCP server
+ */
+int mcp_discover_tools(MCPServer *server) {
+    if (!server || !server->connected) {
+        LOG_ERROR("MCP: Server not connected");
+        return -1;
+    }
+    
+    LOG_INFO("MCP: Discovering tools from server '%s'...", server->name);
+    
+    cJSON *response = mcp_send_request(server, "tools/list", NULL);
+    if (!response) {
+        return -1;
+    }
+    
+    // Extract tools from response
+    cJSON *result = cJSON_GetObjectItem(response, "result");
+    if (!result) {
+        LOG_ERROR("MCP: No result in tools/list response");
+        cJSON_Delete(response);
+        return -1;
+    }
+    
+    cJSON *tools = cJSON_GetObjectItem(result, "tools");
+    if (!tools || !cJSON_IsArray(tools)) {
+        LOG_ERROR("MCP: Invalid tools array in response");
+        cJSON_Delete(response);
+        return -1;
+    }
+    
+    int tool_count = cJSON_GetArraySize(tools);
+    if (tool_count <= 0) {
+        LOG_INFO("MCP: Server '%s' provides no tools", server->name);
+        cJSON_Delete(response);
+        return 0;
+    }
+    
+    // Store tool names
+    server->tool_count = tool_count;
+    server->tools = calloc((size_t)tool_count, sizeof(char*));
+    server->tool_schemas = cJSON_Duplicate(tools, 1);
+    
+    if (!server->tools) {
+        LOG_ERROR("MCP: Failed to allocate tool array");
+        cJSON_Delete(response);
+        return -1;
+    }
+    
+    int idx = 0;
+    cJSON *tool = NULL;
+    cJSON_ArrayForEach(tool, tools) {
+        cJSON *name = cJSON_GetObjectItem(tool, "name");
+        if (name && cJSON_IsString(name)) {
+            server->tools[idx++] = strdup(name->valuestring);
+            LOG_INFO("MCP: Discovered tool '%s' from server '%s'", name->valuestring, server->name);
+        }
+    }
+    
+    cJSON_Delete(response);
+    LOG_INFO("MCP: Discovered %d tool(s) from server '%s'", idx, server->name);
+    return idx;
+}
+
+/*
+ * Call an MCP tool
+ */
+MCPToolResult* mcp_call_tool(MCPServer *server, const char *tool_name, cJSON *arguments) {
+    if (!server || !server->connected || !tool_name) {
+        LOG_ERROR("MCP: Invalid parameters for tool call");
+        return NULL;
+    }
+    
+    LOG_INFO("MCP: Calling tool '%s' on server '%s'", tool_name, server->name);
+    
+    // Build params
+    cJSON *params = cJSON_CreateObject();
+    cJSON_AddStringToObject(params, "name", tool_name);
+    
+    if (arguments) {
+        cJSON_AddItemToObject(params, "arguments", cJSON_Duplicate(arguments, 1));
+    }
+    
+    cJSON *response = mcp_send_request(server, "tools/call", params);
+    cJSON_Delete(params);
+    
+    if (!response) {
+        return NULL;
+    }
+    
+    // Extract result
+    cJSON *result_obj = cJSON_GetObjectItem(response, "result");
+    if (!result_obj) {
+        LOG_ERROR("MCP: No result in tools/call response");
+        cJSON_Delete(response);
+        return NULL;
+    }
+    
+    MCPToolResult *result = calloc(1, sizeof(MCPToolResult));
+    if (!result) {
+        cJSON_Delete(response);
+        return NULL;
+    }
+    
+    result->tool_name = strdup(tool_name);
+    result->is_error = 0;
+    
+    // MCP returns content array with text items
+    cJSON *content = cJSON_GetObjectItem(result_obj, "content");
+    if (content && cJSON_IsArray(content)) {
+        // Concatenate all text items
+        size_t total_len = 0;
+        cJSON *item = NULL;
+        
+        // Calculate total length
+        cJSON_ArrayForEach(item, content) {
+            cJSON *text = cJSON_GetObjectItem(item, "text");
+            if (text && cJSON_IsString(text)) {
+                total_len += strlen(text->valuestring) + 1;
+            }
+        }
+        
+        if (total_len > 0) {
+            result->result = calloc(total_len + 1, 1);
+            if (result->result) {
+                cJSON_ArrayForEach(item, content) {
+                    cJSON *text = cJSON_GetObjectItem(item, "text");
+                    if (text && cJSON_IsString(text)) {
+                        strcat(result->result, text->valuestring);
+                        strcat(result->result, "\n");
+                    }
+                }
+            }
+        }
+    }
+    
+    // Check for isError flag
+    cJSON *is_error = cJSON_GetObjectItem(result_obj, "isError");
+    if (is_error && cJSON_IsBool(is_error) && cJSON_IsTrue(is_error)) {
+        result->is_error = 1;
+    }
+    
+    cJSON_Delete(response);
+    LOG_INFO("MCP: Tool call '%s' completed %s", tool_name, result->is_error ? "(with error)" : "successfully");
+    
+    return result;
+}
+
+/*
+ * Free MCP tool result
+ */
+void mcp_free_tool_result(MCPToolResult *result) {
+    if (!result) return;
+    
+    free(result->tool_name);
+    free(result->result);
+    free(result);
+}
+
+/*
+ * Get JSON schema for a tool from an MCP server
+ */
+cJSON* mcp_get_tool_schema(MCPServer *server, const char *tool_name) {
+    if (!server || !tool_name || !server->tool_schemas) {
+        return NULL;
+    }
+    
+    cJSON *tool = NULL;
+    cJSON_ArrayForEach(tool, server->tool_schemas) {
+        cJSON *name = cJSON_GetObjectItem(tool, "name");
+        if (name && cJSON_IsString(name) && strcmp(name->valuestring, tool_name) == 0) {
+            return cJSON_Duplicate(tool, 1);
+        }
+    }
+    
+    return NULL;
+}
+
+/*
+ * Get all tools from all connected servers as Claude API tool definitions
+ */
+cJSON* mcp_get_all_tools(MCPConfig *config) {
+    if (!config) {
+        return NULL;
+    }
+    
+    cJSON *tools_array = cJSON_CreateArray();
+    if (!tools_array) {
+        return NULL;
+    }
+    
+    for (int i = 0; i < config->server_count; i++) {
+        MCPServer *server = config->servers[i];
+        if (!server || !server->connected || !server->tool_schemas) {
+            continue;
+        }
+        
+        cJSON *tool = NULL;
+        cJSON_ArrayForEach(tool, server->tool_schemas) {
+            // Add server name prefix to avoid conflicts
+            cJSON *tool_copy = cJSON_Duplicate(tool, 1);
+            if (tool_copy) {
+                cJSON *name = cJSON_GetObjectItem(tool_copy, "name");
+                if (name && cJSON_IsString(name)) {
+                    char prefixed_name[256];
+                    snprintf(prefixed_name, sizeof(prefixed_name), "mcp_%s_%s", 
+                            server->name, name->valuestring);
+                    cJSON_SetValuestring(name, prefixed_name);
+                }
+                cJSON_AddItemToArray(tools_array, tool_copy);
+            }
+        }
+    }
+    
+    return tools_array;
+}
+
+/*
+ * Find which server provides a given tool
+ */
+MCPServer* mcp_find_tool_server(MCPConfig *config, const char *tool_name) {
+    if (!config || !tool_name) {
+        return NULL;
+    }
+    
+    // Check if tool name has mcp_ prefix
+    if (strncmp(tool_name, "mcp_", 4) != 0) {
+        return NULL;
+    }
+    
+    // Extract server name (format: mcp_<server>_<tool>)
+    char server_name[128] = {0};
+    const char *underscore = strchr(tool_name + 4, '_');
+    if (!underscore) {
+        return NULL;
+    }
+    
+    size_t len = (size_t)(underscore - (tool_name + 4));
+    if (len >= sizeof(server_name)) {
+        return NULL;
+    }
+    
+    strncpy(server_name, tool_name + 4, len);
+    server_name[len] = '\0';
+    
+    // Find server
+    for (int i = 0; i < config->server_count; i++) {
+        MCPServer *server = config->servers[i];
+        if (server && server->name && strcmp(server->name, server_name) == 0) {
+            return server;
+        }
+    }
+    
+    return NULL;
+}
+
+/*
+ * Get MCP server status
+ */
+char* mcp_get_status(MCPConfig *config) {
+    if (!config) {
+        return strdup("MCP: Not configured");
+    }
+
+    char *status = calloc(4096, 1);
+    if (!status) {
+        return NULL;
+    }
+
+    snprintf(status, 4096, "MCP Status: %d server(s)\n", config->server_count);
+
+    for (int i = 0; i < config->server_count; i++) {
+        MCPServer *server = config->servers[i];
+        if (!server) continue;
+
+        char server_status[512];
+        snprintf(server_status, sizeof(server_status),
+                "  - %s: %s (%d tools)\n",
+                server->name,
+                server->connected ? "connected" : "disconnected",
+                server->tool_count);
+        strncat(status, server_status, 4096 - strlen(status) - 1);
+    }
+
+    return status;
+}
+
+/*
+ * List resources from MCP servers
+ */
+MCPResourceList* mcp_list_resources(MCPConfig *config, const char *server_name) {
+    if (!config) {
+        LOG_ERROR("MCP: Invalid config for list_resources");
+        MCPResourceList *result = calloc(1, sizeof(MCPResourceList));
+        if (result) {
+            result->is_error = 1;
+            result->error_message = strdup("Invalid MCP configuration");
+        }
+        return result;
+    }
+
+    MCPResourceList *result = calloc(1, sizeof(MCPResourceList));
+    if (!result) {
+        LOG_ERROR("MCP: Failed to allocate resource list");
+        return NULL;
+    }
+
+    // Allocate array for resources (estimate max)
+    int max_resources = config->server_count * 100; // Assume max 100 resources per server
+    result->resources = calloc((size_t)max_resources, sizeof(MCPResource*));
+    if (!result->resources) {
+        LOG_ERROR("MCP: Failed to allocate resource array");
+        result->is_error = 1;
+        result->error_message = strdup("Memory allocation failed");
+        return result;
+    }
+
+    int total_count = 0;
+
+    // Iterate through servers
+    for (int i = 0; i < config->server_count; i++) {
+        MCPServer *server = config->servers[i];
+        if (!server || !server->connected) {
+            continue;
+        }
+
+        // Filter by server name if specified
+        if (server_name && strcmp(server->name, server_name) != 0) {
+            continue;
+        }
+
+        LOG_INFO("MCP: Listing resources from server '%s'", server->name);
+
+        // Send resources/list request
+        cJSON *response = mcp_send_request(server, "resources/list", NULL);
+        if (!response) {
+            LOG_WARN("MCP: Failed to list resources from server '%s'", server->name);
+            continue;
+        }
+
+        // Extract resources from response
+        cJSON *result_obj = cJSON_GetObjectItem(response, "result");
+        if (!result_obj) {
+            LOG_WARN("MCP: No result in resources/list response from '%s'", server->name);
+            cJSON_Delete(response);
+            continue;
+        }
+
+        cJSON *resources = cJSON_GetObjectItem(result_obj, "resources");
+        if (!resources || !cJSON_IsArray(resources)) {
+            LOG_WARN("MCP: Invalid resources array from '%s'", server->name);
+            cJSON_Delete(response);
+            continue;
+        }
+
+        // Parse each resource
+        cJSON *resource_item = NULL;
+        cJSON_ArrayForEach(resource_item, resources) {
+            if (total_count >= max_resources) {
+                LOG_WARN("MCP: Resource limit reached");
+                break;
+            }
+
+            MCPResource *resource = calloc(1, sizeof(MCPResource));
+            if (!resource) {
+                continue;
+            }
+
+            // Required fields
+            cJSON *uri = cJSON_GetObjectItem(resource_item, "uri");
+            cJSON *name = cJSON_GetObjectItem(resource_item, "name");
+
+            if (uri && cJSON_IsString(uri)) {
+                resource->uri = strdup(uri->valuestring);
+            }
+
+            if (name && cJSON_IsString(name)) {
+                resource->name = strdup(name->valuestring);
+            }
+
+            // Optional fields
+            cJSON *description = cJSON_GetObjectItem(resource_item, "description");
+            if (description && cJSON_IsString(description)) {
+                resource->description = strdup(description->valuestring);
+            }
+
+            cJSON *mime_type = cJSON_GetObjectItem(resource_item, "mimeType");
+            if (mime_type && cJSON_IsString(mime_type)) {
+                resource->mime_type = strdup(mime_type->valuestring);
+            }
+
+            // Add server name
+            resource->server = strdup(server->name);
+
+            result->resources[total_count++] = resource;
+        }
+
+        cJSON_Delete(response);
+    }
+
+    result->count = total_count;
+    result->is_error = 0;
+
+    LOG_INFO("MCP: Listed %d resource(s) from %s",
+             total_count,
+             server_name ? server_name : "all servers");
+
+    return result;
+}
+
+/*
+ * Read a resource from an MCP server
+ */
+MCPResourceContent* mcp_read_resource(MCPConfig *config, const char *server_name, const char *uri) {
+    if (!config || !server_name || !uri) {
+        LOG_ERROR("MCP: Invalid parameters for read_resource");
+        MCPResourceContent *result = calloc(1, sizeof(MCPResourceContent));
+        if (result) {
+            result->is_error = 1;
+            result->error_message = strdup("Invalid parameters");
+        }
+        return result;
+    }
+
+    // Find the server
+    MCPServer *server = NULL;
+    for (int i = 0; i < config->server_count; i++) {
+        if (config->servers[i] &&
+            config->servers[i]->name &&
+            strcmp(config->servers[i]->name, server_name) == 0) {
+            server = config->servers[i];
+            break;
+        }
+    }
+
+    if (!server) {
+        LOG_ERROR("MCP: Server '%s' not found", server_name);
+        MCPResourceContent *result = calloc(1, sizeof(MCPResourceContent));
+        if (result) {
+            result->is_error = 1;
+            char err_msg[256];
+            snprintf(err_msg, sizeof(err_msg), "Server '%s' not found", server_name);
+            result->error_message = strdup(err_msg);
+        }
+        return result;
+    }
+
+    if (!server->connected) {
+        LOG_ERROR("MCP: Server '%s' not connected", server_name);
+        MCPResourceContent *result = calloc(1, sizeof(MCPResourceContent));
+        if (result) {
+            result->is_error = 1;
+            char err_msg[256];
+            snprintf(err_msg, sizeof(err_msg), "Server '%s' not connected", server_name);
+            result->error_message = strdup(err_msg);
+        }
+        return result;
+    }
+
+    LOG_INFO("MCP: Reading resource '%s' from server '%s'", uri, server_name);
+
+    // Build params
+    cJSON *params = cJSON_CreateObject();
+    cJSON_AddStringToObject(params, "uri", uri);
+
+    // Send resources/read request
+    cJSON *response = mcp_send_request(server, "resources/read", params);
+    cJSON_Delete(params);
+
+    if (!response) {
+        LOG_ERROR("MCP: Failed to read resource from server '%s'", server_name);
+        MCPResourceContent *result = calloc(1, sizeof(MCPResourceContent));
+        if (result) {
+            result->is_error = 1;
+            result->error_message = strdup("Failed to read resource");
+        }
+        return result;
+    }
+
+    // Extract result
+    cJSON *result_obj = cJSON_GetObjectItem(response, "result");
+    if (!result_obj) {
+        LOG_ERROR("MCP: No result in resources/read response");
+        cJSON_Delete(response);
+        MCPResourceContent *result = calloc(1, sizeof(MCPResourceContent));
+        if (result) {
+            result->is_error = 1;
+            result->error_message = strdup("No result in response");
+        }
+        return result;
+    }
+
+    MCPResourceContent *result = calloc(1, sizeof(MCPResourceContent));
+    if (!result) {
+        cJSON_Delete(response);
+        return NULL;
+    }
+
+    result->uri = strdup(uri);
+    result->is_error = 0;
+
+    // Extract contents array
+    cJSON *contents = cJSON_GetObjectItem(result_obj, "contents");
+    if (contents && cJSON_IsArray(contents) && cJSON_GetArraySize(contents) > 0) {
+        cJSON *content_item = cJSON_GetArrayItem(contents, 0);
+
+        // Get URI and MIME type
+        cJSON *content_uri = cJSON_GetObjectItem(content_item, "uri");
+        if (content_uri && cJSON_IsString(content_uri) && !result->uri) {
+            result->uri = strdup(content_uri->valuestring);
+        }
+
+        cJSON *mime_type = cJSON_GetObjectItem(content_item, "mimeType");
+        if (mime_type && cJSON_IsString(mime_type)) {
+            result->mime_type = strdup(mime_type->valuestring);
+        }
+
+        // Get text content
+        cJSON *text = cJSON_GetObjectItem(content_item, "text");
+        if (text && cJSON_IsString(text)) {
+            result->text = strdup(text->valuestring);
+        }
+
+        // Get blob content (base64 encoded)
+        cJSON *blob = cJSON_GetObjectItem(content_item, "blob");
+        if (blob && cJSON_IsString(blob)) {
+            // TODO: Decode base64 if needed
+            LOG_DEBUG("MCP: Binary blob content received (not decoded)");
+        }
+    }
+
+    cJSON_Delete(response);
+
+    LOG_INFO("MCP: Successfully read resource '%s' from server '%s'", uri, server_name);
+
+    return result;
+}
+
+/*
+ * Free MCP resource list
+ */
+void mcp_free_resource_list(MCPResourceList *list) {
+    if (!list) return;
+
+    if (list->resources) {
+        for (int i = 0; i < list->count; i++) {
+            MCPResource *resource = list->resources[i];
+            if (resource) {
+                free(resource->server);
+                free(resource->uri);
+                free(resource->name);
+                free(resource->description);
+                free(resource->mime_type);
+                free(resource);
+            }
+        }
+        free(list->resources);
+    }
+
+    free(list->error_message);
+    free(list);
+}
+
+/*
+ * Free MCP resource content
+ */
+void mcp_free_resource_content(MCPResourceContent *content) {
+    if (!content) return;
+
+    free(content->uri);
+    free(content->mime_type);
+    free(content->text);
+    free(content->blob);
+    free(content->error_message);
+    free(content);
+}

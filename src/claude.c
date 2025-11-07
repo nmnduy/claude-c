@@ -35,6 +35,7 @@
 #include "colorscheme.h"
 #include "fallback_colors.h"
 #include "patch_parser.h"
+#include "tool_utils.h"
 
 #ifdef TEST_BUILD
 // Disable unused function warnings for test builds since not all functions are used by tests
@@ -119,6 +120,11 @@ static int bedrock_handle_auth_error(BedrockConfig *config, long http_status, co
 // AWS Bedrock support
 #ifndef TEST_BUILD
 #include "aws_bedrock.h"
+#endif
+
+// MCP (Model Context Protocol) support
+#ifndef TEST_BUILD
+#include "mcp.h"
 #endif
 
 #ifdef TEST_BUILD
@@ -386,24 +392,20 @@ static void emit_diff_line(const char *line,
         return;
     }
 
-    // Determine color based on first character
-    const char *color = NULL;
-    if (trimmed[0] == '+' && trimmed[1] != '+') {
-        color = add_color;
-    } else if (trimmed[0] == '-' && trimmed[1] != '-') {
-        color = remove_color;
-    }
-
     // Print with indentation and color if applicable
     if (g_active_tool_queue) {
-        if (color) {
-            char colored_line[2048];
-            snprintf(colored_line, sizeof(colored_line), "%s%s%s", color, trimmed, ANSI_RESET);
-            tool_emit_line("", colored_line);
-        } else {
-            tool_emit_line("", trimmed);
-        }
+        // For TUI mode: just pass the line as-is
+        // The TUI will detect diff prefixes and color appropriately
+        tool_emit_line("", trimmed);
     } else {
+        // For non-TUI mode (direct stdout): use ANSI color codes
+        const char *color = NULL;
+        if (trimmed[0] == '+' && trimmed[1] != '+') {
+            color = add_color;
+        } else if (trimmed[0] == '-' && trimmed[1] != '-') {
+            color = remove_color;
+        }
+        
         if (color) {
             printf("  %s%s%s\n", color, trimmed, ANSI_RESET);
         } else {
@@ -426,14 +428,7 @@ static char* get_tool_details(const char *tool_name, cJSON *arguments) {
     if (strcmp(tool_name, "Bash") == 0) {
         cJSON *command = cJSON_GetObjectItem(arguments, "command");
         if (cJSON_IsString(command)) {
-            const char *cmd = command->valuestring;
-            // Truncate long commands to first 50 characters
-            if (strlen(cmd) > 50) {
-                snprintf(details, sizeof(details), "%.47s...", cmd);
-            } else {
-                strncpy(details, cmd, sizeof(details) - 1);
-                details[sizeof(details) - 1] = '\0';
-            }
+            summarize_bash_command(command->valuestring, details, sizeof(details));
         }
     } else if (strcmp(tool_name, "Read") == 0) {
         cJSON *file_path = cJSON_GetObjectItem(arguments, "file_path");
@@ -794,10 +789,10 @@ static int show_diff(const char *file_path, const char *original_content) {
     unlink(temp_path);
 
     if (!has_diff) {
-        tool_emit_line("[Diff]", "(No changes - files are identical)");
+        tool_emit_line(" ", "(No changes - files are identical)");
     } else if (result == 0) {
         // diff exit code 0 means no differences found
-        tool_emit_line("[Diff]", "(No differences found)");
+        tool_emit_line(" ", "(No differences found)");
     }
 
 
@@ -809,7 +804,12 @@ static int show_diff(const char *file_path, const char *original_content) {
 // ============================================================================
 
 static cJSON* tool_bash(cJSON *params, ConversationState *state) {
-    (void)state;  // Unused parameter
+    // Check for interrupt before starting
+    if (state && state->interrupt_requested) {
+        cJSON *error = cJSON_CreateObject();
+        cJSON_AddStringToObject(error, "error", "Operation interrupted by user");
+        return error;
+    }
 
     const cJSON *cmd_json = cJSON_GetObjectItem(params, "command");
     if (!cmd_json || !cJSON_IsString(cmd_json)) {
@@ -833,6 +833,15 @@ static cJSON* tool_bash(cJSON *params, ConversationState *state) {
     size_t total_size = 0;
 
     while (fgets(buffer, sizeof(buffer), pipe)) {
+        // Check for interrupt during long-running command
+        if (state && state->interrupt_requested) {
+            free(output);
+            pclose(pipe);
+            cJSON *error = cJSON_CreateObject();
+            cJSON_AddStringToObject(error, "error", "Operation interrupted by user");
+            return error;
+        }
+        
         // Add cancellation point to allow thread cancellation during long reads
         pthread_testcancel();
 
@@ -1088,8 +1097,8 @@ STATIC cJSON* tool_write(cJSON *params, ConversationState *state) {
             // New file creation
             char header[PATH_MAX + 64];
             snprintf(header, sizeof(header), "--- Created new file: %s ---", resolved_path);
-            tool_emit_line("[Diff]", header);
-            tool_emit_line("[Diff]", "New file written - no previous content to compare");
+            tool_emit_line(" ", header);
+            tool_emit_line(" ", "New file written - no previous content to compare");
         }
     }
 
@@ -1630,14 +1639,60 @@ static cJSON* tool_grep(cJSON *params, ConversationState *state) {
     const char *path = path_json && cJSON_IsString(path_json) ?
                        path_json->valuestring : ".";
 
+    // Get max results from environment or use default
+    int max_results = 100;  // Default limit
+    const char *max_env = getenv("CLAUDE_C_GREP_MAX_RESULTS");
+    if (max_env) {
+        int max_val = atoi(max_env);
+        if (max_val > 0) {
+            max_results = max_val;
+        }
+    }
+
     cJSON *result = cJSON_CreateObject();
     cJSON *matches = cJSON_CreateArray();
+    int match_count = 0;
+    int truncated = 0;
+
+    // Common exclusions to avoid build artifacts and large binary/generated files
+    // This list mimics what tools like ripgrep exclude by default
+    const char *exclusions = 
+        "--exclude-dir=.git "
+        "--exclude-dir=.svn "
+        "--exclude-dir=.hg "
+        "--exclude-dir=node_modules "
+        "--exclude-dir=bower_components "
+        "--exclude-dir=vendor "
+        "--exclude-dir=build "
+        "--exclude-dir=dist "
+        "--exclude-dir=target "
+        "--exclude-dir=.cache "
+        "--exclude-dir=.venv "
+        "--exclude-dir=venv "
+        "--exclude-dir=__pycache__ "
+        "--exclude='*.min.js' "
+        "--exclude='*.min.css' "
+        "--exclude='*.pyc' "
+        "--exclude='*.o' "
+        "--exclude='*.a' "
+        "--exclude='*.so' "
+        "--exclude='*.dylib' "
+        "--exclude='*.exe' "
+        "--exclude='*.dll' "
+        "--exclude='*.class' "
+        "--exclude='*.jar' "
+        "--exclude='*.war' "
+        "--exclude='*.zip' "
+        "--exclude='*.tar' "
+        "--exclude='*.gz' "
+        "--exclude='*.log' "
+        "--exclude='.DS_Store' ";
 
     // Search in main working directory
-    char command[BUFFER_SIZE];
+    char command[BUFFER_SIZE * 2];
     snprintf(command, sizeof(command),
-             "cd %s && grep -r -n '%s' %s 2>/dev/null || true",
-             state->working_dir, pattern, path);
+             "cd %s && grep -r -n %s '%s' %s 2>/dev/null || true",
+             state->working_dir, exclusions, pattern, path);
 
     FILE *pipe = popen(command, "r");
     if (!pipe) {
@@ -1648,28 +1703,50 @@ static cJSON* tool_grep(cJSON *params, ConversationState *state) {
 
     char buffer[BUFFER_SIZE];
     while (fgets(buffer, sizeof(buffer), pipe)) {
+        if (match_count >= max_results) {
+            truncated = 1;
+            break;
+        }
         buffer[strcspn(buffer, "\n")] = 0;  // Remove newline
         cJSON_AddItemToArray(matches, cJSON_CreateString(buffer));
+        match_count++;
     }
     pclose(pipe);
 
-    // Search in additional working directories
-    for (int dir_idx = 0; dir_idx < state->additional_dirs_count; dir_idx++) {
+    // Search in additional working directories (if not already truncated)
+    for (int dir_idx = 0; dir_idx < state->additional_dirs_count && !truncated; dir_idx++) {
         snprintf(command, sizeof(command),
-                 "cd %s && grep -r -n '%s' %s 2>/dev/null || true",
-                 state->additional_dirs[dir_idx], pattern, path);
+                 "cd %s && grep -r -n %s '%s' %s 2>/dev/null || true",
+                 state->additional_dirs[dir_idx], exclusions, pattern, path);
 
         pipe = popen(command, "r");
         if (!pipe) continue;  // Skip this directory on error
 
         while (fgets(buffer, sizeof(buffer), pipe)) {
+            if (match_count >= max_results) {
+                truncated = 1;
+                break;
+            }
             buffer[strcspn(buffer, "\n")] = 0;  // Remove newline
             cJSON_AddItemToArray(matches, cJSON_CreateString(buffer));
+            match_count++;
         }
         pclose(pipe);
     }
 
     cJSON_AddItemToObject(result, "matches", matches);
+    
+    // Add metadata about the search
+    if (truncated) {
+        char warning[256];
+        snprintf(warning, sizeof(warning), 
+                "Results truncated at %d matches. Use CLAUDE_C_GREP_MAX_RESULTS to adjust limit, or refine your search pattern.",
+                max_results);
+        cJSON_AddStringToObject(result, "warning", warning);
+    }
+    
+    cJSON_AddNumberToObject(result, "match_count", match_count);
+    
     return result;
 }
 
@@ -1777,6 +1854,119 @@ STATIC cJSON* tool_sleep(cJSON *params, ConversationState *state) {
     return result;
 }
 
+#ifndef TEST_BUILD
+// MCP ListMcpResources tool handler
+static cJSON* tool_list_mcp_resources(cJSON *params, ConversationState *state) {
+    if (!state || !state->mcp_config) {
+        cJSON *error = cJSON_CreateObject();
+        cJSON_AddStringToObject(error, "error", "MCP not configured");
+        return error;
+    }
+
+    // Extract optional server parameter
+    const char *server_name = NULL;
+    cJSON *server_json = cJSON_GetObjectItem(params, "server");
+    if (server_json && cJSON_IsString(server_json)) {
+        server_name = server_json->valuestring;
+    }
+
+    // Call mcp_list_resources
+    MCPResourceList *resource_list = mcp_list_resources(state->mcp_config, server_name);
+    if (!resource_list) {
+        cJSON *error = cJSON_CreateObject();
+        cJSON_AddStringToObject(error, "error", "Failed to list resources");
+        return error;
+    }
+
+    // Build result JSON
+    cJSON *result = cJSON_CreateObject();
+
+    if (resource_list->is_error) {
+        cJSON_AddStringToObject(result, "error",
+            resource_list->error_message ? resource_list->error_message : "Unknown error");
+        mcp_free_resource_list(resource_list);
+        return result;
+    }
+
+    // Create resources array
+    cJSON *resources = cJSON_CreateArray();
+    for (int i = 0; i < resource_list->count; i++) {
+        MCPResource *res = resource_list->resources[i];
+        if (!res) continue;
+
+        cJSON *res_obj = cJSON_CreateObject();
+        if (res->server) cJSON_AddStringToObject(res_obj, "server", res->server);
+        if (res->uri) cJSON_AddStringToObject(res_obj, "uri", res->uri);
+        if (res->name) cJSON_AddStringToObject(res_obj, "name", res->name);
+        if (res->description) cJSON_AddStringToObject(res_obj, "description", res->description);
+        if (res->mime_type) cJSON_AddStringToObject(res_obj, "mimeType", res->mime_type);
+
+        cJSON_AddItemToArray(resources, res_obj);
+    }
+
+    cJSON_AddItemToObject(result, "resources", resources);
+    cJSON_AddNumberToObject(result, "count", resource_list->count);
+
+    mcp_free_resource_list(resource_list);
+    return result;
+}
+
+// MCP ReadMcpResource tool handler
+static cJSON* tool_read_mcp_resource(cJSON *params, ConversationState *state) {
+    if (!state || !state->mcp_config) {
+        cJSON *error = cJSON_CreateObject();
+        cJSON_AddStringToObject(error, "error", "MCP not configured");
+        return error;
+    }
+
+    // Extract required parameters
+    cJSON *server_json = cJSON_GetObjectItem(params, "server");
+    cJSON *uri_json = cJSON_GetObjectItem(params, "uri");
+
+    if (!server_json || !cJSON_IsString(server_json)) {
+        cJSON *error = cJSON_CreateObject();
+        cJSON_AddStringToObject(error, "error", "Missing or invalid 'server' parameter");
+        return error;
+    }
+
+    if (!uri_json || !cJSON_IsString(uri_json)) {
+        cJSON *error = cJSON_CreateObject();
+        cJSON_AddStringToObject(error, "error", "Missing or invalid 'uri' parameter");
+        return error;
+    }
+
+    const char *server_name = server_json->valuestring;
+    const char *uri = uri_json->valuestring;
+
+    // Call mcp_read_resource
+    MCPResourceContent *content = mcp_read_resource(state->mcp_config, server_name, uri);
+    if (!content) {
+        cJSON *error = cJSON_CreateObject();
+        cJSON_AddStringToObject(error, "error", "Failed to read resource");
+        return error;
+    }
+
+    // Build result JSON
+    cJSON *result = cJSON_CreateObject();
+
+    if (content->is_error) {
+        cJSON_AddStringToObject(result, "error",
+            content->error_message ? content->error_message : "Unknown error");
+        mcp_free_resource_content(content);
+        return result;
+    }
+
+    if (content->uri) cJSON_AddStringToObject(result, "uri", content->uri);
+    if (content->mime_type) cJSON_AddStringToObject(result, "mimeType", content->mime_type);
+    if (content->text) cJSON_AddStringToObject(result, "text", content->text);
+
+    // Note: Binary blob not yet supported
+
+    mcp_free_resource_content(content);
+    return result;
+}
+#endif
+
 // ============================================================================
 // Tool Registry
 // ============================================================================
@@ -1795,6 +1985,10 @@ static Tool tools[] = {
     {"Glob", tool_glob},
     {"Grep", tool_grep},
     {"TodoWrite", tool_todo_write},
+#ifndef TEST_BUILD
+    {"ListMcpResources", tool_list_mcp_resources},
+    {"ReadMcpResource", tool_read_mcp_resource},
+#endif
 };
 
 static const int num_tools = sizeof(tools) / sizeof(Tool);
@@ -1805,12 +1999,46 @@ static cJSON* execute_tool(const char *tool_name, cJSON *input, ConversationStat
     clock_gettime(CLOCK_MONOTONIC, &start);
 
     cJSON *result = NULL;
+    
+    // Try built-in tools first
     for (int i = 0; i < num_tools; i++) {
         if (strcmp(tools[i].name, tool_name) == 0) {
             result = tools[i].handler(input, state);
             break;
         }
     }
+
+#ifndef TEST_BUILD
+    // If not found in built-in tools, try MCP tools
+    if (!result && state && state->mcp_config && strncmp(tool_name, "mcp_", 4) == 0) {
+        MCPServer *server = mcp_find_tool_server(state->mcp_config, tool_name);
+        if (server) {
+            // Extract the actual tool name (remove mcp_<server>_ prefix)
+            const char *actual_tool_name = strchr(tool_name + 4, '_');
+            if (actual_tool_name) {
+                actual_tool_name++;  // Skip the underscore
+                
+                LOG_INFO("Calling MCP tool '%s' on server '%s'", actual_tool_name, server->name);
+                
+                MCPToolResult *mcp_result = mcp_call_tool(server, actual_tool_name, input);
+                if (mcp_result) {
+                    result = cJSON_CreateObject();
+                    
+                    if (mcp_result->is_error) {
+                        cJSON_AddStringToObject(result, "error", mcp_result->result ? mcp_result->result : "MCP tool error");
+                    } else {
+                        cJSON_AddStringToObject(result, "content", mcp_result->result ? mcp_result->result : "");
+                    }
+                    
+                    mcp_free_tool_result(mcp_result);
+                } else {
+                    result = cJSON_CreateObject();
+                    cJSON_AddStringToObject(result, "error", "MCP tool call failed");
+                }
+            }
+        }
+    }
+#endif
 
     if (!result) {
         result = cJSON_CreateObject();
@@ -1833,7 +2061,7 @@ static cJSON* execute_tool(const char *tool_name, cJSON *input, ConversationStat
 // Forward declaration for cache_control helper
 
 
-cJSON* get_tool_definitions(int enable_caching) {
+cJSON* get_tool_definitions(ConversationState *state, int enable_caching) {
     cJSON *tool_array = cJSON_CreateArray();
     // Sleep tool
     cJSON *sleep_tool = cJSON_CreateObject();
@@ -2004,15 +2232,21 @@ cJSON* get_tool_definitions(int enable_caching) {
     cJSON_AddStringToObject(grep_tool, "type", "function");
     cJSON *grep_func = cJSON_CreateObject();
     cJSON_AddStringToObject(grep_func, "name", "Grep");
-    cJSON_AddStringToObject(grep_func, "description", "Searches for patterns in files");
+    cJSON_AddStringToObject(grep_func, "description", 
+        "Searches for patterns in files. Results limited to 100 matches by default "
+        "(configurable via CLAUDE_C_GREP_MAX_RESULTS). Automatically excludes common "
+        "build directories, dependencies, and binary files (.git, node_modules, build/, "
+        "*.min.js, etc). Returns 'match_count' and 'warning' if truncated.");
     cJSON *grep_params = cJSON_CreateObject();
     cJSON_AddStringToObject(grep_params, "type", "object");
     cJSON *grep_props = cJSON_CreateObject();
     cJSON *grep_pattern = cJSON_CreateObject();
     cJSON_AddStringToObject(grep_pattern, "type", "string");
+    cJSON_AddStringToObject(grep_pattern, "description", "Pattern to search for");
     cJSON_AddItemToObject(grep_props, "pattern", grep_pattern);
     cJSON *grep_path = cJSON_CreateObject();
     cJSON_AddStringToObject(grep_path, "type", "string");
+    cJSON_AddStringToObject(grep_path, "description", "Path to search in (default: .)");
     cJSON_AddItemToObject(grep_props, "path", grep_path);
     cJSON_AddItemToObject(grep_params, "properties", grep_props);
     cJSON *grep_req = cJSON_CreateArray();
@@ -2091,6 +2325,63 @@ cJSON* get_tool_definitions(int enable_caching) {
     }
 
     cJSON_AddItemToArray(tool_array, todo_tool);
+
+#ifndef TEST_BUILD
+    // Add MCP resource tools if MCP is enabled
+    if (state && state->mcp_config && mcp_is_enabled()) {
+        // ListMcpResources tool
+        cJSON *list_res_tool = cJSON_CreateObject();
+        cJSON_AddStringToObject(list_res_tool, "type", "function");
+        cJSON *list_res_func = cJSON_CreateObject();
+        cJSON_AddStringToObject(list_res_func, "name", "ListMcpResources");
+        cJSON_AddStringToObject(list_res_func, "description",
+            "Lists available resources from configured MCP servers. "
+            "Each resource object includes a 'server' field indicating which server it's from.");
+        cJSON *list_res_params = cJSON_CreateObject();
+        cJSON_AddStringToObject(list_res_params, "type", "object");
+        cJSON *list_res_props = cJSON_CreateObject();
+        cJSON *server_prop = cJSON_CreateObject();
+        cJSON_AddStringToObject(server_prop, "type", "string");
+        cJSON_AddStringToObject(server_prop, "description",
+            "Optional server name to filter resources by. If not provided, resources from all servers will be returned.");
+        cJSON_AddItemToObject(list_res_props, "server", server_prop);
+        cJSON_AddItemToObject(list_res_params, "properties", list_res_props);
+        cJSON_AddItemToObject(list_res_func, "parameters", list_res_params);
+        cJSON_AddItemToObject(list_res_tool, "function", list_res_func);
+        cJSON_AddItemToArray(tool_array, list_res_tool);
+
+        // ReadMcpResource tool
+        cJSON *read_res_tool = cJSON_CreateObject();
+        cJSON_AddStringToObject(read_res_tool, "type", "function");
+        cJSON *read_res_func = cJSON_CreateObject();
+        cJSON_AddStringToObject(read_res_func, "name", "ReadMcpResource");
+        cJSON_AddStringToObject(read_res_func, "description",
+            "Reads a specific resource from an MCP server, identified by server name and resource URI.");
+        cJSON *read_res_params = cJSON_CreateObject();
+        cJSON_AddStringToObject(read_res_params, "type", "object");
+        cJSON *read_res_props = cJSON_CreateObject();
+        cJSON *read_server_prop = cJSON_CreateObject();
+        cJSON_AddStringToObject(read_server_prop, "type", "string");
+        cJSON_AddStringToObject(read_server_prop, "description", "The name of the MCP server to read from");
+        cJSON_AddItemToObject(read_res_props, "server", read_server_prop);
+        cJSON *uri_prop = cJSON_CreateObject();
+        cJSON_AddStringToObject(uri_prop, "type", "string");
+        cJSON_AddStringToObject(uri_prop, "description", "The URI of the resource to read");
+        cJSON_AddItemToObject(read_res_props, "uri", uri_prop);
+        cJSON_AddItemToObject(read_res_params, "properties", read_res_props);
+        cJSON *read_res_req = cJSON_CreateArray();
+        cJSON_AddItemToArray(read_res_req, cJSON_CreateString("server"));
+        cJSON_AddItemToArray(read_res_req, cJSON_CreateString("uri"));
+        cJSON_AddItemToObject(read_res_params, "required", read_res_req);
+        cJSON_AddItemToObject(read_res_func, "parameters", read_res_params);
+        cJSON_AddItemToObject(read_res_tool, "function", read_res_func);
+        cJSON_AddItemToArray(tool_array, read_res_tool);
+
+        LOG_INFO("Added MCP resource tools (ListMcpResources, ReadMcpResource)");
+    }
+#else
+    (void)state;  // Suppress unused parameter warning in test builds
+#endif
 
     return tool_array;
 }
@@ -2295,8 +2586,8 @@ char* build_request_json_from_state(ConversationState *state) {
 
     cJSON_AddItemToObject(request, "messages", messages_array);
 
-    // Add tools with cache_control support
-    cJSON *tool_defs = get_tool_definitions(enable_caching);
+    // Add tools with cache_control support (including MCP tools if available)
+    cJSON *tool_defs = get_tool_definitions(state, enable_caching);
     cJSON_AddItemToObject(request, "tools", tool_defs);
 
     conversation_state_unlock(state);
@@ -2359,9 +2650,35 @@ void api_response_free(ApiResponse *response) {
  * Returns: ApiResponse or NULL on error
  */
 static ApiResponse* call_api_with_retries(ConversationState *state) {
-    if (!state || !state->provider) {
-        LOG_ERROR("Invalid state or provider");
+    if (!state) {
+        LOG_ERROR("Invalid conversation state");
         return NULL;
+    }
+
+    // Lazy-initialize provider to avoid blocking initial TUI render
+    if (!state->provider) {
+        LOG_INFO("Initializing API provider in background context...");
+        ProviderInitResult provider_result;
+        provider_init(state->model, state->api_key, &provider_result);
+        if (!provider_result.provider) {
+            const char *msg = provider_result.error_message ? provider_result.error_message : "unknown error";
+            LOG_ERROR("Provider initialization failed: %s", msg);
+            print_error("Failed to initialize API provider. Check configuration.");
+            free(provider_result.error_message);
+            free(provider_result.api_url);
+            return NULL;
+        }
+
+        // Transfer ownership to state and update API URL
+        if (state->api_url) {
+            free(state->api_url);
+        }
+        state->api_url = provider_result.api_url;
+        state->provider = provider_result.provider;
+        free(provider_result.error_message);
+
+        LOG_INFO("Provider initialized: %s, API URL: %s",
+                 state->provider->name, state->api_url ? state->api_url : "(null)");
     }
 
     int attempt_num = 1;
@@ -2375,6 +2692,13 @@ static ApiResponse* call_api_with_retries(ConversationState *state) {
               state->provider->name, state->model);
 
     while (1) {
+        // Check for interrupt request
+        if (state->interrupt_requested) {
+            LOG_INFO("API call interrupted by user request");
+            print_error("Operation interrupted by user");
+            return NULL;
+        }
+        
         // Check if we've exceeded max retry duration
         struct timespec now;
         clock_gettime(CLOCK_MONOTONIC, &now);
@@ -2796,6 +3120,7 @@ int conversation_state_init(ConversationState *state) {
     }
 
     state->conv_mutex_initialized = 1;
+    state->interrupt_requested = 0;  // Initialize interrupt flag
     return 0;
 }
 
@@ -2874,7 +3199,7 @@ static void add_system_message(ConversationState *state, const char *text) {
     conversation_state_unlock(state);
 }
 
-static void add_user_message(ConversationState *state, const char *text) {
+void add_user_message(ConversationState *state, const char *text) {
     if (conversation_state_lock(state) != 0) {
         return;
     }
@@ -3265,8 +3590,31 @@ static void process_response(ConversationState *state,
         }
 
         int started_threads = 0;
+        int interrupted = 0;  // Track if user requested interruption during scheduling/waiting
 
         for (int i = 0; i < tool_count; i++) {
+            // Check for interrupt before starting each tool
+            if (state->interrupt_requested) {
+                LOG_INFO("Tool execution interrupted by user request (before starting remaining tools)");
+                ui_show_error(tui, queue, "Tool execution interrupted by user");
+                interrupted = 1;
+
+                // For any tools not yet started, emit a cancelled tool_result so the
+                // conversation remains consistent (every tool_call gets a tool_result)
+                for (int k = i; k < tool_count; k++) {
+                    ToolCall *tcancel = &tool_calls_array[k];
+                    InternalContent *slot = &results[k];
+                    slot->type = INTERNAL_TOOL_RESPONSE;
+                    slot->tool_id = tcancel->id ? strdup(tcancel->id) : strdup("unknown");
+                    slot->tool_name = tcancel->name ? strdup(tcancel->name) : strdup("tool");
+                    cJSON *err = cJSON_CreateObject();
+                    cJSON_AddStringToObject(err, "error", "Tool execution cancelled before start");
+                    slot->tool_output = err;
+                    slot->is_error = 1;
+                }
+                break;  // Stop launching new tools
+            }
+            
             ToolCall *tool = &tool_calls_array[i];
             InternalContent *result_slot = &results[i];
             result_slot->type = INTERNAL_TOOL_RESPONSE;
@@ -3288,7 +3636,7 @@ static void process_response(ConversationState *state,
 
             char *tool_details = get_tool_details(tool->name, input);
             char prefix_with_tool[128];
-            snprintf(prefix_with_tool, sizeof(prefix_with_tool), "[Tool: %s]", tool->name);
+            snprintf(prefix_with_tool, sizeof(prefix_with_tool), "[%s]", tool->name);
             ui_append_line(tui, queue, prefix_with_tool, tool_details, COLOR_PAIR_TOOL);
 
             if (!tracker_initialized) {
@@ -3332,9 +3680,20 @@ static void process_response(ConversationState *state,
             started_threads++;
         }
 
-        int interrupted = 0;
         if (tracker_initialized && started_threads > 0) {
             while (1) {
+                // Check for interrupt request
+                if (state->interrupt_requested) {
+                    LOG_INFO("Tool execution interrupted by user request");
+                    interrupted = 1;
+                    // Cancel the tracker to signal all tools to stop
+                    pthread_mutex_lock(&tracker.mutex);
+                    tracker.cancelled = 1;
+                    pthread_cond_broadcast(&tracker.cond);
+                    pthread_mutex_unlock(&tracker.mutex);
+                    break;
+                }
+                
                 int done = 0;
                 int cancelled = 0;
 
@@ -3401,6 +3760,8 @@ static void process_response(ConversationState *state,
             }
         }
 
+        // If interrupted at any point, ensure UI reflects it but continue to add
+        // tool_result messages so the conversation stays consistent.
         if (interrupted) {
             if (!tui && !queue) {
                 if (tool_spinner) {
@@ -3409,11 +3770,6 @@ static void process_response(ConversationState *state,
             } else {
                 ui_set_status(tui, queue, "Interrupted by user (ESC) - tools terminated");
             }
-
-            free(threads);
-            free(args);
-            free_internal_contents(results, tool_count);
-            return;
         }
 
         if (!tui && !queue) {
@@ -3435,6 +3791,8 @@ static void process_response(ConversationState *state,
         free(threads);
         free(args);
 
+        // Record tool results even in the interrupt path so that every tool_call
+        // has a corresponding tool_result. This prevents 400s due to missing results.
         add_tool_results(state, results, tool_count);
 
         // Check if TodoWrite was executed and display the updated TODO list
@@ -3447,30 +3805,40 @@ static void process_response(ConversationState *state,
         }
 
         if (todo_write_executed && state->todo_list && state->todo_list->count > 0) {
-            char *todo_text = todo_render_to_string(state->todo_list);
-            if (todo_text) {
-                ui_append_line(tui, queue, "[Assistant]", todo_text, COLOR_PAIR_ASSISTANT);
-                free(todo_text);
+            // For TUI without queue, use colored rendering
+            if (tui && !queue) {
+                tui_render_todo_list(tui, state->todo_list);
+            } else {
+                // For queue or non-TUI, use plain text rendering
+                char *todo_text = queue ? todo_render_to_string_plain(state->todo_list) 
+                                        : todo_render_to_string(state->todo_list);
+                if (todo_text) {
+                    ui_append_line(tui, queue, "[Assistant]", todo_text, COLOR_PAIR_ASSISTANT);
+                    free(todo_text);
+                }
             }
         }
 
-        Spinner *followup_spinner = NULL;
-        if (!tui && !queue) {
-            followup_spinner = spinner_start("Processing tool results...", SPINNER_CYAN);
-        } else {
-            ui_set_status(tui, queue, "Processing tool results...");
-        }
-        ApiResponse *next_response = call_api(state);
-        if (!tui && !queue) {
-            spinner_stop(followup_spinner, NULL, 1);
-        } else {
-            ui_set_status(tui, queue, "");
+        ApiResponse *next_response = NULL;
+        if (!interrupted) {
+            Spinner *followup_spinner = NULL;
+            if (!tui && !queue) {
+                followup_spinner = spinner_start("Processing tool results...", SPINNER_CYAN);
+            } else {
+                ui_set_status(tui, queue, "Processing tool results...");
+            }
+            next_response = call_api(state);
+            if (!tui && !queue) {
+                spinner_stop(followup_spinner, NULL, 1);
+            } else {
+                ui_set_status(tui, queue, "");
+            }
         }
 
         if (next_response) {
             process_response(state, next_response, tui, queue, worker_ctx);
             api_response_free(next_response);
-        } else {
+        } else if (!interrupted) {
             const char *error_msg = "API call failed after executing tools. Check logs for details.";
             ui_show_error(tui, queue, error_msg);
             LOG_ERROR("API call returned NULL after tool execution");
@@ -3545,6 +3913,29 @@ typedef struct {
     int instruction_queue_capacity;
 } InteractiveContext;
 
+// Interrupt callback invoked by the TUI event loop when the user presses Esc in INSERT mode
+static int interrupt_callback(void *user_data) {
+    InteractiveContext *ctx = (InteractiveContext *)user_data;
+    if (!ctx || !ctx->state) {
+        return 0;
+    }
+    
+    ConversationState *state = ctx->state;
+    TUIMessageQueue *queue = ctx->tui_queue;
+    
+    LOG_INFO("User requested interrupt (Esc pressed)");
+    
+    // Set the interrupt flag to stop ongoing operations
+    state->interrupt_requested = 1;
+    
+    // Post status message  
+    ui_set_status(NULL, queue, "Interrupt requested - canceling operations...");
+    
+    // Note: The flag will be reset when user submits new input
+    
+    return 0;  // Continue running (don't exit)
+}
+
 // Submit callback invoked by the TUI event loop when the user presses Enter
 static int submit_input_callback(const char *input, void *user_data) {
     InteractiveContext *ctx = (InteractiveContext *)user_data;
@@ -3560,6 +3951,9 @@ static int submit_input_callback(const char *input, void *user_data) {
     ConversationState *state = ctx->state;
     AIWorkerContext *worker = ctx->worker;
     TUIMessageQueue *queue = ctx->tui_queue;
+    
+    // Reset interrupt flag when new input is submitted
+    state->interrupt_requested = 0;
 
     char *input_copy = strdup(input);
     if (!input_copy) {
@@ -3570,26 +3964,27 @@ static int submit_input_callback(const char *input, void *user_data) {
     if (input_copy[0] == '/') {
         ui_append_line(tui, queue, "[User]", input_copy, COLOR_PAIR_USER);
 
-        if (strcmp(input_copy, "/exit") == 0 || strcmp(input_copy, "/quit") == 0) {
-            free(input_copy);
-            return 1;
-        } else if (strcmp(input_copy, "/clear") == 0) {
-            clear_conversation(state);
-            tui_clear_conversation(tui);
-            ui_append_line(tui, queue, "[System]", "Conversation cleared", COLOR_PAIR_STATUS);
-            free(input_copy);
-            return 0;
-        } else if (strncmp(input_copy, "/add-dir ", 9) == 0) {
-            const char *path = input_copy + 9;
-            if (add_directory(state, path) == 0) {
-                ui_append_line(tui, queue, "[System]", "Directory added successfully", COLOR_PAIR_STATUS);
-                char *new_system_prompt = build_system_prompt(state);
-                if (!new_system_prompt) {
-                    ui_show_error(tui, queue, "Failed to rebuild system prompt");
-                    free(input_copy);
-                    return 0;
-                }
+        // Remember message count before command execution
+        int msg_count_before = state->count;
 
+        // Use the command system from commands.c
+        int cmd_result = commands_execute(state, input_copy);
+        
+        // Check if it's an exit command
+        if (cmd_result == -2) {
+            free(input_copy);
+            return 1;  // Exit the program
+        }
+        
+        // For /clear, also clear the TUI
+        if (strncmp(input_copy, "/clear", 6) == 0) {
+            tui_clear_conversation(tui);
+        }
+        
+        // For /add-dir, rebuild system prompt
+        if (strncmp(input_copy, "/add-dir ", 9) == 0 && cmd_result == 0) {
+            char *new_system_prompt = build_system_prompt(state);
+            if (new_system_prompt) {
                 if (state->count > 0 && state->messages[0].role == MSG_SYSTEM) {
                     free(state->messages[0].contents[0].text);
                     state->messages[0].contents[0].text = strdup(new_system_prompt);
@@ -3599,23 +3994,30 @@ static int submit_input_callback(const char *input, void *user_data) {
                 }
                 free(new_system_prompt);
             } else {
-                ui_show_error(tui, queue, "Failed to add directory");
+                ui_show_error(tui, queue, "Failed to rebuild system prompt");
             }
-            free(input_copy);
-            return 0;
-        } else if (strcmp(input_copy, "/help") == 0) {
-            ui_append_line(tui, queue, "[System]", "Available commands:", COLOR_PAIR_STATUS);
-            ui_append_line(tui, queue, "[System]", "  /exit, /quit - Exit the program", COLOR_PAIR_STATUS);
-            ui_append_line(tui, queue, "[System]", "  /clear - Clear conversation history", COLOR_PAIR_STATUS);
-            ui_append_line(tui, queue, "[System]", "  /add-dir <path> - Add additional working directory", COLOR_PAIR_STATUS);
-            ui_append_line(tui, queue, "[System]", "  /help - Show this help message", COLOR_PAIR_STATUS);
-            free(input_copy);
-            return 0;
-        } else {
-            ui_show_error(tui, queue, "Unknown command. Type /help for available commands.");
-            free(input_copy);
-            return 0;
         }
+        
+        // Check if command added new messages (e.g., /voice adds transcription)
+        if (cmd_result == 0 && state->count > msg_count_before) {
+            // Display any new user messages that were added
+            for (int i = msg_count_before; i < state->count; i++) {
+                if (state->messages[i].role == MSG_USER) {
+                    // Get the text from the first text content
+                    for (int j = 0; j < state->messages[i].content_count; j++) {
+                        if (state->messages[i].contents[j].type == CONTENT_TEXT) {
+                            ui_append_line(tui, queue, "[Transcription]",
+                                         state->messages[i].contents[j].text,
+                                         COLOR_PAIR_USER);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        
+        free(input_copy);
+        return 0;
     }
 
     ui_append_line(tui, queue, "[User]", input_copy, COLOR_PAIR_USER);
@@ -3691,8 +4093,7 @@ static void interactive_mode(ConversationState *state) {
 
     // Build initial status line
     char status_msg[256];
-    snprintf(status_msg, sizeof(status_msg), "Model: %s | Session: %s | Commands: /exit /quit /clear /add-dir /help | Ctrl+D to exit",
-             state->model, state->session_id ? state->session_id : "none");
+    snprintf(status_msg, sizeof(status_msg), "Commands: /help for list | Ctrl+D to exit");
     tui_update_status(&tui, status_msg);
 
     // Display startup banner with mascot in the TUI
@@ -3759,7 +4160,7 @@ static void interactive_mode(ConversationState *state) {
     };
 
     void *event_loop_queue = tui_queue_initialized ? (void *)&tui_queue : NULL;
-    tui_event_loop(&tui, prompt, submit_input_callback, &ctx, event_loop_queue);
+    tui_event_loop(&tui, prompt, submit_input_callback, interrupt_callback, &ctx, event_loop_queue);
 
     if (worker_started) {
         ai_worker_stop(&worker_ctx);
@@ -3865,6 +4266,13 @@ int main(int argc, char *argv[]) {
         printf("                                     Default: 600000 (10 minutes)\n\n");
         printf("  UI Customization:\n");
         printf("    CLAUDE_C_THEME       Optional: Path to Kitty theme file\n\n");
+
+        printf("Interactive Tips:\n");
+        printf("  Ctrl+G to enter Normal mode (vim-style), 'i' to insert\n");
+        printf("  Scroll with j/k (line), Ctrl+D/U (half page), gg/G (top/bottom)\n");
+        printf("  Or use PageUp/PageDown or Arrow keys to scroll\n");
+        printf("  Type /help for commands (e.g., /clear, /exit, /add-dir, /voice)\n");
+        printf("  Press ESC to cancel a running API/tool action\n\n");
         return 0;
     }
 
@@ -3993,6 +4401,15 @@ int main(int argc, char *argv[]) {
         LOG_WARN("Failed to initialize persistence layer - API calls will not be logged");
     }
 
+#ifndef TEST_BUILD
+    // Initialize MCP (Model Context Protocol) subsystem
+    if (mcp_init() == 0) {
+        LOG_INFO("MCP subsystem initialized");
+    } else {
+        LOG_WARN("Failed to initialize MCP subsystem");
+    }
+#endif
+
     // Generate unique session ID for this conversation
     char *session_id = generate_session_id();
     if (!session_id) {
@@ -4036,37 +4453,48 @@ int main(int argc, char *argv[]) {
     }
 
 #ifndef TEST_BUILD
-    // Initialize provider (OpenAI or Bedrock based on environment)
-    ProviderInitResult provider_result;
-    provider_init(model, state.api_key, &provider_result);
-    if (!provider_result.provider) {
-        LOG_ERROR("Failed to initialize provider: %s",
-                  provider_result.error_message ? provider_result.error_message : "unknown error");
-        fprintf(stderr, "Error: Failed to initialize API provider: %s\n",
-                provider_result.error_message ? provider_result.error_message : "unknown error");
-        free(provider_result.error_message);
-        free(provider_result.api_url);
-        free(state.api_key);
-        free(state.api_url);
-        free(state.model);
-        free(state.working_dir);
-        if (state.todo_list) {
-            free(state.todo_list);
+    // Defer provider initialization to first API call to avoid blocking TUI startup.
+    // state.api_url currently points at base URL from env; it will be replaced on init.
+    state.provider = NULL;
+
+    // Load MCP configuration if enabled
+    if (mcp_is_enabled()) {
+        const char *mcp_config_path = getenv("CLAUDE_MCP_CONFIG");
+        state.mcp_config = mcp_load_config(mcp_config_path);
+        
+        if (state.mcp_config) {
+            LOG_INFO("MCP: Loaded %d server(s) from config", state.mcp_config->server_count);
+            
+            // Connect to all configured servers
+            for (int i = 0; i < state.mcp_config->server_count; i++) {
+                MCPServer *server = state.mcp_config->servers[i];
+                if (mcp_connect_server(server) == 0) {
+                    // Discover tools from connected server
+                    int tool_count = mcp_discover_tools(server);
+                    if (tool_count > 0) {
+                        LOG_INFO("MCP: Server '%s' provides %d tool(s)", server->name, tool_count);
+                    }
+                } else {
+                    LOG_WARN("MCP: Failed to connect to server '%s'", server->name);
+                }
+            }
+            
+            // Log status
+            char *status = mcp_get_status(state.mcp_config);
+            if (status) {
+                LOG_INFO("%s", status);
+                free(status);
+            }
+        } else {
+            LOG_DEBUG("MCP: No servers configured or failed to load config");
         }
-        conversation_state_destroy(&state);
-        curl_global_cleanup();
-        return 1;
+    } else {
+        state.mcp_config = NULL;
+        LOG_DEBUG("MCP: Disabled (set CLAUDE_MCP_ENABLED=1 to enable)");
     }
-
-    // Update api_url with provider's URL
-    free(state.api_url);
-    state.api_url = provider_result.api_url;  // Transfer ownership
-    state.provider = provider_result.provider;  // Transfer ownership
-    free(provider_result.error_message);  // Should be NULL on success, but free anyway
-
-    LOG_INFO("Provider initialized: %s, API URL: %s", state.provider->name, state.api_url);
 #else
     state.provider = NULL;
+    state.mcp_config = NULL;
 #endif
 
     // Check for allocation failures
@@ -4139,6 +4567,13 @@ int main(int argc, char *argv[]) {
         state.provider->cleanup(state.provider);
         LOG_DEBUG("Provider cleaned up");
     }
+
+    // Cleanup MCP configuration
+    if (state.mcp_config) {
+        mcp_free_config(state.mcp_config);
+        state.mcp_config = NULL;
+        LOG_DEBUG("MCP configuration cleaned up");
+    }
 #endif
 
     free(state.api_key);
@@ -4153,6 +4588,12 @@ int main(int argc, char *argv[]) {
         persistence_close(state.persistence_db);
         LOG_INFO("Persistence layer closed");
     }
+
+#ifndef TEST_BUILD
+    // Clean up MCP subsystem
+    mcp_cleanup();
+    LOG_INFO("MCP subsystem cleaned up");
+#endif
 
     curl_global_cleanup();
 
