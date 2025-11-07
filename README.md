@@ -51,7 +51,7 @@ sudo yum install libcurl-devel cjson-devel portaudio-devel gcc make
 **Recommended: Use stable release**
 ```bash
 # Clone the latest stable(ish) version (v0.0.17)
-git clone --branch v0.0.18 https://github.com/nmnduy/claude-c.git
+git clone --branch v0.1.1 https://github.com/nmnduy/claude-c.git
 cd claude-c
 make
 ```
