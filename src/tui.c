@@ -1465,19 +1465,19 @@ void tui_show_startup_banner(TUIState *tui, const char *version, const char *mod
     static const char *tips[] = {
         "Ctrl+G to enter Normal mode (vim-style); press 'i' to insert.",
         "Scroll: j/k (line), Ctrl+D/U (half page), gg/G (top/bottom).",
-        "Use PageUp/PageDown or Arrow keys to scroll.",
+        /* "Use PageUp/PageDown or Arrow keys to scroll.", */
         "Type /help for commands (e.g., /clear, /exit, /add-dir, /voice).",
         "Press ESC to cancel a running API/tool action.",
-        "Use /add-dir to attach a directory as context.",
+        /* "Use /add-dir to attach a directory as context.", */
         "Press Ctrl+D to exit quickly.",
-        "Use /voice to record and transcribe audio (requires PortAudio).",
+        /* "Use /voice to record and transcribe audio (requires PortAudio).", */
         "Set CLAUDE_C_THEME to a Kitty theme file to customize colors.",
         "Set CLAUDE_LOG_LEVEL=DEBUG for verbose logs.",
         "API history stored in ./.claude-c/api_calls.db (configurable via CLAUDE_C_DB_PATH).",
         "Normal mode: gg jumps to top, G to bottom.",
         "Insert mode supports readline keys: Ctrl+A, Ctrl+E, Alt+B, Alt+F.",
-        "Switch models via OPENAI_MODEL or ANTHROPIC_MODEL environment variables.",
-        "Enable Bedrock with CLAUDE_CODE_USE_BEDROCK=1 and ANTHROPIC_MODEL set.",
+        /* "Switch models via OPENAI_MODEL or ANTHROPIC_MODEL environment variables.", */
+        /* "Enable Bedrock with CLAUDE_CODE_USE_BEDROCK=1 and ANTHROPIC_MODEL set.", */
         "Interrupt long tool runs any time with ESC.",
         "Disable prompt caching with DISABLE_PROMPT_CACHING=1 if needed.",
         "Enable MCP with CLAUDE_MCP_ENABLED=1 and configure servers in ~/.config/claude-c/.",
