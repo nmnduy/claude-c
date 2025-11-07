@@ -2650,9 +2650,35 @@ void api_response_free(ApiResponse *response) {
  * Returns: ApiResponse or NULL on error
  */
 static ApiResponse* call_api_with_retries(ConversationState *state) {
-    if (!state || !state->provider) {
-        LOG_ERROR("Invalid state or provider");
+    if (!state) {
+        LOG_ERROR("Invalid conversation state");
         return NULL;
+    }
+
+    // Lazy-initialize provider to avoid blocking initial TUI render
+    if (!state->provider) {
+        LOG_INFO("Initializing API provider in background context...");
+        ProviderInitResult provider_result;
+        provider_init(state->model, state->api_key, &provider_result);
+        if (!provider_result.provider) {
+            const char *msg = provider_result.error_message ? provider_result.error_message : "unknown error";
+            LOG_ERROR("Provider initialization failed: %s", msg);
+            print_error("Failed to initialize API provider. Check configuration.");
+            free(provider_result.error_message);
+            free(provider_result.api_url);
+            return NULL;
+        }
+
+        // Transfer ownership to state and update API URL
+        if (state->api_url) {
+            free(state->api_url);
+        }
+        state->api_url = provider_result.api_url;
+        state->provider = provider_result.provider;
+        free(provider_result.error_message);
+
+        LOG_INFO("Provider initialized: %s, API URL: %s",
+                 state->provider->name, state->api_url ? state->api_url : "(null)");
     }
 
     int attempt_num = 1;
@@ -4427,35 +4453,9 @@ int main(int argc, char *argv[]) {
     }
 
 #ifndef TEST_BUILD
-    // Initialize provider (OpenAI or Bedrock based on environment)
-    ProviderInitResult provider_result;
-    provider_init(model, state.api_key, &provider_result);
-    if (!provider_result.provider) {
-        LOG_ERROR("Failed to initialize provider: %s",
-                  provider_result.error_message ? provider_result.error_message : "unknown error");
-        fprintf(stderr, "Error: Failed to initialize API provider: %s\n",
-                provider_result.error_message ? provider_result.error_message : "unknown error");
-        free(provider_result.error_message);
-        free(provider_result.api_url);
-        free(state.api_key);
-        free(state.api_url);
-        free(state.model);
-        free(state.working_dir);
-        if (state.todo_list) {
-            free(state.todo_list);
-        }
-        conversation_state_destroy(&state);
-        curl_global_cleanup();
-        return 1;
-    }
-
-    // Update api_url with provider's URL
-    free(state.api_url);
-    state.api_url = provider_result.api_url;  // Transfer ownership
-    state.provider = provider_result.provider;  // Transfer ownership
-    free(provider_result.error_message);  // Should be NULL on success, but free anyway
-
-    LOG_INFO("Provider initialized: %s, API URL: %s", state.provider->name, state.api_url);
+    // Defer provider initialization to first API call to avoid blocking TUI startup.
+    // state.api_url currently points at base URL from env; it will be replaced on init.
+    state.provider = NULL;
 
     // Load MCP configuration if enabled
     if (mcp_is_enabled()) {
