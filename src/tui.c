@@ -321,11 +321,11 @@ static void init_ncurses_colors(void) {
                 rgb_to_ncurses(g_theme.error_rgb.g),
                 rgb_to_ncurses(g_theme.error_rgb.b));
 
-            // Tool color (use assistant/header tone for a softer look)
+            // Tool color (use theme tool color for clear distinction)
             init_color(21,
-                rgb_to_ncurses(g_theme.assistant_rgb.r),
-                rgb_to_ncurses(g_theme.assistant_rgb.g),
-                rgb_to_ncurses(g_theme.assistant_rgb.b));
+                rgb_to_ncurses(g_theme.tool_rgb.r),
+                rgb_to_ncurses(g_theme.tool_rgb.g),
+                rgb_to_ncurses(g_theme.tool_rgb.b));
 
             // Initialize color pairs with custom colors
             init_pair(NCURSES_PAIR_FOREGROUND, 16, -1);  // -1 = default background
@@ -333,8 +333,8 @@ static void init_ncurses_colors(void) {
             init_pair(NCURSES_PAIR_ASSISTANT, 18, -1);
             init_pair(NCURSES_PAIR_STATUS, 19, -1);
             init_pair(NCURSES_PAIR_ERROR, 20, -1);
-            // Use a softer color for tool tags (align with assistant/header)
-            init_pair(NCURSES_PAIR_TOOL, 18, -1);
+            // Use dedicated tool color pair (distinct from assistant)
+            init_pair(NCURSES_PAIR_TOOL, 21, -1);
             init_pair(NCURSES_PAIR_PROMPT, 17, -1);  // Use USER color for prompt
             // TODO color pairs
             init_pair(NCURSES_PAIR_TODO_COMPLETED, 17, -1);    // Green (same as USER)
@@ -350,8 +350,8 @@ static void init_ncurses_colors(void) {
             init_pair(NCURSES_PAIR_ASSISTANT, COLOR_CYAN, -1);
             init_pair(NCURSES_PAIR_STATUS, COLOR_YELLOW, -1);
             init_pair(NCURSES_PAIR_ERROR, COLOR_RED, -1);
-            // Use cyan instead of magenta for a less intense tool tag
-            init_pair(NCURSES_PAIR_TOOL, COLOR_CYAN, -1);
+            // Use magenta for tool tag (distinct from assistant cyan)
+            init_pair(NCURSES_PAIR_TOOL, COLOR_MAGENTA, -1);
             init_pair(NCURSES_PAIR_PROMPT, COLOR_GREEN, -1);
             // TODO color pairs
             init_pair(NCURSES_PAIR_TODO_COMPLETED, COLOR_GREEN, -1);
@@ -367,8 +367,8 @@ static void init_ncurses_colors(void) {
         init_pair(NCURSES_PAIR_STATUS, COLOR_YELLOW, -1);
         init_pair(NCURSES_PAIR_ERROR, COLOR_RED, -1);
         init_pair(NCURSES_PAIR_PROMPT, COLOR_GREEN, -1);
-        // Ensure tool pair is initialized; prefer cyan for a softer appearance
-        init_pair(NCURSES_PAIR_TOOL, COLOR_CYAN, -1);
+        // Ensure tool pair is initialized; use magenta for distinction
+        init_pair(NCURSES_PAIR_TOOL, COLOR_MAGENTA, -1);
         // TODO color pairs
         init_pair(NCURSES_PAIR_TODO_COMPLETED, COLOR_GREEN, -1);
         init_pair(NCURSES_PAIR_TODO_IN_PROGRESS, COLOR_YELLOW, -1);
