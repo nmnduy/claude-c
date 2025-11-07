@@ -1,7 +1,27 @@
-- [ ] if have `rg` then put that in the system prompt instead of `grep`. print warning when there is no `rg`
-- [ ] diff print
-- [ ] print todo list nicely
+- [x] text gets covered. why some of them dont wrap to the next line?
+- [x] Tool already has its color code. the word Tool: is redundant
+- [x]
+    [Bash] cd /Users/dunguyen/code/deal-engine/catalog-mat...
+    [Bash] cd /Users/dunguyen/code/deal-engine/catalog-mat...
+- [x] no tool color. just foreground color and bold. todo colors are also not visible. see status colors and assistant colors. those colors are working.
+
+- [ ] [Error] Tool execution interrupted by user
+[Error] API call failed after executing tools. Check logs for details.
+
+- [x] sometimes conversation disappears after the first command submission
+- [x] one more line in input box wipes the conversation text
+- [x] fix scrolling
+- [x] use color todo list
+
+- [ ] mcp
+- [ ] too many docs. focus on work
 - [ ] can stop agent mid work
+- [ ] if have `rg` then put that in the system prompt instead of `grep`. print warning when there is no `rg`
+- [ ] dont print Instruction queued (1/16 pending). just leave that space for status
+- [x] diff print
+- [x] grep output size is really a problem
+- [ ] hide aws print to console log
+- [x] print todo list nicely
 - [x] why so many linse between [Assistant] and everything else?
 
 - [ ] use this pattern for `timeout`: Ran (./mvnw quarkus:dev & pid=$!; sleep 30; kill $pid; wait $pid) 
