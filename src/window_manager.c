@@ -14,6 +14,7 @@ const WindowManagerConfig DEFAULT_WINDOW_CONFIG = {
     .min_input_height = 3,  // 1 line + 2 borders
     .max_input_height = 5,  // 3 lines + 2 borders
     .status_height = 1,
+    // No gap between status and input by default
     .padding = 1,
     .initial_pad_capacity = 1000
 };
@@ -52,6 +53,23 @@ static void calculate_layout(WindowManager *wm) {
               wm->screen_width, wm->screen_height,
               wm->conv_viewport_height, wm->status_height, 
               wm->input_height, wm->config.padding);
+}
+
+// Clear any gap lines between status and input to avoid artifacts
+static void clear_gap_between_status_and_input(WindowManager *wm) {
+    if (!wm) return;
+    if (wm->config.padding <= 0) return;
+
+    int y_start = wm->conv_viewport_height + wm->status_height;
+    int y_end = wm->screen_height - wm->input_height - 1;
+    if (y_start < 0) y_start = 0;
+    if (y_end >= wm->screen_height) y_end = wm->screen_height - 1;
+    if (y_start > y_end) return;
+
+    for (int y = y_start; y <= y_end; y++) {
+        move(y, 0);
+        clrtoeol();
+    }
 }
 
 // Copy content from old pad to new pad (for capacity expansion)
@@ -444,6 +462,8 @@ void window_manager_refresh_all(WindowManager *wm) {
     
     window_manager_refresh_conversation(wm);
     window_manager_refresh_status(wm);
+    // Ensure the padding region (if any) stays clean
+    clear_gap_between_status_and_input(wm);
     window_manager_refresh_input(wm);
     refresh();  // Refresh stdscr
     doupdate(); // Update physical screen
