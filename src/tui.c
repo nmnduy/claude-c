@@ -1608,13 +1608,21 @@ static int handle_normal_mode_input(TUIState *tui, int ch, const char *prompt) {
         return 0;
     }
     
-    int max_y, max_x;
-    getmaxyx(tui->wm.conv_pad, max_y, max_x);
-    (void)max_x;
-    
-    // Calculate scrolling parameters
-    int half_page = max_y / 2;
-    int full_page = max_y - 2;  // Leave a bit of overlap
+    // Calculate scrolling parameters based on the visible viewport height,
+    // not the pad capacity (using pad size could make half-page jumps too large
+    // or appear to do nothing depending on scroll position).
+    int viewport_h = tui->wm.conv_viewport_height;
+    if (viewport_h <= 0) {
+        // Fallback to a sane default if viewport height is unavailable
+        int pad_h, pad_w;
+        getmaxyx(tui->wm.conv_pad, pad_h, pad_w);
+        viewport_h = pad_h > 0 ? pad_h : 1;
+    }
+
+    int half_page = viewport_h / 2;
+    int full_page = viewport_h - 2;  // Leave a bit of overlap
+    if (half_page < 1) half_page = 1;
+    if (full_page < 1) full_page = 1;
     
     // Handle key combinations (like gg, G)
     if (tui->normal_mode_last_key == 'g' && ch == 'g') {
