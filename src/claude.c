@@ -4370,26 +4370,21 @@ int main(int argc, char *argv[]) {
     // Initialize colorscheme EARLY (before any colored output/spinners)
     const char *theme = getenv("CLAUDE_C_THEME");
     if (theme && strlen(theme) > 0) {
-        char theme_path[512];
-        // Check if theme is an absolute path or relative path
-        if (theme[0] == '/' || theme[0] == '~' || strstr(theme, ".conf")) {
-            // Absolute path or already has .conf extension - use as-is
-            snprintf(theme_path, sizeof(theme_path), "%s", theme);
-        } else {
-            // Relative name without extension - add colorschemes/ prefix and .conf extension
-            snprintf(theme_path, sizeof(theme_path), "colorschemes/%s.conf", theme);
-        }
-        if (init_colorscheme(theme_path) != 0) {
+        // Theme can be:
+        // 1. Built-in theme name (e.g., "dracula", "gruvbox-dark")
+        // 2. Built-in with .conf extension (e.g., "dracula.conf")
+        // 3. Absolute/relative path to external .conf file
+        if (init_colorscheme(theme) != 0) {
             LOG_WARN("Failed to load colorscheme '%s', will use ANSI fallback colors", theme);
         } else {
-            LOG_DEBUG("Colorscheme loaded successfully from: %s", theme_path);
+            LOG_DEBUG("Colorscheme loaded successfully: %s", theme);
         }
     } else {
-        // Try to load default theme
-        if (init_colorscheme("colorschemes/kitty-default.conf") != 0) {
+        // Try to load default built-in theme
+        if (init_colorscheme("kitty-default") != 0) {
             LOG_DEBUG("No default colorscheme found, using ANSI fallback colors");
         } else {
-            LOG_DEBUG("Default colorscheme loaded from: colorschemes/kitty-default.conf");
+            LOG_DEBUG("Default colorscheme loaded: kitty-default");
         }
     }
 

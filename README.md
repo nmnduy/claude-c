@@ -98,11 +98,13 @@ claude-c
 By default, logs and API call history are stored in `./.claude-c/` in the current working directory. This makes each project self-contained. Override with the environment variables above if needed.
 
 **UI Customization:**
-- `CLAUDE_C_THEME` - Path to Kitty theme file (e.g., `./colorschemes/dracula.conf`)
+- `CLAUDE_C_THEME` - Built-in theme name (e.g., `dracula`, `gruvbox-dark`) or path to external Kitty theme file
 
 ### Color Theme Support
 
-The TUI uses **Kitty terminal's theme format** - a simple, dependency-free configuration format. See [docs/COLOR_THEMES.md](docs/COLOR_THEMES.md) for detailed configuration options and available themes.
+The TUI uses **Kitty terminal's theme format** - a simple, dependency-free configuration format. Built-in themes are embedded in the binary (no external files needed). See [docs/COLOR_THEMES.md](docs/COLOR_THEMES.md) for detailed configuration options.
+
+**Available built-in themes:** `kitty-default`, `dracula`, `gruvbox-dark`, `solarized-dark`, `black-metal`
 
 ## Memory footprint
 
