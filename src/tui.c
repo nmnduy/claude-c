@@ -1190,6 +1190,9 @@ void tui_add_conversation_line(TUIState *tui, const char *prefix, const char *te
         case COLOR_PAIR_TODO_PENDING:
             mapped_pair = NCURSES_PAIR_TODO_PENDING;
             break;
+        default:
+            /* Keep default mapped_pair (foreground) */
+            break;
     }
     
     // Move to end of pad
@@ -1397,6 +1400,9 @@ void tui_handle_resize(TUIState *tui) {
                         break;
                     case COLOR_PAIR_TODO_PENDING:
                         mapped_pair = NCURSES_PAIR_TODO_PENDING;
+                        break;
+                    default:
+                        /* Keep default mapped_pair (foreground) */
                         break;
                 }
 
@@ -1731,6 +1737,9 @@ static int handle_normal_mode_input(TUIState *tui, int ch, const char *prompt) {
             refresh_conversation_viewport(tui);
             render_status_window(tui);
             input_redraw(tui, prompt);
+            break;
+        default:
+            /* Unhandled key in normal mode */
             break;
     }
     
@@ -2294,6 +2303,9 @@ static void dispatch_tui_message(TUIState *tui, TUIMessage *msg) {
 
         case TUI_MSG_TODO_UPDATE:
             // Placeholder for future TODO list integration
+            break;
+        default:
+            /* Unknown message type; ignore */
             break;
     }
 }
