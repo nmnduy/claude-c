@@ -4005,7 +4005,8 @@ static int submit_input_callback(const char *input, void *user_data) {
                 if (state->messages[i].role == MSG_USER) {
                     // Get the text from the first text content
                     for (int j = 0; j < state->messages[i].content_count; j++) {
-                        if (state->messages[i].contents[j].type == CONTENT_TEXT) {
+                        // Compare against InternalContentType to avoid enum mismatch
+                        if (state->messages[i].contents[j].type == INTERNAL_TEXT) {
                             ui_append_line(tui, queue, "[Transcription]",
                                          state->messages[i].contents[j].text,
                                          COLOR_PAIR_USER);

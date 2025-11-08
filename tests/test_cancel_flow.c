@@ -163,6 +163,12 @@ static void test_cancel_results_are_formatted(void) {
 
     cJSON_Delete(root);
     free(json_str);
+
+    // Cleanup allocated state to avoid leaks under ASan
+    conversation_free(&state);   // Frees messages and their contents
+    free(state.model);           // Free model string set by test
+    state.model = NULL;
+    conversation_state_destroy(&state); // Destroy mutex if initialized
     printf("  ✓ PASSED\n\n");
 }
 

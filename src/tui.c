@@ -92,7 +92,9 @@ static const spinner_variant_t* status_spinner_variant(void) {
 }
 
 static uint64_t status_spinner_interval_ns(void) {
-    return (uint64_t)SPINNER_DELAY_MS * 1000000ULL;
+    // Cast both operands to uint64_t to avoid intermediate ULL promotion
+    // that triggers -Wsign-conversion on some platforms (LP64 vs LLP64).
+    return (uint64_t)SPINNER_DELAY_MS * (uint64_t)1000000;
 }
 
 static void render_status_window(TUIState *tui) {
@@ -941,7 +943,8 @@ static void input_redraw(TUIState *tui, const char *prompt) {
             current_line++;
             screen_x = 1;  // Reset to left edge (after border)
         } else {
-            mvwaddch(win, screen_y, screen_x, c);
+            // Cast to unsigned char then to chtype to avoid sign-conversion warnings
+            mvwaddch(win, screen_y, screen_x, (chtype)(unsigned char)c);
             screen_x++;
 
             // Check if we need to wrap
@@ -1190,6 +1193,9 @@ void tui_add_conversation_line(TUIState *tui, const char *prefix, const char *te
         case COLOR_PAIR_TODO_PENDING:
             mapped_pair = NCURSES_PAIR_TODO_PENDING;
             break;
+        default:
+            /* Keep default mapped_pair (foreground) */
+            break;
     }
     
     // Move to end of pad
@@ -1397,6 +1403,9 @@ void tui_handle_resize(TUIState *tui) {
                         break;
                     case COLOR_PAIR_TODO_PENDING:
                         mapped_pair = NCURSES_PAIR_TODO_PENDING;
+                        break;
+                    default:
+                        /* Keep default mapped_pair (foreground) */
                         break;
                 }
 
@@ -1731,6 +1740,9 @@ static int handle_normal_mode_input(TUIState *tui, int ch, const char *prompt) {
             refresh_conversation_viewport(tui);
             render_status_window(tui);
             input_redraw(tui, prompt);
+            break;
+        default:
+            /* Unhandled key in normal mode */
             break;
     }
     
@@ -2294,6 +2306,9 @@ static void dispatch_tui_message(TUIState *tui, TUIMessage *msg) {
 
         case TUI_MSG_TODO_UPDATE:
             // Placeholder for future TODO list integration
+            break;
+        default:
+            /* Unknown message type; ignore */
             break;
     }
 }

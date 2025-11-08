@@ -15,6 +15,7 @@ jobs:
         compiler: [gcc, clang]
     env:
       CC: ${{ matrix.compiler }}
+      TERM: xterm
 
     steps:
       - uses: actions/checkout@v4
