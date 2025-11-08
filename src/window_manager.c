@@ -15,7 +15,7 @@ const WindowManagerConfig DEFAULT_WINDOW_CONFIG = {
     .max_input_height = 5,  // 3 lines + 2 borders
     .status_height = 1,
     // No gap between status and input by default
-    .padding = 1,
+    .padding = 0,
     .initial_pad_capacity = 1000
 };
 

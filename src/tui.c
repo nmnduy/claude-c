@@ -1995,14 +1995,18 @@ int tui_process_input_char(TUIState *tui, int ch, const char *prompt) {
             // Could be bracketed paste sequence or other CSI sequence
             // Read the sequence with a small delay to allow characters to arrive
             nodelay(tui->wm.input_win, FALSE);
-            timeout(100);  // 100ms timeout for sequence
+            // IMPORTANT: Set timeout on the same window we're reading from.
+            // Using timeout() (stdscr) here caused blocking wgetch() on input_win
+            // and made the UI appear to hang until more input arrived.
+            wtimeout(tui->wm.input_win, 100);  // 100ms timeout for sequence
             
             int ch1 = wgetch(tui->wm.input_win);
             int ch2 = wgetch(tui->wm.input_win);
             int ch3 = wgetch(tui->wm.input_win);
             int ch4 = wgetch(tui->wm.input_win);
             
-            timeout(-1);  // Back to blocking
+            // Restore blocking behavior on input window
+            wtimeout(tui->wm.input_win, -1);  // Back to blocking
             
             LOG_DEBUG("[TUI] Escape sequence: ESC[%c%c%c%c (values: %d %d %d %d)", 
                      ch1 > 0 ? ch1 : '?', ch2 > 0 ? ch2 : '?', 
