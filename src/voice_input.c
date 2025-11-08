@@ -14,6 +14,7 @@
 #include <stdint.h>
 #include <pthread.h>
 #include <curl/curl.h>
+#include <float.h>
 
 #ifdef HAVE_PORTAUDIO
 #include <portaudio.h>
@@ -369,7 +370,8 @@ int voice_input_record_and_transcribe(char **transcription_out) {
     LOG_DEBUG("Recording stats: frames=%zu duration=%.2fs max_amp=%d mean_abs=%.1f",
               ab.frames, recording_sec, recording_max_abs, recording_mean_abs);
 
-    if (recording_max_abs == 0 && recording_mean_abs == 0.0) {
+    // Avoid direct floating-point equality; treat near-zero mean as silence
+    if (recording_max_abs == 0 && recording_mean_abs <= DBL_EPSILON) {
         LOG_WARN("Recording appears completely silent");
         ab_free(&ab);
         return -3;
