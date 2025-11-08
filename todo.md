@@ -4,6 +4,10 @@
     [Bash] cd /Users/dunguyen/code/deal-engine/catalog-mat...
     [Bash] cd /Users/dunguyen/code/deal-engine/catalog-mat...
 - [x] no tool color. just foreground color and bold. todo colors are also not visible. see status colors and assistant colors. those colors are working.
+- [ ] # Clone the latest stable(ish) version (v0.0.17)
+git clone --branch v0.1.1 https://github.com/nmnduy/claude-c.git
+cd claude-c
+make
 
 - [ ] [Error] Tool execution interrupted by user
 [Error] API call failed after executing tools. Check logs for details.
