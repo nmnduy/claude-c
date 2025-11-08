@@ -89,6 +89,8 @@ MCPConfig* mcp_load_config(const char *config_path) {
     cJSON *root = NULL;
     cJSON *servers_obj = NULL;
     MCPConfig *config = NULL;
+    // Ensure any default path buffer outlives conditional blocks
+    char default_path[1024];
     
     if (!config_path) {
         // Try default locations
@@ -98,7 +100,6 @@ MCPConfig* mcp_load_config(const char *config_path) {
             return NULL;
         }
         
-        char default_path[1024];
         snprintf(default_path, sizeof(default_path), "%s/.config/claude-c/mcp_servers.json", home);
         config_path = default_path;
     }
