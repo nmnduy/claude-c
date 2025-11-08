@@ -41,16 +41,10 @@ brew install curl cjson portaudio
 sudo apt-get install libcurl4-openssl-dev libcjson-dev portaudio19-dev build-essential
 ```
 
-**Fedora/RHEL:**
-```bash
-sudo yum install libcurl-devel cjson-devel portaudio-devel gcc make
-```
-
 ## Building
 
 **Recommended: Use stable release**
 ```bash
-# Clone the latest stable(ish) version (v0.0.17)
 git clone --branch v0.1.2 https://github.com/nmnduy/claude-c.git
 cd claude-c
 make
@@ -81,20 +75,12 @@ export OPENAI_API_BASE="https://openrouter.ai/api"
 export OPENAI_MODEL="z-ai/glm-4.6"
 claude-c
 ```
-### Prerequisites
-
-Set your Anthropic API key:
-```bash
-export OPENAI_API_KEY="your-api-key-here"
-```
-
 ### Environment Variables
 
 **API Configuration:**
 - `OPENAI_API_KEY` - Your Anthropic API key (required)
 - `OPENAI_API_BASE` - Override API endpoint (default: https://api.anthropic.com/v1/messages)
 - `OPENAI_MODEL` or `ANTHROPIC_MODEL` - Model to use (default: claude-sonnet-4-20250514)
-- `DISABLE_PROMPT_CACHING` - Set to 1 to disable prompt caching
 
 **Logging and Persistence:**
 - `CLAUDE_C_LOG_PATH` - Full path to log file (e.g., `/var/log/claude.log`)
@@ -114,78 +100,16 @@ By default, logs and API call history are stored in `./.claude-c/` in the curren
 **UI Customization:**
 - `CLAUDE_C_THEME` - Path to Kitty theme file (e.g., `./colorschemes/dracula.conf`)
 
-**Example configuration:**
-```bash
-# API settings
-export OPENAI_API_KEY="sk-ant-..."
-export OPENAI_MODEL="claude-sonnet-4-20250514"
-
-# Custom log and database locations
-export CLAUDE_C_LOG_DIR="$HOME/logs/claude"
-export CLAUDE_C_DB_PATH="$HOME/data/claude-api-calls.db"
-
-# Enable debug logging
-export CLAUDE_LOG_LEVEL="DEBUG"
-
-# Use Dracula theme
-export CLAUDE_C_THEME="./colorschemes/dracula.conf"
-```
-
-### Running
-
-**One-shot mode (current):**
-```bash
-./claude-c "your prompt here"
-```
-
-**Interactive mode:**
-```bash
-./claude-c
-```
-
-The interactive mode supports:
-- Multi-turn conversations
-- **ESC key interruption**: Press ESC to stop the agent during API calls or tool execution
-- **Normal mode navigation**: Press `Ctrl+G` to enter Normal mode for Vim-like scrolling (j/k, Ctrl+D/U, gg/G), press `i` to return to Insert mode
-- Slash commands: `/clear`, `/exit`, `/quit`, `/help`, `/add-dir`, `/voice`
-- Voice input: Use `/voice` to record and transcribe audio (requires PortAudio and OPENAI_API_KEY)
-- Readline-style editing: Ctrl+A, Ctrl+E, Alt+B, Alt+F, etc.
-
 ### Color Theme Support
 
 The TUI uses **Kitty terminal's theme format** - a simple, dependency-free configuration format. See [docs/COLOR_THEMES.md](docs/COLOR_THEMES.md) for detailed configuration options and available themes.
-
-### MCP (Model Context Protocol) Support
-
-Connect claude-c to external MCP servers for additional tools and capabilities:
-
-```bash
-# Enable MCP
-export CLAUDE_MCP_ENABLED=1
-
-# Configure servers
-mkdir -p ~/.config/claude-c
-cp examples/mcp_servers.json ~/.config/claude-c/
-
-# Run with MCP
-./claude-c
-```
-
-Available servers include filesystem access, GitHub integration, database queries, web search, and more.
-
-**Documentation**: See [README_MCP.md](README_MCP.md) for detailed setup and [docs/mcp.md](docs/mcp.md) for technical details.
 
 ## Memory footprint
 
 ![Memory usage analysis](assets/images/claude-c-memory-usage.webp)
 
-## Known Issues
-
-- [ ] `SIGSTP` then resume will stop the app
-
 ## Security Notes
 
-- API key read from environment (not stored in code)
 - No sandboxing: Bash tool has full shell access
 - File tools can access any readable/writable file
 - Intended for trusted environments only
