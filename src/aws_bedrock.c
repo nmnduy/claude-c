@@ -578,6 +578,9 @@ static AWSCredentials* bedrock_load_credentials_internal(const char *profile, co
         if (bedrock_authenticate(profile_arg) == 0) {
             LOG_DEBUG("✓ SSO authentication successful, retrying credential load...");
             // Retry loading credentials after authentication
+            // Free any partially allocated credentials before recursion to avoid leaks
+            bedrock_creds_free(creds);
+            creds = NULL;
             return bedrock_load_credentials_internal(profile, region, depth + 1);
         } else {
             LOG_ERROR("✗ SSO authentication failed");
@@ -601,6 +604,9 @@ static AWSCredentials* bedrock_load_credentials_internal(const char *profile, co
         int auth_result = system_fn(custom_auth_cmd);
         if (auth_result == 0) {
             LOG_INFO("Custom authentication command succeeded, retrying credential load...");
+            // Free any partially allocated credentials before recursion to avoid leaks
+            bedrock_creds_free(creds);
+            creds = NULL;
             return bedrock_load_credentials_internal(profile, region, depth + 1);
         } else {
             LOG_ERROR("Custom authentication command failed with exit code %d", auth_result);
