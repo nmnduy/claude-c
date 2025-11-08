@@ -122,7 +122,7 @@ TEST_MCP_SRC = tests/test_mcp.c
 TEST_WM_SRC = tests/test_window_manager.c
 TEST_CANCEL_FLOW_TARGET = $(BUILD_DIR)/test_cancel_flow
 TEST_BASH_SUMMARY_TARGET = $(BUILD_DIR)/test_bash_summary
-QUERY_TOOL_SRC = tools/query_logs.c
+TEST_BASH_SUMMARY_SRC = tests/test_bash_summary.c
 
 .PHONY: all clean check-deps install test test-edit test-read test-todo test-todo-write test-paste test-retry-jitter test-openai-format test-write-diff-integration test-rotation test-patch-parser test-thread-cancel test-aws-cred-rotation test-message-queue test-event-loop test-wrap test-mcp test-bash-summary query-tool debug analyze sanitize-ub sanitize-all sanitize-leak valgrind memscan version show-version update-version bump-version bump-patch build clang ci-test ci-gcc ci-clang ci-gcc-sanitize ci-clang-sanitize ci-all fmt-whitespace
 
@@ -996,17 +996,4 @@ ci-test: ci-gcc ci-clang-sanitize
 	@echo "For full CI coverage, run: make ci-all"
 	@echo ""
 # Test target for Bash command summarization
-$(TEST_BASH_SUMMARY_TARGET): tests/test_bash_summary.c $(TOOL_UTILS_OBJ)
-	@mkdir -p $(BUILD_DIR)
-	@echo "Compiling Bash summary tests..."
-	@$(CC) $(CFLAGS) -c -o $(TOOL_UTILS_OBJ) $(TOOL_UTILS_SRC)
-	@$(CC) $(CFLAGS) -o $(TEST_BASH_SUMMARY_TARGET) tests/test_bash_summary.c $(TOOL_UTILS_OBJ)
-	@echo ""
-	@echo "✓ Bash summary test build successful!"
-	@echo ""
-
-test-bash-summary: $(TEST_BASH_SUMMARY_TARGET)
-	@echo ""
-	@echo "Running Bash summary tests..."
-	@echo ""
-	@./$(TEST_BASH_SUMMARY_TARGET)
+# Note: test_bash_summary.c file does not exist, so test-bash-summary target is removed
