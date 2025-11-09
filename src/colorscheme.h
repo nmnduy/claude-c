@@ -50,7 +50,7 @@ typedef struct {
     RGB status_rgb;
     RGB error_rgb;
     RGB header_rgb;
-    RGB tool_rgb;        // Tool tags (accent distinct from others)
+    RGB tool_rgb;        // Tool tags (historical). Currently unified with status color.
     RGB diff_add_rgb;    // Added lines (green)
     RGB diff_remove_rgb; // Removed lines (red)
     RGB diff_header_rgb; // Diff metadata (cyan)
@@ -146,7 +146,8 @@ static int get_colorscheme_color(ColorschemeElement element, char *buf, size_t b
             rgb = g_theme.assistant_rgb;
             break;
         case COLORSCHEME_TOOL:
-            rgb = g_theme.tool_rgb;  // Use dedicated tool accent color
+            // Unify tool tag color with STATUS to reduce color variance
+            rgb = g_theme.status_rgb;
             break;
         case COLORSCHEME_ERROR:
             rgb = g_theme.error_rgb;
@@ -380,7 +381,7 @@ static int load_kitty_theme(const char *filepath, Theme *theme) {
         fprintf(stderr, "\033[33mWarning: Theme missing 'color6' (cyan, used for headers)\033[0m\n");
     }
     if (!found_color12) {
-        fprintf(stderr, "\033[33mWarning: Theme missing 'color12' (bright blue, used for tool tags)\033[0m\n");
+        fprintf(stderr, "\033[33mNote: Theme missing 'color12' (optional tool accent); tool tag uses status color\033[0m\n");
     }
 
     return parsed_count > 0;
