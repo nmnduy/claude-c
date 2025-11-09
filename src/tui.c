@@ -344,7 +344,8 @@ static void init_ncurses_colors(void) {
             init_pair(NCURSES_PAIR_STATUS, 19, -1);
             init_pair(NCURSES_PAIR_ERROR, 20, -1);
             // Use dedicated tool color pair (distinct from assistant)
-            init_pair(NCURSES_PAIR_TOOL, 21, -1);
+            // Unify tool color with status to reduce color variance
+            init_pair(NCURSES_PAIR_TOOL, 19, -1);
             init_pair(NCURSES_PAIR_PROMPT, 17, -1);  // Use USER color for prompt
             // TODO color pairs
             init_pair(NCURSES_PAIR_TODO_COMPLETED, 17, -1);    // Green (same as USER)
@@ -361,7 +362,8 @@ static void init_ncurses_colors(void) {
             init_pair(NCURSES_PAIR_STATUS, COLOR_YELLOW, -1);
             init_pair(NCURSES_PAIR_ERROR, COLOR_RED, -1);
             // Use magenta for tool tag (distinct from assistant cyan)
-            init_pair(NCURSES_PAIR_TOOL, COLOR_MAGENTA, -1);
+            // Unify tool color with status color
+            init_pair(NCURSES_PAIR_TOOL, COLOR_YELLOW, -1);
             init_pair(NCURSES_PAIR_PROMPT, COLOR_GREEN, -1);
             // TODO color pairs
             init_pair(NCURSES_PAIR_TODO_COMPLETED, COLOR_GREEN, -1);
@@ -378,7 +380,8 @@ static void init_ncurses_colors(void) {
         init_pair(NCURSES_PAIR_ERROR, COLOR_RED, -1);
         init_pair(NCURSES_PAIR_PROMPT, COLOR_GREEN, -1);
         // Ensure tool pair is initialized; use magenta for distinction
-        init_pair(NCURSES_PAIR_TOOL, COLOR_MAGENTA, -1);
+        // Unify tool color with status color
+        init_pair(NCURSES_PAIR_TOOL, COLOR_YELLOW, -1);
         // TODO color pairs
         init_pair(NCURSES_PAIR_TODO_COMPLETED, COLOR_GREEN, -1);
         init_pair(NCURSES_PAIR_TODO_IN_PROGRESS, COLOR_YELLOW, -1);

@@ -166,18 +166,18 @@ static void print_assistant(const char *text) {
 }
 
 static void print_tool(const char *tool_name, const char *details) {
-    // Use accent color for tool indicator, foreground for details
-    char tool_color_code[32];
+    // Use status color for tool indicator (reduce rainbow), foreground for details
+    char status_color_code[32];
     char text_color_code[32];
     const char *tool_color_start;
     const char *text_color_start;
 
-    // Get accent color for tool indicator
-    if (get_colorscheme_color(COLORSCHEME_TOOL, tool_color_code, sizeof(tool_color_code)) == 0) {
-        tool_color_start = tool_color_code;
+    // Use STATUS color for the [Tool: ...] tag
+    if (get_colorscheme_color(COLORSCHEME_STATUS, status_color_code, sizeof(status_color_code)) == 0) {
+        tool_color_start = status_color_code;
     } else {
-        LOG_WARN("Using fallback ANSI color for TOOL");
-        tool_color_start = ANSI_FALLBACK_TOOL;
+        LOG_WARN("Using fallback ANSI color for STATUS (tool tag)");
+        tool_color_start = ANSI_FALLBACK_STATUS;
     }
 
     // Get foreground color for details
@@ -301,7 +301,16 @@ static void ui_set_status(TUIState *tui,
         return;
     }
     if (safe[0] != '\0') {
-        printf("[Status] %s\n", safe);
+        // Use status color when not in TUI for consistency with tips
+        char status_color_buf[32];
+        const char *status_color = NULL;
+        if (get_colorscheme_color(COLORSCHEME_STATUS, status_color_buf, sizeof(status_color_buf)) == 0) {
+            status_color = status_color_buf;
+        } else {
+            LOG_WARN("Using fallback ANSI color for STATUS (ui_set_status)");
+            status_color = ANSI_FALLBACK_STATUS;
+        }
+        printf("%s[Status]%s %s\n", status_color, ANSI_RESET, safe);
     }
 }
 
@@ -3928,7 +3937,8 @@ static void process_response(ConversationState *state,
         if (!interrupted) {
             Spinner *followup_spinner = NULL;
             if (!tui && !queue) {
-                followup_spinner = spinner_start("Processing tool results...", SPINNER_CYAN);
+                // Use the same color as other status messages to reduce color variance
+                followup_spinner = spinner_start("Processing tool results...", SPINNER_YELLOW);
             } else {
                 ui_set_status(tui, queue, "Processing tool results...");
             }
