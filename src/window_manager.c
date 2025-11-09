@@ -28,25 +28,37 @@ static void calculate_layout(WindowManager *wm) {
     if (!wm) return;
     
     int screen_height = wm->screen_height;
+    if (screen_height < 0) screen_height = 0;
+
+    // Ensure input height fits on very small screens. We prefer to always
+    // leave at least 1 row for conversation viewport if possible.
+    int min_conv_forced = 1; // absolute minimum to avoid invalid prefresh()
+    if (screen_height <= 0) {
+        wm->input_height = 0;
+    } else if (wm->input_height >= screen_height) {
+        wm->input_height = screen_height > min_conv_forced
+            ? screen_height - min_conv_forced
+            : screen_height; // may be 0 or 1
+        if (wm->input_height < 0) wm->input_height = 0;
+    }
     
     // Determine if we have space for status window
     int available_height = screen_height - wm->input_height - wm->config.padding;
+    if (available_height < 0) available_height = 0;
+
+    // Determine if we have space for status window
     if (available_height < wm->config.min_conv_height + wm->config.status_height) {
-        // Not enough space for status window
         wm->status_height = 0;
         LOG_DEBUG("[WM] No space for status window (screen_h=%d, input_h=%d)",
                   screen_height, wm->input_height);
     } else {
         wm->status_height = wm->config.status_height;
     }
-    
-    // Calculate conversation viewport height
-    wm->conv_viewport_height = screen_height - wm->input_height - 
-                               wm->status_height - wm->config.padding;
-    
-    // Enforce minimum
-    if (wm->conv_viewport_height < wm->config.min_conv_height) {
-        wm->conv_viewport_height = wm->config.min_conv_height;
+
+    // Calculate conversation viewport height; be robust to tiny screens
+    wm->conv_viewport_height = available_height - wm->status_height;
+    if (wm->conv_viewport_height < min_conv_forced) {
+        wm->conv_viewport_height = (available_height > 0) ? 1 : 0;
     }
     
     LOG_DEBUG("[WM] Layout: screen=%dx%d, conv_viewport=%d, status=%d, input=%d, pad=%d",
@@ -153,6 +165,7 @@ int window_manager_init(WindowManager *wm, const WindowManagerConfig *config) {
     
     // Create input window
     int input_y = wm->screen_height - wm->input_height;
+    if (input_y < 0) input_y = 0;
     wm->input_win = newwin(wm->input_height, wm->screen_width, input_y, 0);
     if (!wm->input_win) {
         LOG_ERROR("[WM] Failed to create input window");
@@ -277,6 +290,7 @@ int window_manager_resize_screen(WindowManager *wm) {
     }
     
     int input_y = wm->screen_height - wm->input_height;
+    if (input_y < 0) input_y = 0;
     wm->input_win = newwin(wm->input_height, wm->screen_width, input_y, 0);
     if (!wm->input_win) {
         LOG_ERROR("[WM] Failed to recreate input window");
@@ -419,6 +433,10 @@ void window_manager_refresh_conversation(WindowManager *wm) {
         return;
     }
     
+    if (wm->conv_viewport_height <= 0 || wm->screen_width <= 0) {
+        return; // nothing to show or invalid geometry
+    }
+
     // Clamp scroll offset to valid range
     int max_scroll = wm->conv_pad_content_lines - wm->conv_viewport_height;
     if (max_scroll < 0) max_scroll = 0;
@@ -431,10 +449,14 @@ void window_manager_refresh_conversation(WindowManager *wm) {
     
     // Refresh pad viewport
     // prefresh(pad, pad_y, pad_x, screen_y1, screen_x1, screen_y2, screen_x2)
+    int y2 = wm->conv_viewport_height - 1;
+    int x2 = wm->screen_width - 1;
+    if (y2 < 0) y2 = 0;
+    if (x2 < 0) x2 = 0;
     prefresh(wm->conv_pad,
-             wm->conv_scroll_offset, 0,                          // pad position
-             0, 0,                                                // screen top-left
-             wm->conv_viewport_height - 1, wm->screen_width - 1); // screen bottom-right
+             wm->conv_scroll_offset, 0,  // pad position
+             0, 0,                        // screen top-left
+             y2, x2);                     // screen bottom-right
 }
 
 void window_manager_refresh_status(WindowManager *wm) {
