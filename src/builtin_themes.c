@@ -133,7 +133,7 @@ const BuiltInTheme built_in_themes[] = {
       "color6 #aaaaaa\n"
       "color14 #444444\n"
       "color7 #c1c1c1\n"
-      "color15 #c1c1c1\n" }
+      "color15 #c1c1c1\n" },
     { "tender",
       "# Colours (Tender) for Kitty\n"
       "\n"
