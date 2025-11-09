@@ -22,7 +22,7 @@ Project instructions for Claude Code when working with this codebase.
 **MCP integration**: `docs/mcp.md` (external tool servers)
 **TODO system**: `src/todo.h`, `src/todo.c`
 **TUI & Normal Mode**: `src/tui.h`, `src/tui.c`, `docs/normal-mode.md`
-**Color themes**: `src/colorscheme.h`, `colorschemes/*.conf`
+**Color themes**: `src/colorscheme.h`, `src/builtin_themes.h`, `src/builtin_themes.c`
 **Tests**: `tests/test_*.c`
 **Build**: `Makefile`
 
@@ -100,26 +100,34 @@ export OPENAI_API_KEY="your-api-key"
 ## Color Themes
 
 **Format**: Kitty terminal's .conf format (zero dependencies)
-**Location**: `colorschemes/` directory
-**Implementation**: `src/colorscheme.h`, `src/fallback_colors.h`
+**Location**: Built-in themes embedded in `src/builtin_themes.c`
+**Implementation**: `src/colorscheme.h`, `src/fallback_colors.h`, `src/builtin_themes.h`
 
-**Available themes:**
-- `kitty-default.conf` - Classic high contrast
-- `dracula.conf` - Dark purple, vibrant
-- `gruvbox-dark.conf` - Warm retro, low contrast
-- `solarized-dark.conf` - Blue-tinted, balanced
+**Available built-in themes:**
+- `kitty-default` - Classic high contrast
+- `dracula` - Dark purple, vibrant
+- `gruvbox-dark` - Warm retro, low contrast
+- `solarized-dark` - Blue-tinted, balanced
+- `black-metal` - Pure black, grayscale tones
 
 **Usage:**
 ```bash
-export CLAUDE_C_THEME="./colorschemes/dracula.conf"
+# Use built-in theme by name
+export CLAUDE_C_THEME="dracula"
+./build/claude-c
+
+# Or use external .conf file
+export CLAUDE_C_THEME="/path/to/custom-theme.conf"
+./build/claude-c
 ```
 
 **Technical:**
+- Built-in themes: Embedded strings, no file I/O needed
 - Parser: Simple `fgets()` + `sscanf()` (~250 lines)
 - Uses standard Kitty keys only: `foreground`, `color0-15`
 - Maps to TUI elements (assistant, user, status, error, header)
 - 256-color ANSI support with RGB→256 conversion
-- Compatible with 300+ Kitty themes from kitty-themes repo
+- Compatible with 300+ external Kitty themes from kitty-themes repo
 
 ## TODO List System
 

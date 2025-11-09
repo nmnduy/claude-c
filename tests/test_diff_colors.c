@@ -13,6 +13,7 @@
 #define TEST_BUILD 1
 #include "../src/colorscheme.h"
 #include "../src/fallback_colors.h"
+#include "../src/builtin_themes.h"
 
 void test_fallback_colors(void) {
     printf("=== Testing Fallback ANSI Colors ===\n\n");
@@ -139,27 +140,19 @@ int main(void) {
     // Test 1: Fallback colors
     test_fallback_colors();
 
-    // Test 2: Dracula theme
-    if (access("./colorschemes/dracula.conf", F_OK) == 0) {
-        test_theme_colors("./colorschemes/dracula.conf");
-    } else {
-        printf("⚠️  Dracula theme not found, skipping\n\n");
-    }
+    // Test 2: Dracula built-in theme
+    test_theme_colors("dracula");
 
-    // Test 3: Gruvbox theme
-    if (access("./colorschemes/gruvbox-dark.conf", F_OK) == 0) {
-        test_theme_colors("./colorschemes/gruvbox-dark.conf");
-    } else {
-        printf("⚠️  Gruvbox theme not found, skipping\n\n");
-    }
+    // Test 3: Gruvbox built-in theme
+    test_theme_colors("gruvbox-dark");
 
     // Test 4: Simulated diff output (no theme loaded)
     test_diff_output_simulation();
 
     // Test 5: Simulated diff with Dracula theme
-    if (access("./colorschemes/dracula.conf", F_OK) == 0) {
-        Theme theme = {0};
-        load_kitty_theme("./colorschemes/dracula.conf", &theme);
+    Theme theme = {0};
+    const char *builtin = get_builtin_theme_content("dracula");
+    if (builtin && load_kitty_theme_buf(builtin, &theme)) {
         printf("=== With Dracula Theme ===\n\n");
         test_diff_output_simulation();
     }

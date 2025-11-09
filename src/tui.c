@@ -25,6 +25,7 @@
 #include <sys/ioctl.h>
 #include <unistd.h>
 #include <time.h>
+#include <strings.h>
 #include "message_queue.h"
 
 #define INITIAL_CONV_CAPACITY 1000
@@ -34,6 +35,15 @@
 #define CONV_WIN_PADDING 1      // Lines of padding between conv window and input window
 #define STATUS_WIN_HEIGHT 1     // Single-line status window
 #define TUI_MAX_MESSAGES_PER_FRAME 10  // Max messages processed per frame
+
+// Paste heuristic control: default OFF (use bracketed paste only)
+// Enable by setting env var TUI_PASTE_HEURISTIC=1
+// Default: enable heuristic (helps when bracketed paste isn't passed through, e.g. tmux)
+static int g_enable_paste_heuristic = 1;
+// Less sensitive defaults: require very fast, large bursts to classify as paste
+static int g_paste_gap_ms = 12;         // max gap to count as "rapid" for burst
+static int g_paste_burst_min = 60;      // min consecutive keys within gap to enter paste mode
+static int g_paste_timeout_ms = 400;    // idle time to finalize paste
 
 // Global flag to detect terminal resize
 static volatile sig_atomic_t g_resize_flag = 0;
@@ -336,7 +346,8 @@ static void init_ncurses_colors(void) {
             init_pair(NCURSES_PAIR_STATUS, 19, -1);
             init_pair(NCURSES_PAIR_ERROR, 20, -1);
             // Use dedicated tool color pair (distinct from assistant)
-            init_pair(NCURSES_PAIR_TOOL, 21, -1);
+            // Unify tool color with status to reduce color variance
+            init_pair(NCURSES_PAIR_TOOL, 19, -1);
             init_pair(NCURSES_PAIR_PROMPT, 17, -1);  // Use USER color for prompt
             // TODO color pairs
             init_pair(NCURSES_PAIR_TODO_COMPLETED, 17, -1);    // Green (same as USER)
@@ -353,7 +364,8 @@ static void init_ncurses_colors(void) {
             init_pair(NCURSES_PAIR_STATUS, COLOR_YELLOW, -1);
             init_pair(NCURSES_PAIR_ERROR, COLOR_RED, -1);
             // Use magenta for tool tag (distinct from assistant cyan)
-            init_pair(NCURSES_PAIR_TOOL, COLOR_MAGENTA, -1);
+            // Unify tool color with status color
+            init_pair(NCURSES_PAIR_TOOL, COLOR_YELLOW, -1);
             init_pair(NCURSES_PAIR_PROMPT, COLOR_GREEN, -1);
             // TODO color pairs
             init_pair(NCURSES_PAIR_TODO_COMPLETED, COLOR_GREEN, -1);
@@ -370,7 +382,8 @@ static void init_ncurses_colors(void) {
         init_pair(NCURSES_PAIR_ERROR, COLOR_RED, -1);
         init_pair(NCURSES_PAIR_PROMPT, COLOR_GREEN, -1);
         // Ensure tool pair is initialized; use magenta for distinction
-        init_pair(NCURSES_PAIR_TOOL, COLOR_MAGENTA, -1);
+        // Unify tool color with status color
+        init_pair(NCURSES_PAIR_TOOL, COLOR_YELLOW, -1);
         // TODO color pairs
         init_pair(NCURSES_PAIR_TODO_COMPLETED, COLOR_GREEN, -1);
         init_pair(NCURSES_PAIR_TODO_IN_PROGRESS, COLOR_YELLOW, -1);
@@ -754,6 +767,8 @@ static void input_finalize_paste(TUIInputBuffer *input) {
     }
     
     int insert_pos = input->paste_start_pos;
+    if (insert_pos < 0) insert_pos = 0;
+    if (insert_pos > input->length) insert_pos = input->length;
     
     // For small pastes, insert directly without placeholder
     if (input->paste_content_len < PASTE_PLACEHOLDER_THRESHOLD) {
@@ -1023,6 +1038,33 @@ int tui_init(TUIState *tui) {
     // ESC[?2004h enables, ESC[?2004l disables
     printf("\033[?2004h");
     fflush(stdout);
+
+    // Configure paste heuristic (default: enabled). Only override when env provided
+    const char *ph = getenv("TUI_PASTE_HEURISTIC");
+    if (ph) {
+        if ((strcmp(ph, "1") == 0 || strcasecmp(ph, "true") == 0 || strcasecmp(ph, "on") == 0)) {
+            g_enable_paste_heuristic = 1;
+        } else if ((strcmp(ph, "0") == 0 || strcasecmp(ph, "false") == 0 || strcasecmp(ph, "off") == 0)) {
+            g_enable_paste_heuristic = 0;
+        }
+    }
+
+    // Optional tuning for heuristic thresholds
+    const char *gap = getenv("TUI_PASTE_GAP_MS");
+    if (gap) {
+        long v = strtol(gap, NULL, 10);
+        if (v >= 1 && v <= 100) g_paste_gap_ms = (int)v;
+    }
+    const char *burst = getenv("TUI_PASTE_BURST_MIN");
+    if (burst) {
+        long v = strtol(burst, NULL, 10);
+        if (v >= 1 && v <= 10000) g_paste_burst_min = (int)v;
+    }
+    const char *pto = getenv("TUI_PASTE_TIMEOUT_MS");
+    if (pto) {
+        long v = strtol(pto, NULL, 10);
+        if (v >= 100 && v <= 10000) g_paste_timeout_ms = (int)v;
+    }
 
     // Initialize colors from colorscheme
     init_ncurses_colors();
@@ -1475,7 +1517,7 @@ void tui_show_startup_banner(TUIState *tui, const char *version, const char *mod
         "Ctrl+G to enter Normal mode (vim-style); press 'i' to insert.",
         "Scroll: j/k (line), Ctrl+D/U (half page), gg/G (top/bottom).",
         /* "Use PageUp/PageDown or Arrow keys to scroll.", */
-        "Type /help for commands (e.g., /clear, /exit, /add-dir, /voice).",
+        "Type /help for commands (e.g., /clear, /exit, /add-dir).",
         "Press ESC to cancel a running API/tool action.",
         /* "Use /add-dir to attach a directory as context.", */
         "Press Ctrl+D to exit quickly.",
@@ -1769,8 +1811,8 @@ static int check_paste_timeout(TUIState *tui, const char *prompt) {
     long elapsed_ms = (current_time.tv_sec - input->last_input_time.tv_sec) * 1000 +
                       (current_time.tv_nsec - input->last_input_time.tv_nsec) / 1000000;
     
-    // Exit paste mode if there's been a 500ms pause
-    if (elapsed_ms > 500) {
+    // Exit paste mode if there's been a pause exceeding configured timeout
+    if (elapsed_ms > g_paste_timeout_ms) {
         input->paste_mode = 0;
         input->rapid_input_count = 0;
         LOG_DEBUG("[TUI] Paste timeout detected - exiting paste mode (heuristic), pasted %zu characters", 
@@ -1826,56 +1868,60 @@ int tui_process_input_char(TUIState *tui, int ch, const char *prompt) {
         return 0;
     }
 
-    // Detect rapid input (paste heuristic when bracketed paste not available)
-    struct timespec current_time;
-    clock_gettime(CLOCK_MONOTONIC, &current_time);
-    
-    long elapsed_ms = (current_time.tv_sec - input->last_input_time.tv_sec) * 1000 +
-                      (current_time.tv_nsec - input->last_input_time.tv_nsec) / 1000000;
-    
-    // If input arrives within 50ms, it's likely a paste
-    if (elapsed_ms < 50) {
-        input->rapid_input_count++;
-        if (input->rapid_input_count >= 5 && !input->paste_mode) {
-            input->paste_mode = 1;
-            
-            // For heuristic mode, we've already inserted some characters
-            // Need to capture what we've inserted so far
-            int chars_already_inserted = input->rapid_input_count;
-            input->paste_start_pos = input->cursor - chars_already_inserted;
-            if (input->paste_start_pos < 0) input->paste_start_pos = 0;
-            
-            // Allocate paste buffer if not already allocated
-            if (!input->paste_content) {
-                input->paste_capacity = 4096;
-                input->paste_content = malloc(input->paste_capacity);
+    // Detect rapid input (optional paste heuristic; default disabled)
+    if (g_enable_paste_heuristic) {
+        struct timespec current_time;
+        clock_gettime(CLOCK_MONOTONIC, &current_time);
+
+        long elapsed_ms = (current_time.tv_sec - input->last_input_time.tv_sec) * 1000 +
+                          (current_time.tv_nsec - input->last_input_time.tv_nsec) / 1000000;
+
+        // Very conservative thresholds to avoid false positives during normal typing
+        if (elapsed_ms < g_paste_gap_ms) {
+            input->rapid_input_count++;
+            if (input->rapid_input_count >= g_paste_burst_min && !input->paste_mode) {
+                input->paste_mode = 1;
+
+                // For heuristic mode, we've already inserted some characters
+                // Need to capture what we've inserted so far
+                int chars_already_inserted = input->rapid_input_count;
+                input->paste_start_pos = input->cursor - chars_already_inserted;
+                if (input->paste_start_pos < 0) input->paste_start_pos = 0;
+
+                // Allocate paste buffer if not already allocated
                 if (!input->paste_content) {
-                    LOG_ERROR("[TUI] Failed to allocate paste buffer");
-                    input->paste_mode = 0;
-                    return 0;
+                    input->paste_capacity = 4096;
+                    input->paste_content = malloc(input->paste_capacity);
+                    if (!input->paste_content) {
+                        LOG_ERROR("[TUI] Failed to allocate paste buffer");
+                        input->paste_mode = 0;
+                        // Do not early-return; continue processing as normal char
+                    }
                 }
+
+                // Copy the already-inserted characters to paste buffer
+                if (input->paste_content) {
+                    input->paste_content_len = (size_t)chars_already_inserted;
+                    if (input->paste_content_len > 0) {
+                        memcpy(input->paste_content,
+                               &input->buffer[input->paste_start_pos],
+                               input->paste_content_len);
+                    }
+                }
+
+                LOG_DEBUG("[TUI] Rapid input detected - entering paste mode (heuristic) at position %d, captured %d chars",
+                         input->paste_start_pos, chars_already_inserted);
             }
-            
-            // Copy the already-inserted characters to paste buffer
-            input->paste_content_len = (size_t)chars_already_inserted;
-            if (input->paste_content_len > 0) {
-                memcpy(input->paste_content, 
-                       &input->buffer[input->paste_start_pos], 
-                       input->paste_content_len);
+        } else if (elapsed_ms > 500) {
+            // Reset rapid input counter if there's a pause (but not in paste mode)
+            if (!input->paste_mode) {
+                input->rapid_input_count = 0;
             }
-            
-            LOG_DEBUG("[TUI] Rapid input detected - entering paste mode (heuristic) at position %d, captured %d chars", 
-                     input->paste_start_pos, chars_already_inserted);
+            // Paste mode timeout is handled in check_paste_timeout() called from main loop
         }
-    } else if (elapsed_ms > 500) {
-        // Reset rapid input counter if there's a pause (but not in paste mode)
-        if (!input->paste_mode) {
-            input->rapid_input_count = 0;
-        }
-        // Paste mode timeout is handled in check_paste_timeout() called from main loop
+
+        input->last_input_time = current_time;
     }
-    
-    input->last_input_time = current_time;
     
     // Handle special keys
     if (ch == KEY_RESIZE) {
@@ -2117,7 +2163,15 @@ const char* tui_get_input_buffer(TUIState *tui) {
     // Calculate sizes
     size_t before_len = (size_t)input->paste_start_pos;
     size_t after_start = (size_t)(input->paste_start_pos + input->paste_placeholder_len);
-    size_t after_len = (size_t)input->length - after_start;
+    size_t after_len = 0;
+    if (after_start <= (size_t)input->length) {
+        after_len = (size_t)input->length - after_start;
+    } else {
+        // Inconsistent indices; avoid underflow and return best-effort buffer
+        LOG_WARN("[TUI] Paste reconstruction index out of range (after_start=%zu, length=%d)", after_start, input->length);
+        after_start = (size_t)input->length;
+        after_len = 0;
+    }
     size_t total_len = before_len + input->paste_content_len + after_len;
     
     // Allocate temporary buffer for reconstruction
@@ -2380,8 +2434,9 @@ int tui_event_loop(TUIState *tui, const char *prompt,
         
         // 3. Poll for input (non-blocking)
         // If in paste mode, drain all available input quickly
-        int chars_processed = 0;
-        int max_chars_per_frame = tui->input_buffer && tui->input_buffer->paste_mode ? 10000 : 1;
+    int chars_processed = 0;
+    // Drain more than 1 char per frame to avoid artificial delays/lag on quick typing
+    int max_chars_per_frame = (tui->input_buffer && tui->input_buffer->paste_mode) ? 10000 : 32;
         
         while (chars_processed < max_chars_per_frame) {
             int ch = tui_poll_input(tui);

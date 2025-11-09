@@ -99,25 +99,24 @@ int main(void) {
     );
 
     // Test 4: With theme loaded (Dracula)
-    if (access("./colorschemes/dracula.conf", F_OK) == 0) {
-        printf("\n╔════════════════════════════════════════╗\n");
-        printf("║   Testing with Dracula Theme           ║\n");
-        printf("╚════════════════════════════════════════╝\n");
+    printf("\n╔════════════════════════════════════════╗\n");
+    printf("║   Testing with Dracula Theme           ║\n");
+    printf("╚════════════════════════════════════════╝\n");
 
-        Theme theme = {0};
-        if (load_kitty_theme("./colorschemes/dracula.conf", &theme) > 0) {
-            printf("✓ Dracula theme loaded\n");
+    Theme theme = {0};
+    const char *builtin = get_builtin_theme_content("dracula");
+    if (builtin && load_kitty_theme_buf(builtin, &theme)) {
+        printf("✓ Dracula theme loaded\n");
 
-            test_edit_with_diff(
-                "With Dracula theme",
-                "/tmp/test_edit_4.txt",
-                "Original line 1\nOriginal line 2\nOriginal line 3\n",
-                "Original",
-                "Modified",
-                1,  // replace all
-                0
-            );
-        }
+        test_edit_with_diff(
+            "With Dracula theme",
+            "/tmp/test_edit_4.txt",
+            "Original line 1\nOriginal line 2\nOriginal line 3\n",
+            "Original",
+            "Modified",
+            1,  // replace all
+            0
+        );
     }
 
     // Test 5: Regex replacement

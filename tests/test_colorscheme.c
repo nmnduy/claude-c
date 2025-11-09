@@ -10,9 +10,9 @@
 int main(void) {
     printf("Testing colorscheme system...\n\n");
 
-    // Test 1: Load kitty-default.conf
-    printf("Test 1: Loading kitty-default.conf\n");
-    int result = init_colorscheme("./colorschemes/kitty-default.conf");
+    // Test 1: Load built-in kitty-default theme
+    printf("Test 1: Loading built-in kitty-default theme\n");
+    int result = init_colorscheme("kitty-default");
 
     if (result == 0) {
         printf("✓ Theme loaded successfully\n");
@@ -45,7 +45,7 @@ int main(void) {
     // Test 2: Try to load non-existent theme
     printf("\nTest 2: Loading non-existent theme\n");
     g_theme_loaded = 0;  // Reset
-    result = init_colorscheme("./colorschemes/nonexistent.conf");
+    result = init_colorscheme("nonexistent-theme");
 
     if (result == -1) {
         printf("✓ Correctly failed to load non-existent theme\n");

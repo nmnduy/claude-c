@@ -1,19 +1,32 @@
 # Color Theme Support
 
-The TUI uses **Kitty terminal's theme format** - a simple, dependency-free configuration format. This gives you access to 300+ professionally-designed themes from the kitty-themes ecosystem!
+The TUI uses **Kitty terminal's theme format** - a simple, dependency-free configuration format. Built-in themes are embedded in the binary for zero-dependency operation, and you can still use external .conf files for custom themes.
+
+## Built-in Themes
+
+Five themes are embedded in the binary (no external files needed):
+
+- `kitty-default` - Classic high contrast black & white
+- `dracula` - Dark purple with vibrant colors
+- `gruvbox-dark` - Warm retro with low contrast
+- `solarized-dark` - Blue-tinted, carefully balanced
+- `black-metal` - Pure black with grayscale tones
 
 ## Configuration
 
-**Default location:**
+**Using a built-in theme:**
 ```bash
-~/.config/claude-c/theme.conf
+export CLAUDE_C_THEME="dracula"
+./claude-c "your prompt"
 ```
 
-**Environment variable override:**
+**Using an external theme file:**
 ```bash
 export CLAUDE_C_THEME="/path/to/your/theme.conf"
 ./claude-c "your prompt"
 ```
+
+**No theme specified:** Defaults to `kitty-default` built-in theme
 
 ## Theme Format
 
@@ -49,18 +62,27 @@ error_fg #ff5555
 - ✅ Compatible with Kitty terminal themes
 - ✅ Faster than structured formats (TOML/YAML)
 
-## Using Kitty themes directly
+## Using External Kitty Themes
 
 Most Kitty themes work out of the box! Download from [kitty-themes](https://github.com/dexpota/kitty-themes):
 
 ```bash
 # Download a theme
-curl -o ~/.config/claude-c/dracula.conf \
-  https://raw.githubusercontent.com/dexpota/kitty-themes/master/themes/Dracula.conf
+curl -o ~/nord.conf \
+  https://raw.githubusercontent.com/dexpota/kitty-themes/master/themes/Nord.conf
 
 # Use it
-export CLAUDE_C_THEME=~/.config/claude-c/dracula.conf
+export CLAUDE_C_THEME=~/nord.conf
 ./claude-c "your prompt"
 ```
 
-If no theme is specified, sensible defaults are used.
+## Adding New Built-in Themes
+
+To add a theme to the binary (see `src/builtin_themes.c`):
+
+1. Download the .conf file
+2. Convert to C string literal with escaped newlines
+3. Add to the `built_in_themes[]` array
+4. Rebuild with `make`
+
+This way, your favorite theme is always available without carrying external files.
