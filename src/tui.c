@@ -1517,7 +1517,7 @@ void tui_show_startup_banner(TUIState *tui, const char *version, const char *mod
         "Ctrl+G to enter Normal mode (vim-style); press 'i' to insert.",
         "Scroll: j/k (line), Ctrl+D/U (half page), gg/G (top/bottom).",
         /* "Use PageUp/PageDown or Arrow keys to scroll.", */
-        "Type /help for commands (e.g., /clear, /exit, /add-dir, /voice).",
+        "Type /help for commands (e.g., /clear, /exit, /add-dir).",
         "Press ESC to cancel a running API/tool action.",
         /* "Use /add-dir to attach a directory as context.", */
         "Press Ctrl+D to exit quickly.",
