@@ -1965,6 +1965,79 @@ static cJSON* tool_read_mcp_resource(cJSON *params, ConversationState *state) {
     mcp_free_resource_content(content);
     return result;
 }
+
+// MCP CallMcpTool tool handler
+static cJSON* tool_call_mcp_tool(cJSON *params, ConversationState *state) {
+    if (!state || !state->mcp_config) {
+        cJSON *error = cJSON_CreateObject();
+        cJSON_AddStringToObject(error, "error", "MCP not configured");
+        return error;
+    }
+
+    // Extract required parameters
+    cJSON *server_json = cJSON_GetObjectItem(params, "server");
+    cJSON *tool_json = cJSON_GetObjectItem(params, "tool");
+    cJSON *args_json = cJSON_GetObjectItem(params, "arguments");
+
+    if (!server_json || !cJSON_IsString(server_json)) {
+        cJSON *error = cJSON_CreateObject();
+        cJSON_AddStringToObject(error, "error", "Missing or invalid 'server' parameter");
+        return error;
+    }
+
+    if (!tool_json || !cJSON_IsString(tool_json)) {
+        cJSON *error = cJSON_CreateObject();
+        cJSON_AddStringToObject(error, "error", "Missing or invalid 'tool' parameter");
+        return error;
+    }
+
+    const char *server_name = server_json->valuestring;
+    const char *tool_name = tool_json->valuestring;
+
+    // Find server by name
+    MCPServer *target = NULL;
+    for (int i = 0; i < state->mcp_config->server_count; i++) {
+        MCPServer *srv = state->mcp_config->servers[i];
+        if (srv && srv->name && strcmp(srv->name, server_name) == 0) {
+            target = srv;
+            break;
+        }
+    }
+
+    if (!target) {
+        cJSON *error = cJSON_CreateObject();
+        cJSON_AddStringToObject(error, "error", "MCP server not found");
+        return error;
+    }
+
+    if (!target->connected) {
+        cJSON *error = cJSON_CreateObject();
+        cJSON_AddStringToObject(error, "error", "MCP server not connected");
+        return error;
+    }
+
+    // Ensure args is an object or null
+    cJSON *args_object = NULL;
+    if (args_json && cJSON_IsObject(args_json)) {
+        args_object = args_json;
+    }
+
+    MCPToolResult *call_result = mcp_call_tool(target, tool_name, args_object);
+    cJSON *result = cJSON_CreateObject();
+    if (!call_result) {
+        cJSON_AddStringToObject(result, "error", "MCP tool call failed");
+        return result;
+    }
+
+    if (call_result->is_error) {
+        cJSON_AddStringToObject(result, "error", call_result->result ? call_result->result : "MCP tool error");
+    } else {
+        cJSON_AddStringToObject(result, "content", call_result->result ? call_result->result : "");
+    }
+
+    mcp_free_tool_result(call_result);
+    return result;
+}
 #endif
 
 // ============================================================================
@@ -1988,6 +2061,7 @@ static Tool tools[] = {
 #ifndef TEST_BUILD
     {"ListMcpResources", tool_list_mcp_resources},
     {"ReadMcpResource", tool_read_mcp_resource},
+    {"CallMcpTool", tool_call_mcp_tool},
 #endif
 };
 
@@ -2376,6 +2450,37 @@ cJSON* get_tool_definitions(ConversationState *state, int enable_caching) {
         cJSON_AddItemToObject(read_res_func, "parameters", read_res_params);
         cJSON_AddItemToObject(read_res_tool, "function", read_res_func);
         cJSON_AddItemToArray(tool_array, read_res_tool);
+
+        // CallMcpTool tool (generic MCP tool invoker)
+        cJSON *call_tool = cJSON_CreateObject();
+        cJSON_AddStringToObject(call_tool, "type", "function");
+        cJSON *call_func = cJSON_CreateObject();
+        cJSON_AddStringToObject(call_func, "name", "CallMcpTool");
+        cJSON_AddStringToObject(call_func, "description",
+            "Calls a specific MCP tool by server and tool name with JSON arguments.");
+        cJSON *call_params = cJSON_CreateObject();
+        cJSON_AddStringToObject(call_params, "type", "object");
+        cJSON *call_props = cJSON_CreateObject();
+        cJSON *call_server_prop = cJSON_CreateObject();
+        cJSON_AddStringToObject(call_server_prop, "type", "string");
+        cJSON_AddStringToObject(call_server_prop, "description", "The MCP server name (as in config)");
+        cJSON_AddItemToObject(call_props, "server", call_server_prop);
+        cJSON *call_tool_prop = cJSON_CreateObject();
+        cJSON_AddStringToObject(call_tool_prop, "type", "string");
+        cJSON_AddStringToObject(call_tool_prop, "description", "The tool name exposed by the server");
+        cJSON_AddItemToObject(call_props, "tool", call_tool_prop);
+        cJSON *call_args_prop = cJSON_CreateObject();
+        cJSON_AddStringToObject(call_args_prop, "type", "object");
+        cJSON_AddStringToObject(call_args_prop, "description", "Arguments object per the tool's JSON schema");
+        cJSON_AddItemToObject(call_props, "arguments", call_args_prop);
+        cJSON_AddItemToObject(call_params, "properties", call_props);
+        cJSON *call_req = cJSON_CreateArray();
+        cJSON_AddItemToArray(call_req, cJSON_CreateString("server"));
+        cJSON_AddItemToArray(call_req, cJSON_CreateString("tool"));
+        cJSON_AddItemToObject(call_params, "required", call_req);
+        cJSON_AddItemToObject(call_func, "parameters", call_params);
+        cJSON_AddItemToObject(call_tool, "function", call_func);
+        cJSON_AddItemToArray(tool_array, call_tool);
 
         LOG_INFO("Added MCP resource tools (ListMcpResources, ReadMcpResource)");
     }
