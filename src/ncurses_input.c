@@ -518,6 +518,7 @@ char* ncurses_input_readline(NCursesInput *input, const char *prompt) {
             // History navigation
             // ============================================================
             case KEY_UP:
+            case 16:  // Ctrl+P - previous history
                 if (input->history_count > 0) {
                     // Save current input if this is the first Up press
                     if (input->history_position == -1) {
@@ -540,6 +541,7 @@ char* ncurses_input_readline(NCursesInput *input, const char *prompt) {
                 break;
 
             case KEY_DOWN:
+            case 14:  // Ctrl+N - next history
                 if (input->history_position != -1) {
                     input->history_position++;
 
