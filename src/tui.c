@@ -27,6 +27,7 @@
 #include <time.h>
 #include <strings.h>
 #include "message_queue.h"
+#include "history_file.h"
 
 #define INITIAL_CONV_CAPACITY 1000
 #define INPUT_BUFFER_SIZE 8192
@@ -1107,6 +1108,29 @@ int tui_init(TUIState *tui) {
         return -1;
     }
 
+    // Initialize input history (persistent)
+    tui->input_history = NULL;
+    tui->input_history_count = 0;
+    tui->input_history_capacity = 0;
+    tui->input_history_pos = -1;
+    tui->input_saved_before_history = NULL;
+    tui->history_file = history_file_open(NULL);
+    if (tui->history_file) {
+        int limit = 100;  // default history size in memory
+        const char *env_limit = getenv("CLAUDE_C_HISTORY_MAX");
+        if (env_limit && *env_limit) {
+            long v = strtol(env_limit, NULL, 10);
+            if (v > 0 && v < 100000) limit = (int)v;
+        }
+        int loaded = 0;
+        char **entries = history_file_load_recent(tui->history_file, limit, &loaded);
+        if (entries && loaded > 0) {
+            tui->input_history = entries;
+            tui->input_history_count = loaded;
+            tui->input_history_capacity = loaded;
+        }
+    }
+
     // Register resize handler (if available)
 #ifdef SIGWINCH
     signal(SIGWINCH, handle_resize);
@@ -1163,6 +1187,25 @@ void tui_cleanup(TUIState *tui) {
     printf("\n");
     LOG_DEBUG("[TUI] Cleaned up ncurses resources");
     fflush(stdout);
+
+    // Free input history
+    if (tui->input_history) {
+        for (int i = 0; i < tui->input_history_count; i++) {
+            free(tui->input_history[i]);
+        }
+        free(tui->input_history);
+        tui->input_history = NULL;
+        tui->input_history_count = 0;
+        tui->input_history_capacity = 0;
+    }
+    free(tui->input_saved_before_history);
+    tui->input_saved_before_history = NULL;
+
+    // Close history DB
+    if (tui->history_file) {
+        history_file_close(tui->history_file);
+        tui->history_file = NULL;
+    }
 }
 
 void tui_add_conversation_line(TUIState *tui, const char *prefix, const char *text, TUIColorPair color_pair) {
@@ -1970,6 +2013,66 @@ int tui_process_input_char(TUIState *tui, int ch, const char *prompt) {
     } else if (ch == KEY_END) {  // End
         input->cursor = input->length;
         input_redraw(tui, prompt);
+    } else if (ch == 16) {  // Ctrl+P: previous input history
+        if (tui->input_history_count > 0) {
+            if (tui->input_history_pos == -1) {
+                free(tui->input_saved_before_history);
+                tui->input_saved_before_history = strdup(tui->input_buffer->buffer);
+                tui->input_history_pos = tui->input_history_count;  // one past last
+            }
+            if (tui->input_history_pos > 0) {
+                tui->input_history_pos--;
+                const char *hist = tui->input_history[tui->input_history_pos];
+                if (hist) {
+                    size_t len = strlen(hist);
+                    if (len >= (size_t)tui->input_buffer->capacity) {
+                        len = (size_t)tui->input_buffer->capacity - 1;
+                    }
+                    memcpy(tui->input_buffer->buffer, hist, len);
+                    tui->input_buffer->buffer[len] = '\0';
+                    tui->input_buffer->length = (int)len;
+                    tui->input_buffer->cursor = (int)len;
+                    tui->input_buffer->view_offset = 0;
+                    tui->input_buffer->line_scroll_offset = 0;
+                    input_redraw(tui, prompt);
+                }
+            }
+        }
+    } else if (ch == 14) {  // Ctrl+N: next input history
+        if (tui->input_history_pos != -1) {
+            tui->input_history_pos++;
+            if (tui->input_history_pos >= tui->input_history_count) {
+                // restore saved input
+                const char *saved = tui->input_saved_before_history ? tui->input_saved_before_history : "";
+                size_t len = strlen(saved);
+                if (len >= (size_t)tui->input_buffer->capacity) {
+                    len = (size_t)tui->input_buffer->capacity - 1;
+                }
+                memcpy(tui->input_buffer->buffer, saved, len);
+                tui->input_buffer->buffer[len] = '\0';
+                tui->input_buffer->length = (int)len;
+                tui->input_buffer->cursor = (int)len;
+                tui->input_buffer->view_offset = 0;
+                tui->input_buffer->line_scroll_offset = 0;
+                tui->input_history_pos = -1;
+                input_redraw(tui, prompt);
+            } else {
+                const char *hist = tui->input_history[tui->input_history_pos];
+                if (hist) {
+                    size_t len = strlen(hist);
+                    if (len >= (size_t)tui->input_buffer->capacity) {
+                        len = (size_t)tui->input_buffer->capacity - 1;
+                    }
+                    memcpy(tui->input_buffer->buffer, hist, len);
+                    tui->input_buffer->buffer[len] = '\0';
+                    tui->input_buffer->length = (int)len;
+                    tui->input_buffer->cursor = (int)len;
+                    tui->input_buffer->view_offset = 0;
+                    tui->input_buffer->line_scroll_offset = 0;
+                    input_redraw(tui, prompt);
+                }
+            }
+        }
     } else if (ch == KEY_PPAGE) {  // Page Up: scroll conversation up
         tui_scroll_conversation(tui, -10);
         input_redraw(tui, prompt);
@@ -2436,6 +2539,30 @@ int tui_event_loop(TUIState *tui, const char *prompt,
                 const char *input = tui_get_input_buffer(tui);
                 if (input && strlen(input) > 0) {
                     LOG_DEBUG("[TUI] Submitting input (%zu bytes)", strlen(input));
+                    // Save to persistent history (keep DB open)
+                    // Append to in-memory history with simple de-dup of last entry
+                    if (tui->history_file) {
+                        history_file_append(tui->history_file, input);
+                    }
+                    if (tui->input_history_count == 0 ||
+                        strcmp(tui->input_history[tui->input_history_count - 1], input) != 0) {
+                        // Ensure capacity
+                        if (tui->input_history_count >= tui->input_history_capacity) {
+                            int new_cap = tui->input_history_capacity > 0 ? tui->input_history_capacity * 2 : 100;
+                            char **new_arr = realloc(tui->input_history, (size_t)new_cap * sizeof(char*));
+                            if (new_arr) {
+                                tui->input_history = new_arr;
+                                tui->input_history_capacity = new_cap;
+                            }
+                        }
+                        if (tui->input_history_count < tui->input_history_capacity) {
+                            tui->input_history[tui->input_history_count++] = strdup(input);
+                        }
+                    }
+                    // Reset history navigation state after submit
+                    free(tui->input_saved_before_history);
+                    tui->input_saved_before_history = NULL;
+                    tui->input_history_pos = -1;
                     // Call the callback
                     int callback_result = submit_callback(input, user_data);
                     

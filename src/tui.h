@@ -14,6 +14,7 @@
 #include "claude_internal.h"
 #include "todo.h"
 #include "window_manager.h"
+#include "history_file.h"
 
 // Forward declaration for WINDOW type (not actually used, kept for compatibility)
 typedef struct _win_st WINDOW;
@@ -77,6 +78,14 @@ typedef struct {
     int command_buffer_capacity; // Capacity of command buffer
 
     int is_initialized;      // Whether TUI has been set up
+
+    // Persistent input history (memory + DB)
+    char **input_history;    // Array of history strings (oldest -> newest)
+    int input_history_count; // Number of entries loaded
+    int input_history_capacity; // Capacity of array
+    int input_history_pos;   // Navigation position (-1 when not navigating)
+    char *input_saved_before_history; // Saved buffer when starting nav
+    HistoryFile *history_file;   // Open flat file handle (kept open)
 } TUIState;
 
 // Initialize the TUI
