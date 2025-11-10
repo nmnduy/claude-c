@@ -1448,14 +1448,79 @@ static char* regex_replace(const char *content, const char *pattern, const char 
     return result;
 }
 
+// === Helpers for Edit tool (file-scope) ===
+static char* find_last_occurrence(const char *haystack, const char *needle) {
+    if (!haystack || !needle || !*needle) return NULL;
+    const char *last = NULL;
+    const char *p = haystack;
+    size_t nlen = strlen(needle);
+    while ((p = strstr(p, needle)) != NULL) {
+        last = p;
+        p += nlen;
+    }
+    return (char*)last;
+}
+
+// Regex search supporting nth or last occurrence; if occurrence <= 0 => last
+static int regex_find_pos(const char *text, const char *pattern, int occurrence, regmatch_t *out_match) {
+    regex_t regex;
+    int rc = regcomp(&regex, pattern, REG_EXTENDED);
+    if (rc != 0) {
+        return -1; // invalid regex
+    }
+
+    int found_index = -1;
+    regmatch_t m;
+    int index = 0;
+    const char *cursor = text;
+    int last_start = -1;
+    regmatch_t last_m = (regmatch_t){0};
+    while (*cursor) {
+        if (regexec(&regex, cursor, 1, &m, 0) != 0) break;
+        index++;
+        int start = (int)(cursor - text) + (int)m.rm_so;
+        if (occurrence > 0 && index == occurrence) {
+            found_index = start;
+            if (out_match) {
+                out_match->rm_so = start;
+                out_match->rm_eo = (int)(cursor - text) + (int)m.rm_eo;
+            }
+            regfree(&regex);
+            return found_index;
+        }
+        // Save last
+        last_start = start;
+        last_m.rm_so = (int)(cursor - text) + (int)m.rm_so;
+        last_m.rm_eo = (int)(cursor - text) + (int)m.rm_eo;
+        // Advance cursor
+        cursor += (m.rm_eo > 0) ? m.rm_eo : 1;
+    }
+    regfree(&regex);
+    if (occurrence <= 0 && last_start >= 0) {
+        if (out_match) {
+            out_match->rm_so = last_m.rm_so;
+            out_match->rm_eo = last_m.rm_eo;
+        }
+        return last_start;
+    }
+    return -2; // not found
+}
+
 STATIC cJSON* tool_edit(cJSON *params, ConversationState *state) {
     const cJSON *path_json = cJSON_GetObjectItem(params, "file_path");
     const cJSON *old_json = cJSON_GetObjectItem(params, "old_string");
     const cJSON *new_json = cJSON_GetObjectItem(params, "new_string");
     const cJSON *replace_all_json = cJSON_GetObjectItem(params, "replace_all");
     const cJSON *use_regex_json = cJSON_GetObjectItem(params, "use_regex");
+    // Extended insert parameters (optional, backward compatible)
+    const cJSON *insert_mode_json = cJSON_GetObjectItem(params, "insert_mode");
+    const cJSON *anchor_json = cJSON_GetObjectItem(params, "anchor");
+    const cJSON *anchor_is_regex_json = cJSON_GetObjectItem(params, "anchor_is_regex");
+    const cJSON *insert_position_json = cJSON_GetObjectItem(params, "insert_position"); // "before" | "after"
+    const cJSON *occurrence_json = cJSON_GetObjectItem(params, "occurrence"); // "first" | "last" | int
+    const cJSON *fallback_to_eof_json = cJSON_GetObjectItem(params, "fallback_to_eof"); // bool
 
-    if (!path_json || !old_json || !new_json) {
+    if (!path_json || !new_json) {
         cJSON *error = cJSON_CreateObject();
         cJSON_AddStringToObject(error, "error", "Missing required parameters");
         return error;
@@ -1485,6 +1550,12 @@ STATIC cJSON* tool_edit(cJSON *params, ConversationState *state) {
                       cJSON_IsTrue(replace_all_json) : 0;
     int use_regex = use_regex_json && cJSON_IsBool(use_regex_json) ?
                     cJSON_IsTrue(use_regex_json) : 0;
+    int insert_mode = insert_mode_json && cJSON_IsBool(insert_mode_json) ?
+                      cJSON_IsTrue(insert_mode_json) : 0;
+    int anchor_is_regex = anchor_is_regex_json && cJSON_IsBool(anchor_is_regex_json) ?
+                          cJSON_IsTrue(anchor_is_regex_json) : 0;
+    int fallback_to_eof = fallback_to_eof_json && cJSON_IsBool(fallback_to_eof_json) ?
+                          cJSON_IsTrue(fallback_to_eof_json) : 0;
 
     char *resolved_path = resolve_path(path_json->valuestring, state->working_dir);
     if (!resolved_path) {
@@ -1511,21 +1582,123 @@ STATIC cJSON* tool_edit(cJSON *params, ConversationState *state) {
         return error;
     }
 
-    const char *old_str = old_json->valuestring;
+    const char *old_str = old_json && cJSON_IsString(old_json) ? old_json->valuestring : NULL;
     const char *new_str = new_json->valuestring;
     char *new_content = NULL;
     int replace_count = 0;
     char *error_msg = NULL;
 
-    if (use_regex) {
+    // (helpers moved to file scope)
+
+    if (insert_mode) {
+        // Insertion mode using anchor
+        const char *anchor = NULL;
+        if (anchor_json && cJSON_IsString(anchor_json)) anchor = anchor_json->valuestring;
+        // Default: if no anchor provided, fallback to old_string for convenience
+        if (!anchor) anchor = old_str;
+
+        if (!anchor) {
+            free(content);
+            free(original_content);
+            free(resolved_path);
+            cJSON *error = cJSON_CreateObject();
+            cJSON_AddStringToObject(error, "error", "insert_mode requires 'anchor' or 'old_string'");
+            return error;
+        }
+
+        int use_after = 0;
+        if (insert_position_json && cJSON_IsString(insert_position_json)) {
+            const char *pos_str = insert_position_json->valuestring;
+            if (strcmp(pos_str, "after") == 0) use_after = 1;
+        }
+
+        // Determine which occurrence to use
+        int which = 0; // 0 => last by default
+        if (occurrence_json) {
+            if (cJSON_IsString(occurrence_json)) {
+                const char *o = occurrence_json->valuestring;
+                if (strcmp(o, "first") == 0) which = 1;
+                else if (strcmp(o, "last") == 0) which = 0;
+            } else if (cJSON_IsNumber(occurrence_json)) {
+                which = occurrence_json->valueint;
+                if (which < 0) which = 0; // treat negative as last
+            }
+        }
+
+        size_t content_len = strlen(content);
+        size_t insert_at = (size_t)content_len; // default to EOF
+        size_t anchor_len = 0;
+        int found = 0;
+
+        if (anchor_is_regex) {
+            regmatch_t m = {0};
+            int pos = regex_find_pos(content, anchor, which, &m);
+            if (pos >= 0) {
+                found = 1;
+                insert_at = use_after ? (size_t)m.rm_eo : (size_t)m.rm_so;
+            }
+        } else {
+            const char *loc = NULL;
+            if (which <= 0) {
+                loc = find_last_occurrence(content, anchor);
+            } else {
+                // find nth occurrence
+                const char *p = content;
+                int idx = 0;
+                size_t nlen = strlen(anchor);
+                while ((p = strstr(p, anchor)) != NULL) {
+                    idx++;
+                    if (idx == which) { loc = p; break; }
+                    p += nlen;
+                }
+            }
+            if (loc) {
+                found = 1;
+                anchor_len = strlen(anchor);
+                insert_at = use_after ? (size_t)(loc - content) + anchor_len
+                                      : (size_t)(loc - content);
+            }
+        }
+
+        if (!found && !fallback_to_eof) {
+            free(content);
+            free(original_content);
+            free(resolved_path);
+            cJSON *error = cJSON_CreateObject();
+            cJSON_AddStringToObject(error, "error", "Anchor not found in file");
+            return error;
+        }
+
+        // Build new content: insert new_str at insert_at
+        size_t new_len = strlen(new_str);
+        char *buf = malloc(content_len + new_len + 1);
+        if (!buf) {
+            free(content);
+            free(original_content);
+            free(resolved_path);
+            cJSON *error = cJSON_CreateObject();
+            cJSON_AddStringToObject(error, "error", "Out of memory");
+            return error;
+        }
+        memcpy(buf, content, insert_at);
+        memcpy(buf + insert_at, new_str, new_len);
+        memcpy(buf + insert_at + new_len, content + insert_at, content_len - insert_at + 1);
+        new_content = buf;
+        replace_count = 1;
+    } else if (use_regex) {
         // Regex-based replacement
         new_content = regex_replace(content, old_str, new_str, replace_all, &replace_count, &error_msg);
     } else if (replace_all) {
         // Simple string multi-replace
-        new_content = str_replace_all(content, old_str, new_str, &replace_count);
+        if (!old_str) {
+            error_msg = strdup("replace_all requires 'old_string'");
+            new_content = NULL;
+        } else {
+            new_content = str_replace_all(content, old_str, new_str, &replace_count);
+        }
     } else {
         // Simple string single replace (original behavior)
-        char *pos = strstr(content, old_str);
+        char *pos = old_str ? strstr(content, old_str) : NULL;
         if (pos) {
             replace_count = 1;
             size_t old_len = strlen(old_str);
@@ -1553,7 +1726,7 @@ STATIC cJSON* tool_edit(cJSON *params, ConversationState *state) {
             free(error_msg);
         } else if (replace_count == 0) {
             cJSON_AddStringToObject(error, "error",
-                use_regex ? "Pattern not found in file" : "String not found in file");
+                (insert_mode ? "Anchor not found in file" : (use_regex ? "Pattern not found in file" : "String not found in file")));
         } else {
             cJSON_AddStringToObject(error, "error", "Out of memory");
         }
