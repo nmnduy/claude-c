@@ -2583,8 +2583,20 @@ cJSON* get_tool_definitions(ConversationState *state, int enable_caching) {
     cJSON_AddItemToArray(tool_array, todo_tool);
 
 #ifndef TEST_BUILD
-    // Add MCP resource tools if MCP is enabled
+    // Add MCP tools if MCP is enabled and configured
     if (state && state->mcp_config && mcp_is_enabled()) {
+        // 1) Dynamic MCP tools discovered from servers
+        cJSON *mcp_tools = mcp_get_all_tools(state->mcp_config);
+        if (mcp_tools && cJSON_IsArray(mcp_tools)) {
+            cJSON *t = NULL;
+            cJSON_ArrayForEach(t, mcp_tools) {
+                // Each t is already a full Claude tool definition object
+                cJSON_AddItemToArray(tool_array, cJSON_Duplicate(t, 1));
+            }
+            cJSON_Delete(mcp_tools);
+        }
+
+        // 2) Built-in helper tools for MCP resources and generic invocation
         // ListMcpResources tool
         cJSON *list_res_tool = cJSON_CreateObject();
         cJSON_AddStringToObject(list_res_tool, "type", "function");

@@ -257,8 +257,33 @@ MCPConfig* mcp_load_config(const char *config_path) {
     
     config->server_count = idx;
     cJSON_Delete(root);
-    
+
     LOG_INFO("MCP: Loaded %d server(s) from config", config->server_count);
+    // Debug summary of configured servers for local troubleshooting
+    LOG_DEBUG("MCP: Configured servers summary (logging to help debug)");
+    for (int i = 0; i < config->server_count; i++) {
+        MCPServer *s = config->servers[i];
+        if (!s) continue;
+        char args_buf[768] = {0};
+        size_t off = 0;
+        for (int a = 0; a < s->args_count && off + 2 < sizeof(args_buf); a++) {
+            const char *arg = s->args[a] ? s->args[a] : "";
+            size_t n = strlen(arg);
+            if (off + n + 1 >= sizeof(args_buf)) break;
+            memcpy(args_buf + off, arg, n);
+            off += n;
+            if (a < s->args_count - 1 && off + 1 < sizeof(args_buf)) {
+                args_buf[off++] = ' ';
+            }
+        }
+        args_buf[off] = '\0';
+        LOG_DEBUG("  - %s: cmd='%s'%s%s%s",
+                  s->name ? s->name : "<noname>",
+                  s->command ? s->command : "<none>",
+                  (s->args_count > 0 ? " args=[" : ""),
+                  args_buf,
+                  (s->args_count > 0 ? "]" : ""));
+    }
     return config;
 }
 
@@ -747,35 +772,63 @@ cJSON* mcp_get_all_tools(MCPConfig *config) {
     if (!config) {
         return NULL;
     }
-    
+
+    // Return an array of Claude API tool definitions: { type: "function", function: { name, description, parameters } }
     cJSON *tools_array = cJSON_CreateArray();
     if (!tools_array) {
         return NULL;
     }
-    
+
     for (int i = 0; i < config->server_count; i++) {
         MCPServer *server = config->servers[i];
         if (!server || !server->connected || !server->tool_schemas) {
             continue;
         }
-        
+
         cJSON *tool = NULL;
         cJSON_ArrayForEach(tool, server->tool_schemas) {
-            // Add server name prefix to avoid conflicts
-            cJSON *tool_copy = cJSON_Duplicate(tool, 1);
-            if (tool_copy) {
-                cJSON *name = cJSON_GetObjectItem(tool_copy, "name");
-                if (name && cJSON_IsString(name)) {
-                    char prefixed_name[256];
-                    snprintf(prefixed_name, sizeof(prefixed_name), "mcp_%s_%s", 
-                            server->name, name->valuestring);
-                    cJSON_SetValuestring(name, prefixed_name);
-                }
-                cJSON_AddItemToArray(tools_array, tool_copy);
+            // Prepare Claude tool definition wrapper
+            cJSON *tool_def = cJSON_CreateObject();
+            if (!tool_def) continue;
+            cJSON_AddStringToObject(tool_def, "type", "function");
+
+            cJSON *func = cJSON_CreateObject();
+            if (!func) { cJSON_Delete(tool_def); continue; }
+
+            // Name with mcp_<server>_<tool> prefix
+            const cJSON *name = cJSON_GetObjectItem(tool, "name");
+            if (!name || !cJSON_IsString(name)) { cJSON_Delete(tool_def); cJSON_Delete(func); continue; }
+            char prefixed_name[256];
+            snprintf(prefixed_name, sizeof(prefixed_name), "mcp_%s_%s", server->name, name->valuestring);
+            cJSON_AddStringToObject(func, "name", prefixed_name);
+
+            // Description if present
+            const cJSON *desc = cJSON_GetObjectItem(tool, "description");
+            if (desc && cJSON_IsString(desc)) {
+                cJSON_AddStringToObject(func, "description", desc->valuestring);
             }
+
+            // Parameters: map from MCP tool's input schema to Claude parameters
+            // Try common keys from MCP servers: inputSchema, input_schema, parameters
+            const cJSON *input_schema = cJSON_GetObjectItem(tool, "inputSchema");
+            if (!input_schema) input_schema = cJSON_GetObjectItem(tool, "input_schema");
+            if (!input_schema) input_schema = cJSON_GetObjectItem(tool, "parameters");
+
+            if (input_schema && (cJSON_IsObject(input_schema) || cJSON_IsArray(input_schema))) {
+                // Duplicate schema as-is under "parameters"
+                cJSON_AddItemToObject(func, "parameters", cJSON_Duplicate(input_schema, 1));
+            } else {
+                // Fallback to an empty object schema
+                cJSON *empty_params = cJSON_CreateObject();
+                cJSON_AddStringToObject(empty_params, "type", "object");
+                cJSON_AddItemToObject(func, "parameters", empty_params);
+            }
+
+            cJSON_AddItemToObject(tool_def, "function", func);
+            cJSON_AddItemToArray(tools_array, tool_def);
         }
     }
-    
+
     return tools_array;
 }
 
