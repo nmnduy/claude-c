@@ -4497,10 +4497,10 @@ int main(int argc, char *argv[]) {
         }
     } else {
         // Try to load default built-in theme
-        if (init_colorscheme("kitty-default") != 0) {
+        if (init_colorscheme("tender") != 0) {
             LOG_DEBUG("No default colorscheme found, using ANSI fallback colors");
         } else {
-            LOG_DEBUG("Default colorscheme loaded: kitty-default");
+            LOG_DEBUG("Default colorscheme loaded: tender");
         }
     }
 

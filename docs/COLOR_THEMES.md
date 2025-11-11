@@ -4,8 +4,9 @@ The TUI uses **Kitty terminal's theme format** - a simple, dependency-free confi
 
 ## Built-in Themes
 
-Five themes are embedded in the binary (no external files needed):
+Six themes are embedded in the binary (no external files needed):
 
+- `tender` - Warm and soft, easy on the eyes (default)
 - `kitty-default` - Classic high contrast black & white
 - `dracula` - Dark purple with vibrant colors
 - `gruvbox-dark` - Warm retro with low contrast
@@ -26,7 +27,7 @@ export CLAUDE_C_THEME="/path/to/your/theme.conf"
 ./claude-c "your prompt"
 ```
 
-**No theme specified:** Defaults to `kitty-default` built-in theme
+**No theme specified:** Defaults to `tender` built-in theme
 
 ## Theme Format
 
