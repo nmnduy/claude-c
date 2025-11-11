@@ -2111,14 +2111,6 @@ int tui_process_input_char(TUIState *tui, int ch, const char *prompt) {
             input->rapid_input_count = 0;  // Reset on submit
             return 1;  // Signal submission
         }
-    } else if (ch == 7) {  // Ctrl+G: Enter NORMAL mode
-        tui->mode = TUI_MODE_NORMAL;
-        tui->normal_mode_last_key = 0;
-        if (tui->wm.status_height > 0) {
-            render_status_window(tui);
-        }
-        input_redraw(tui, prompt);
-        return 0;
     } else if (ch == 3) {   // Ctrl+C: Interrupt running action
         // Signal interrupt request to event loop
         return 2;
