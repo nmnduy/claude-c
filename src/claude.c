@@ -951,6 +951,11 @@ STATIC cJSON* tool_read(cJSON *params, ConversationState *state) {
         char *pos = content;
 
         while (*pos) {
+            // CRITICAL: Add cancellation point for large file processing
+            if (current_line % 1000 == 0) {
+                pthread_testcancel();
+            }
+            
             if (*pos == '\n') {
                 // Found end of line
                 int line_len = (int)(pos - line_start + 1);  // Include the newline
@@ -1274,19 +1279,36 @@ static void tool_progress_callback(const ToolCompletion *completion, void *user_
 // Cleanup handler for tool thread cancellation
 static void tool_thread_cleanup(void *arg) {
     ToolThreadArg *t = (ToolThreadArg *)arg;
+    
     // Free input JSON if not already freed
     if (t->input) {
         cJSON_Delete(t->input);
         t->input = NULL;
     }
-    // Mark result as cancelled
-    t->result_block->type = INTERNAL_TOOL_RESPONSE;
-    t->result_block->tool_id = t->tool_use_id;
-    t->result_block->tool_name = strdup(t->tool_name);
-    cJSON *error = cJSON_CreateObject();
-    cJSON_AddStringToObject(error, "error", "Tool execution cancelled by user");
-    t->result_block->tool_output = error;
-    t->result_block->is_error = 1;
+    
+    // CRITICAL FIX: Check if we've already written results under mutex
+    // to prevent data race with normal completion path
+    pthread_mutex_t *mutex = t->tracker ? &t->tracker->mutex : NULL;
+    if (mutex) {
+        pthread_mutex_lock(mutex);
+    }
+    
+    int should_write_result = !t->notified;
+    
+    if (mutex) {
+        pthread_mutex_unlock(mutex);
+    }
+    
+    // Only write cancellation result if not already completed
+    if (should_write_result && t->result_block) {
+        t->result_block->type = INTERNAL_TOOL_RESPONSE;
+        t->result_block->tool_id = t->tool_use_id;
+        t->result_block->tool_name = strdup(t->tool_name);
+        cJSON *error = cJSON_CreateObject();
+        cJSON_AddStringToObject(error, "error", "Tool execution cancelled by user");
+        t->result_block->tool_output = error;
+        t->result_block->is_error = 1;
+    }
 
     tool_tracker_notify_completion(t);
 }
@@ -1712,6 +1734,9 @@ static cJSON* tool_grep(cJSON *params, ConversationState *state) {
 
     char buffer[BUFFER_SIZE];
     while (fgets(buffer, sizeof(buffer), pipe)) {
+        // CRITICAL: Add cancellation point for long grep operations
+        pthread_testcancel();
+        
         if (match_count >= max_results) {
             truncated = 1;
             break;
@@ -1732,6 +1757,9 @@ static cJSON* tool_grep(cJSON *params, ConversationState *state) {
         if (!pipe) continue;  // Skip this directory on error
 
         while (fgets(buffer, sizeof(buffer), pipe)) {
+            // CRITICAL: Add cancellation point for long grep operations
+            pthread_testcancel();
+            
             if (match_count >= max_results) {
                 truncated = 1;
                 break;
@@ -3777,6 +3805,14 @@ static void process_response(ConversationState *state,
             int rc = pthread_create(&threads[started_threads], NULL, tool_thread_func, current);
             if (rc != 0) {
                 LOG_ERROR("Failed to create tool thread for %s (rc=%d)", tool->name, rc);
+                
+                // CRITICAL FIX: Cancel already-started threads on failure
+                // This prevents zombie threads if we fail mid-creation
+                for (int cancel_idx = 0; cancel_idx < started_threads; cancel_idx++) {
+                    pthread_cancel(threads[cancel_idx]);
+                }
+                // Threads will be joined later in the cleanup path
+                
                 cJSON_Delete(input);
                 current->input = NULL;
 
@@ -3800,11 +3836,18 @@ static void process_response(ConversationState *state,
                 if (state->interrupt_requested) {
                     LOG_INFO("Tool execution interrupted by user request");
                     interrupted = 1;
-                    // Cancel the tracker to signal all tools to stop
+                    
+                    // CRITICAL FIX: Actually cancel the threads, not just the tracker
+                    // Setting tracker.cancelled alone doesn't stop running threads
                     pthread_mutex_lock(&tracker.mutex);
                     tracker.cancelled = 1;
                     pthread_cond_broadcast(&tracker.cond);
                     pthread_mutex_unlock(&tracker.mutex);
+                    
+                    // Cancel all running threads - this triggers cleanup handlers
+                    for (int t = 0; t < started_threads; t++) {
+                        pthread_cancel(threads[t]);
+                    }
                     break;
                 }
                 
