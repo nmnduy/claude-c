@@ -2491,6 +2491,7 @@ static int process_tui_messages(TUIState *tui,
 int tui_event_loop(TUIState *tui, const char *prompt, 
                    InputSubmitCallback submit_callback,
                    InterruptCallback interrupt_callback,
+                   KeypressCallback keypress_callback,
                    void *user_data,
                    void *msg_queue_ptr) {
     if (!tui || !tui->is_initialized || !submit_callback) {
@@ -2538,7 +2539,14 @@ int tui_event_loop(TUIState *tui, const char *prompt,
             }
             
             chars_processed++;
+            
             int result = tui_process_input_char(tui, ch, prompt);
+            
+            // Notify about keypress (after processing, and only for normal input)
+            // Skip for Ctrl+C (result==2) since interrupt callback handles that
+            if (keypress_callback && result == 0) {
+                keypress_callback(user_data);
+            }
             if (result == 1) {
                 // Enter pressed - submit input
                 const char *input = tui_get_input_buffer(tui);
