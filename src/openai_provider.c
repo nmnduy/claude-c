@@ -147,6 +147,10 @@ static ApiCallResult openai_call_api(Provider *self, ConversationState *state) {
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
 
+    // Set timeouts to prevent indefinite hangs
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 30L);  // 30 seconds to connect
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 300L);         // 5 minutes total timeout
+
     // Enable progress callback (not used for Ctrl+C interrupts)
     curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
     curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, progress_callback);
