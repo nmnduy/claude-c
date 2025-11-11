@@ -1025,6 +1025,12 @@ int tui_init(TUIState *tui) {
 
     // Initialize ncurses
     initscr();
+    
+    // Set ESC delay to 25ms for responsive ESC/Ctrl+[ mode switching
+    // Default is 1000ms which feels sluggish. 25ms is enough to detect
+    // escape sequences (arrow keys, etc.) while feeling instant to users.
+    set_escdelay(25);
+    
     // Use raw mode so Ctrl+C is delivered as a key (ASCII 3)
     raw();     // Disable line buffering and signal generation (incl. SIGINT)
     noecho();  // Don't echo input
