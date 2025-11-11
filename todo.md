@@ -1,4 +1,3 @@
-- [ ] mcp
 - [ ] plan mode
 - [ ] remove ANTHROPIC_MODEL env var usage. its confusing
 - [ ] doesn't handle SIGHUP?
