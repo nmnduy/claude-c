@@ -104,6 +104,7 @@ export OPENAI_API_KEY="your-api-key"
 **Implementation**: `src/colorscheme.h`, `src/fallback_colors.h`, `src/builtin_themes.h`
 
 **Available built-in themes:**
+- `tender` - Warm and soft, easy on the eyes (default)
 - `kitty-default` - Classic high contrast
 - `dracula` - Dark purple, vibrant
 - `gruvbox-dark` - Warm retro, low contrast
