@@ -90,6 +90,7 @@ MCPConfig* mcp_load_config(const char *config_path) {
     cJSON *root = NULL;
     cJSON *servers_obj = NULL;
     MCPConfig *config = NULL;
+    char *allocated_path = NULL;
     
     if (!config_path) {
         // Try default locations
@@ -99,15 +100,20 @@ MCPConfig* mcp_load_config(const char *config_path) {
             return NULL;
         }
         
-        char default_path[1024];
-        snprintf(default_path, sizeof(default_path), "%s/.config/claude-c/mcp_servers.json", home);
-        config_path = default_path;
+        // Allocate on heap to avoid stack-use-after-scope
+        allocated_path = malloc(1024);
+        if (!allocated_path) {
+            LOG_ERROR("MCP: Failed to allocate memory for default path");
+            return NULL;
+        }
+        snprintf(allocated_path, 1024, "%s/.config/claude-c/mcp_servers.json", home);
+        config_path = allocated_path;
     }
     
     // Check if file exists
     if (access(config_path, F_OK) != 0) {
         LOG_DEBUG("MCP: Config file not found: %s", config_path);
-        return NULL;
+        goto cleanup;
     }
     
     LOG_INFO("MCP: Loading configuration from %s", config_path);
@@ -116,7 +122,7 @@ MCPConfig* mcp_load_config(const char *config_path) {
     fp = fopen(config_path, "r");
     if (!fp) {
         LOG_ERROR("MCP: Failed to open config file: %s", strerror(errno));
-        return NULL;
+        goto cleanup;
     }
     
     fseek(fp, 0, SEEK_END);
@@ -126,14 +132,16 @@ MCPConfig* mcp_load_config(const char *config_path) {
     if (file_size <= 0 || file_size > 1024 * 1024) {  // Max 1MB config
         LOG_ERROR("MCP: Invalid config file size: %ld", file_size);
         fclose(fp);
-        return NULL;
+        fp = NULL;
+        goto cleanup;
     }
     
     content = malloc((size_t)file_size + 1);
     if (!content) {
         LOG_ERROR("MCP: Failed to allocate memory for config");
         fclose(fp);
-        return NULL;
+        fp = NULL;
+        goto cleanup;
     }
     
     size_t read_size = fread(content, 1, (size_t)file_size, fp);
@@ -143,7 +151,8 @@ MCPConfig* mcp_load_config(const char *config_path) {
     if ((long)read_size != file_size) {
         LOG_ERROR("MCP: Failed to read config file");
         free(content);
-        return NULL;
+        content = NULL;
+        goto cleanup;
     }
     content[file_size] = '\0';
     
@@ -154,7 +163,7 @@ MCPConfig* mcp_load_config(const char *config_path) {
     
     if (!root) {
         LOG_ERROR("MCP: Failed to parse config JSON: %s", cJSON_GetErrorPtr());
-        return NULL;
+        goto cleanup;
     }
     
     // Get mcpServers object
@@ -162,7 +171,8 @@ MCPConfig* mcp_load_config(const char *config_path) {
     if (!servers_obj || !cJSON_IsObject(servers_obj)) {
         LOG_ERROR("MCP: Config missing 'mcpServers' object");
         cJSON_Delete(root);
-        return NULL;
+        root = NULL;
+        goto cleanup;
     }
     
     // Count servers
@@ -170,7 +180,8 @@ MCPConfig* mcp_load_config(const char *config_path) {
     if (server_count <= 0) {
         LOG_WARN("MCP: No servers configured");
         cJSON_Delete(root);
-        return NULL;
+        root = NULL;
+        goto cleanup;
     }
     
     // Allocate config
@@ -178,15 +189,18 @@ MCPConfig* mcp_load_config(const char *config_path) {
     if (!config) {
         LOG_ERROR("MCP: Failed to allocate config");
         cJSON_Delete(root);
-        return NULL;
+        root = NULL;
+        goto cleanup;
     }
     
     config->servers = calloc((size_t)server_count, sizeof(MCPServer*));
     if (!config->servers) {
         LOG_ERROR("MCP: Failed to allocate server array");
         free(config);
+        config = NULL;
         cJSON_Delete(root);
-        return NULL;
+        root = NULL;
+        goto cleanup;
     }
     
     // Parse each server
@@ -245,7 +259,12 @@ MCPConfig* mcp_load_config(const char *config_path) {
                         if (key && cJSON_IsString(env_item)) {
                             char env_str[1024];
                             snprintf(env_str, sizeof(env_str), "%s=%s", key, env_item->valuestring);
-                            server->env[i++] = strdup(env_str);
+                            server->env[i] = strdup(env_str);
+                            if (!server->env[i]) {
+                                LOG_WARN("MCP: Failed to allocate env string, skipping");
+                                continue;
+                            }
+                            i++;
                         }
                     }
                 }
@@ -258,6 +277,7 @@ MCPConfig* mcp_load_config(const char *config_path) {
     
     config->server_count = idx;
     cJSON_Delete(root);
+    root = NULL;
 
     LOG_INFO("MCP: Loaded %d server(s) from config", config->server_count);
     // Debug summary of configured servers for local troubleshooting
@@ -285,6 +305,22 @@ MCPConfig* mcp_load_config(const char *config_path) {
                   args_buf,
                   (s->args_count > 0 ? "]" : ""));
     }
+
+cleanup:
+    // Clean up allocated resources
+    if (allocated_path) {
+        free(allocated_path);
+    }
+    if (fp) {
+        fclose(fp);
+    }
+    if (content) {
+        free(content);
+    }
+    if (root) {
+        cJSON_Delete(root);
+    }
+    
     return config;
 }
 
@@ -642,8 +678,13 @@ int mcp_discover_tools(MCPServer *server) {
     cJSON_ArrayForEach(tool, tools) {
         cJSON *name = cJSON_GetObjectItem(tool, "name");
         if (name && cJSON_IsString(name)) {
-            server->tools[idx++] = strdup(name->valuestring);
+            server->tools[idx] = strdup(name->valuestring);
+            if (!server->tools[idx]) {
+                LOG_WARN("MCP: Failed to allocate tool name, skipping");
+                continue;
+            }
             LOG_INFO("MCP: Discovered tool '%s' from server '%s'", name->valuestring, server->name);
+            idx++;
         }
     }
     
@@ -877,7 +918,11 @@ MCPServer* mcp_find_tool_server(MCPConfig *config, const char *tool_name) {
  */
 char* mcp_get_status(MCPConfig *config) {
     if (!config) {
-        return strdup("MCP: Not configured");
+        char *msg = strdup("MCP: Not configured");
+        if (!msg) {
+            return NULL;
+        }
+        return msg;
     }
 
     char *status = calloc(4096, 1);
@@ -990,25 +1035,44 @@ MCPResourceList* mcp_list_resources(MCPConfig *config, const char *server_name) 
 
             if (uri && cJSON_IsString(uri)) {
                 resource->uri = strdup(uri->valuestring);
+                if (!resource->uri) {
+                    free(resource);
+                    continue;
+                }
             }
 
             if (name && cJSON_IsString(name)) {
                 resource->name = strdup(name->valuestring);
+                if (!resource->name) {
+                    free(resource->uri);
+                    free(resource);
+                    continue;
+                }
             }
 
             // Optional fields
             cJSON *description = cJSON_GetObjectItem(resource_item, "description");
             if (description && cJSON_IsString(description)) {
                 resource->description = strdup(description->valuestring);
+                // NULL is OK for optional fields, don't fail
             }
 
             cJSON *mime_type = cJSON_GetObjectItem(resource_item, "mimeType");
             if (mime_type && cJSON_IsString(mime_type)) {
                 resource->mime_type = strdup(mime_type->valuestring);
+                // NULL is OK for optional fields, don't fail
             }
 
             // Add server name
             resource->server = strdup(server->name);
+            if (!resource->server) {
+                free(resource->uri);
+                free(resource->name);
+                free(resource->description);
+                free(resource->mime_type);
+                free(resource);
+                continue;
+            }
 
             result->resources[total_count++] = resource;
         }
@@ -1071,6 +1135,10 @@ MCPResourceContent* mcp_read_resource(MCPConfig *config, const char *server_name
             char err_msg[256];
             snprintf(err_msg, sizeof(err_msg), "Server '%s' not connected", server_name);
             result->error_message = strdup(err_msg);
+            if (!result->error_message) {
+                free(result);
+                return NULL;
+            }
         }
         return result;
     }
@@ -1115,6 +1183,12 @@ MCPResourceContent* mcp_read_resource(MCPConfig *config, const char *server_name
     }
 
     result->uri = strdup(uri);
+    if (!result->uri) {
+        LOG_ERROR("MCP: Failed to allocate URI string");
+        free(result);
+        cJSON_Delete(response);
+        return NULL;
+    }
     result->is_error = 0;
 
     // Extract contents array
@@ -1126,17 +1200,20 @@ MCPResourceContent* mcp_read_resource(MCPConfig *config, const char *server_name
         cJSON *content_uri = cJSON_GetObjectItem(content_item, "uri");
         if (content_uri && cJSON_IsString(content_uri) && !result->uri) {
             result->uri = strdup(content_uri->valuestring);
+            // NULL is OK here, we already have uri from parameter
         }
 
         cJSON *mime_type = cJSON_GetObjectItem(content_item, "mimeType");
         if (mime_type && cJSON_IsString(mime_type)) {
             result->mime_type = strdup(mime_type->valuestring);
+            // NULL is OK for optional fields
         }
 
         // Get text content
         cJSON *text = cJSON_GetObjectItem(content_item, "text");
         if (text && cJSON_IsString(text)) {
             result->text = strdup(text->valuestring);
+            // NULL is OK for optional fields
         }
 
         // Get blob content (base64 encoded)

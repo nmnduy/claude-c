@@ -140,18 +140,26 @@ char** history_file_load_recent(HistoryFile *hf, int limit, int *out_count) {
     char *line_start = buf;
     for (size_t i = 0; i <= nread; i++) {
         if (i == nread || buf[i] == '\n') {
-            if (line_idx >= start_line) {
-                size_t len = (size_t)(&buf[i] - line_start);
+            size_t len = (size_t)(&buf[i] - line_start);
+            // At end of buffer (i == nread): only process if there's content after the last \n
+            // This prevents processing a phantom empty line when file ends with \n
+            int should_process = (i < nread) || (len > 0);
+            
+            if (should_process && line_idx >= start_line) {
                 // Trim carriage return
                 if (len > 0 && line_start[len - 1] == '\r') len--;
-                char *s = malloc(len + 1);
-                if (s) {
-                    memcpy(s, line_start, len);
-                    s[len] = '\0';
-                    tmp[out_idx++] = s;
+                if (len > 0) {
+                    char *s = malloc(len + 1);
+                    if (s) {
+                        memcpy(s, line_start, len);
+                        s[len] = '\0';
+                        tmp[out_idx++] = s;
+                    }
                 }
             }
-            line_idx++;
+            if (should_process) {
+                line_idx++;
+            }
             line_start = (i < nread) ? &buf[i + 1] : &buf[i];
         }
     }
