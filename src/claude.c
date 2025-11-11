@@ -606,55 +606,23 @@ int write_file(const char *path, const char *content) {
 }
 
 char* resolve_path(const char *path, const char *working_dir) {
-    char *resolved = malloc(PATH_MAX);
-    if (!resolved) return NULL;
-
+    // Join with working_dir if relative; attempt to canonicalize if possible.
+    char joined[PATH_MAX];
     if (path[0] == '/') {
-        snprintf(resolved, PATH_MAX, "%s", path);
+        snprintf(joined, sizeof(joined), "%s", path);
     } else {
-        snprintf(resolved, PATH_MAX, "%s/%s", working_dir, path);
+        snprintf(joined, sizeof(joined), "%s/%s", working_dir, path);
     }
 
-    // Try realpath first (works if file exists)
-    char *clean = realpath(resolved, NULL);
+    // Try to canonicalize. This succeeds only if the path (or its parents) exist.
+    char *clean = realpath(joined, NULL);
     if (clean) {
-        free(resolved);
-        return clean;
+        return clean; // Caller takes ownership
     }
 
-    // If realpath failed, the file might not exist yet (e.g., Write tool)
-    // Resolve the parent directory and append the filename
-    char *last_slash = strrchr(resolved, '/');
-    if (!last_slash) {
-        // No slash found - shouldn't happen since we added working_dir
-        free(resolved);
-        return NULL;
-    }
-
-    // Split into directory and filename
-    *last_slash = '\0';
-    char *filename = last_slash + 1;
-
-    // Resolve parent directory
-    char *clean_dir = realpath(resolved, NULL);
-    if (!clean_dir) {
-        // Parent directory doesn't exist either
-        free(resolved);
-        return NULL;
-    }
-
-    // Combine resolved directory with filename
-    char *result = malloc(PATH_MAX);
-    if (!result) {
-        free(clean_dir);
-        free(resolved);
-        return NULL;
-    }
-    snprintf(result, PATH_MAX, "%s/%s", clean_dir, filename);
-
-    free(clean_dir);
-    free(resolved);
-    return result;
+    // Fall back to the joined path even if parent dirs don't exist.
+    // This enables tools like Write to create missing directories (mkdir -p in write_file).
+    return strdup(joined);
 }
 
 // Add a directory to the additional working directories list
