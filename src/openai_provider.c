@@ -44,7 +44,7 @@ static size_t write_callback(void *contents, size_t size, size_t nmemb, void *us
     return realsize;
 }
 
-// Progress callback to check for ESC key during transfer
+// Progress callback placeholder (Ctrl+C handled by TUI)
 static int progress_callback(void *clientp, curl_off_t dltotal, curl_off_t dlnow,
                              curl_off_t ultotal, curl_off_t ulnow) {
     (void)clientp;  // Unused
@@ -53,8 +53,8 @@ static int progress_callback(void *clientp, curl_off_t dltotal, curl_off_t dlnow
     (void)ultotal;  // Unused
     (void)ulnow;    // Unused
 
-    // ESC key handling is now done by TUI/ncurses event loop
-    // Non-TUI mode doesn't have interactive ESC key support during API calls
+    // Interrupt (Ctrl+C) handling is done by the TUI event loop
+    // Non-TUI mode doesn't have interactive interrupt support during API calls
     return 0;  // Continue transfer
 }
 
@@ -147,7 +147,7 @@ static ApiCallResult openai_call_api(Provider *self, ConversationState *state) {
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
 
-    // Enable progress callback for ESC interruption
+    // Enable progress callback (not used for Ctrl+C interrupts)
     curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
     curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, progress_callback);
     curl_easy_setopt(curl, CURLOPT_XFERINFODATA, NULL);
@@ -169,9 +169,9 @@ static ApiCallResult openai_call_api(Provider *self, ConversationState *state) {
 
     // Handle CURL errors
     if (res != CURLE_OK) {
-        // Check if the error was due to user interruption (ESC key)
+        // Check if the error was due to user interruption (Ctrl+C)
         if (res == CURLE_ABORTED_BY_CALLBACK) {
-            result.error_message = strdup("API call interrupted by user (ESC)");
+            result.error_message = strdup("API call interrupted by user (Ctrl+C)");
             result.is_retryable = 0;  // User interruption is not retryable
         } else {
             result.error_message = strdup(curl_easy_strerror(res));

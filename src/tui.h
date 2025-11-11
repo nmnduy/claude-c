@@ -161,7 +161,7 @@ void tui_redraw_input(TUIState *tui, const char *prompt);
 typedef int (*InputSubmitCallback)(const char *input, void *user_data);
 
 // Event loop callback for handling interrupt requests
-// Called when user presses Esc in INSERT mode
+// Called when user presses Ctrl+C in INSERT mode
 // Returns: 0 to continue, non-zero to exit event loop
 typedef int (*InterruptCallback)(void *user_data);
 
@@ -169,7 +169,7 @@ typedef int (*InterruptCallback)(void *user_data);
 // Processes input, handles resize, and processes TUI message queue
 // prompt: Input prompt to display
 // submit_callback: Function to call when user submits input
-// interrupt_callback: Function to call when user presses Esc (can be NULL)
+// interrupt_callback: Function to call when user presses Ctrl+C (can be NULL)
 // user_data: Opaque pointer passed to callbacks
 // msg_queue: Optional TUI message queue to process (can be NULL)
 // Returns: 0 on normal exit, -1 on error

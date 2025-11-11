@@ -3990,8 +3990,8 @@ static void process_response(ConversationState *state,
                     break;
                 }
 
-                // ESC key handling is now done by TUI/ncurses event loop
-                // Non-TUI mode doesn't have interactive ESC key support anymore
+                // Interactive interrupt handling (Ctrl+C) is done by the TUI event loop
+                // Non-TUI mode doesn't have interactive interrupt support here
             }
         }
 
@@ -4032,10 +4032,10 @@ static void process_response(ConversationState *state,
         if (interrupted) {
             if (!tui && !queue) {
                 if (tool_spinner) {
-                    spinner_stop(tool_spinner, "Interrupted by user (ESC) - tools terminated", 0);
+                    spinner_stop(tool_spinner, "Interrupted by user (Ctrl+C) - tools terminated", 0);
                 }
             } else {
-                ui_set_status(tui, queue, "Interrupted by user (ESC) - tools terminated");
+                ui_set_status(tui, queue, "Interrupted by user (Ctrl+C) - tools terminated");
             }
         }
 
@@ -4181,7 +4181,7 @@ typedef struct {
     int instruction_queue_capacity;
 } InteractiveContext;
 
-// Interrupt callback invoked by the TUI event loop when the user presses Esc in INSERT mode
+// Interrupt callback invoked by the TUI event loop when the user presses Ctrl+C in INSERT mode
 static int interrupt_callback(void *user_data) {
     InteractiveContext *ctx = (InteractiveContext *)user_data;
     if (!ctx || !ctx->state) {
@@ -4191,7 +4191,7 @@ static int interrupt_callback(void *user_data) {
     ConversationState *state = ctx->state;
     TUIMessageQueue *queue = ctx->tui_queue;
     
-    LOG_INFO("User requested interrupt (Esc pressed)");
+    LOG_INFO("User requested interrupt (Ctrl+C pressed)");
     
     // Set the interrupt flag to stop ongoing operations
     state->interrupt_requested = 1;
@@ -4536,11 +4536,11 @@ int main(int argc, char *argv[]) {
         printf("    CLAUDE_C_THEME       Optional: Path to Kitty theme file\n\n");
 
         printf("Interactive Tips:\n");
-        printf("  Ctrl+G to enter Normal mode (vim-style), 'i' to insert\n");
+        printf("  Esc/Ctrl+[ to enter Normal mode (vim-style), 'i' to insert\n");
         printf("  Scroll with j/k (line), Ctrl+D/U (half page), gg/G (top/bottom)\n");
         printf("  Or use PageUp/PageDown or Arrow keys to scroll\n");
         printf("  Type /help for commands (e.g., /clear, /exit, /add-dir, /voice)\n");
-        printf("  Press ESC to cancel a running API/tool action\n\n");
+        printf("  Press Ctrl+C to cancel a running API/tool action\n\n");
         return 0;
     }
 

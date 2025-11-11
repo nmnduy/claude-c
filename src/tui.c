@@ -1025,7 +1025,8 @@ int tui_init(TUIState *tui) {
 
     // Initialize ncurses
     initscr();
-    cbreak();  // Disable line buffering
+    // Use raw mode so Ctrl+C is delivered as a key (ASCII 3)
+    raw();     // Disable line buffering and signal generation (incl. SIGINT)
     noecho();  // Don't echo input
     nonl();    // Don't translate Enter to newline (allows distinguishing Enter from Ctrl+J)
     keypad(stdscr, TRUE);  // Enable function keys
@@ -1548,11 +1549,11 @@ void tui_show_startup_banner(TUIState *tui, const char *version, const char *mod
 
     // Tips array: randomly select one to display at startup
     static const char *tips[] = {
-        "Ctrl+G to enter Normal mode (vim-style); press 'i' to insert.",
+        "Esc/Ctrl+[ to enter Normal mode (vim-style); press 'i' to insert.",
         "Scroll: j/k (line), Ctrl+D/U (half page), gg/G (top/bottom).",
         /* "Use PageUp/PageDown or Arrow keys to scroll.", */
         "Type /help for commands (e.g., /clear, /exit, /add-dir).",
-        "Press ESC to cancel a running API/tool action.",
+        "Press Ctrl+C to cancel a running API/tool action.",
         /* "Use /add-dir to attach a directory as context.", */
         "Press Ctrl+D to exit quickly.",
         /* "Use /voice to record and transcribe audio (requires PortAudio).", */
@@ -1563,7 +1564,7 @@ void tui_show_startup_banner(TUIState *tui, const char *version, const char *mod
         "Insert mode supports readline keys: Ctrl+A, Ctrl+E, Alt+B, Alt+F.",
         /* "Switch models via OPENAI_MODEL or ANTHROPIC_MODEL environment variables.", */
         /* "Enable Bedrock with CLAUDE_CODE_USE_BEDROCK=1 and ANTHROPIC_MODEL set.", */
-        "Interrupt long tool runs any time with ESC.",
+        "Interrupt long tool runs any time with Ctrl+C.",
         "Disable prompt caching with DISABLE_PROMPT_CACHING=1 if needed.",
         "Enable MCP with CLAUDE_MCP_ENABLED=1 and configure servers in ~/.config/claude-c/.",
         "Use /clear to clear conversation; /quit or /exit to leave.",
@@ -2118,26 +2119,30 @@ int tui_process_input_char(TUIState *tui, int ch, const char *prompt) {
         }
         input_redraw(tui, prompt);
         return 0;
-    } else if (ch == 27) {  // ESC sequence (Alt key combinations, bracketed paste, or interrupt)
+    } else if (ch == 3) {   // Ctrl+C: Interrupt running action
+        // Signal interrupt request to event loop
+        return 2;
+    } else if (ch == 27) {  // ESC sequence (Alt key combinations, bracketed paste, or mode switch)
         // Set nodelay to check for following character
         nodelay(tui->wm.input_win, TRUE);
         int next_ch = wgetch(tui->wm.input_win);
         
         LOG_DEBUG("[TUI] ESC sequence detected, next_ch=%d", next_ch);
         
-        // If standalone ESC (no following character), signal interrupt
+        // If standalone ESC (no following character), switch to NORMAL mode (vim-style)
         if (next_ch == ERR) {
             nodelay(tui->wm.input_win, FALSE);
             
-            // In INSERT mode, return special code 2 to signal interrupt request
-            // The event loop will call the interrupt callback
+            // In INSERT mode, ESC/Ctrl+[ leaves INSERT and enters NORMAL (scroll) mode
             if (tui->mode == TUI_MODE_INSERT) {
-                LOG_DEBUG("[TUI] Esc pressed in INSERT mode - signaling interrupt");
-                return 2;  // Signal interrupt
+                tui->mode = TUI_MODE_NORMAL;
+                tui->normal_mode_last_key = 0;
+                if (tui->wm.status_height > 0) {
+                    render_status_window(tui);
+                }
+                input_redraw(tui, prompt);
             }
-            
-            // In other modes, also signal interrupt (or ignore)
-            return 0;
+            return 0;  // Do not signal interrupt here
         }
         
         if (next_ch == '[') {
@@ -2578,8 +2583,8 @@ int tui_event_loop(TUIState *tui, const char *prompt,
                 }
                 break;  // Stop processing after submission
             } else if (result == 2) {
-                // Esc pressed - interrupt requested
-                LOG_DEBUG("[TUI] Interrupt requested (Esc pressed)");
+                // Ctrl+C pressed - interrupt requested
+                LOG_DEBUG("[TUI] Interrupt requested (Ctrl+C)");
                 if (interrupt_callback) {
                     int interrupt_result = interrupt_callback(user_data);
                     if (interrupt_result != 0) {
@@ -2587,7 +2592,7 @@ int tui_event_loop(TUIState *tui, const char *prompt,
                         running = 0;
                     }
                 }
-                // Stay in INSERT mode after interrupt (user can press Ctrl+G to enter NORMAL mode if desired)
+                // Stay in INSERT mode after interrupt (user can press Esc/Ctrl+[ to enter NORMAL mode if desired)
                 break;  // Stop processing after interrupt
             } else if (result == -1) {
                 // EOF/quit signal
