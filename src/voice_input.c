@@ -14,7 +14,11 @@
 #include <stdint.h>
 #include <pthread.h>
 #include <curl/curl.h>
+#include <float.h>
+
+#ifdef HAVE_PORTAUDIO
 #include <portaudio.h>
+#endif
 
 // ===== Recording config =====
 #define SAMPLE_RATE   16000
@@ -22,6 +26,7 @@
 #define FRAMES_PER_BUFFER  512
 #define BITS_PER_SAMPLE 16
 
+#ifdef HAVE_PORTAUDIO
 // Simple dynamic buffer for PCM samples
 typedef struct {
     int16_t *data;
@@ -220,7 +225,7 @@ static char* transcribe_file(const char *api_key, const char *model, const char 
 }
 
 // ============================================================================
-// Public API
+// Public API (PortAudio-enabled)
 // ============================================================================
 
 int voice_input_init(void) {
@@ -365,7 +370,8 @@ int voice_input_record_and_transcribe(char **transcription_out) {
     LOG_DEBUG("Recording stats: frames=%zu duration=%.2fs max_amp=%d mean_abs=%.1f",
               ab.frames, recording_sec, recording_max_abs, recording_mean_abs);
 
-    if (recording_max_abs == 0 && recording_mean_abs == 0.0) {
+    // Avoid direct floating-point equality; treat near-zero mean as silence
+    if (recording_max_abs == 0 && recording_mean_abs <= DBL_EPSILON) {
         LOG_WARN("Recording appears completely silent");
         ab_free(&ab);
         return -3;
@@ -442,3 +448,37 @@ void voice_input_print_status(void) {
         LOG_INFO("Voice input available - use /voice command");
     }
 }
+
+#else  // !HAVE_PORTAUDIO
+
+// ============================================================================
+// Public API (stubs when PortAudio is not available)
+// ============================================================================
+
+int voice_input_init(void) {
+    LOG_WARN("Voice input disabled: PortAudio not available at build time");
+    return -1;
+}
+
+bool voice_input_available(void) {
+    return false;
+}
+
+int voice_input_record_and_transcribe(char **transcription_out) {
+    (void)transcription_out;
+    LOG_ERROR("Voice input not built: missing PortAudio dependency");
+    return -1;
+}
+
+void voice_input_cleanup(void) {
+    // no-op
+}
+
+void voice_input_print_status(void) {
+    fprintf(stderr, "⚠ Voice input unavailable: PortAudio not detected at build time\n");
+    fprintf(stderr, "  Enable with: make VOICE=1 (requires PortAudio dev headers)\n");
+    fprintf(stderr, "  Or install and rebuild: brew install portaudio (macOS)\n");
+    fprintf(stderr, "                        sudo apt-get install portaudio19-dev (Ubuntu)\n");
+}
+
+#endif  // HAVE_PORTAUDIO

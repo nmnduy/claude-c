@@ -45,7 +45,7 @@ sudo apt-get install libcurl4-openssl-dev libcjson-dev portaudio19-dev build-ess
 
 **Recommended: Use stable release**
 ```bash
-git clone --branch v0.1.2 https://github.com/nmnduy/claude-c.git
+git clone --branch v0.1.4 https://github.com/nmnduy/claude-c.git
 cd claude-c
 make
 ```

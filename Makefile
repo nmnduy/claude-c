@@ -4,8 +4,8 @@ CC ?= gcc
 CLANG = clang
 CFLAGS = -Werror -Wall -Wextra -Wpedantic -Wformat=2 -Wconversion -Wshadow -Wcast-qual -Wcast-align -Wstrict-prototypes -Wmissing-prototypes -Wmissing-declarations -Wuninitialized -Warray-bounds -Wvla -Wwrite-strings -Wnull-dereference -Wimplicit-fallthrough -Wsign-conversion -Wsign-compare -Wfloat-equal -Wpointer-arith -Wbad-function-cast -Wstrict-overflow -Waggregate-return -Wredundant-decls -Wnested-externs -Winline -Wswitch-enum -Wswitch-default -Wenum-conversion -Wdisabled-optimization -O2 -std=c11 -D_POSIX_C_SOURCE=200809L -D_DEFAULT_SOURCE=1 -Wno-aggregate-return $(SANITIZERS)
 DEBUG_CFLAGS = -Werror -Wall -Wextra -Wpedantic -Wformat=2 -Wconversion -Wshadow -Wcast-qual -Wcast-align -Wstrict-prototypes -Wmissing-prototypes -Wmissing-declarations -Wuninitialized -Warray-bounds -Wvla -Wwrite-strings -Wnull-dereference -Wimplicit-fallthrough -Wsign-conversion -Wsign-compare -Wfloat-equal -Wpointer-arith -Wbad-function-cast -Wstrict-overflow -Waggregate-return -Wredundant-decls -Wnested-externs -Winline -Wswitch-enum -Wswitch-default -Wenum-conversion -Wdisabled-optimization -g -O0 -std=c11 -D_POSIX_C_SOURCE=200809L -D_DEFAULT_SOURCE=1 -fsanitize=address -fno-omit-frame-pointer
-LDFLAGS = -lcurl -lpthread -lsqlite3 -lssl -lcrypto -lncurses -lportaudio $(SANITIZERS)
-DEBUG_LDFLAGS = -lcurl -lpthread -lsqlite3 -lssl -lcrypto -lncurses -lportaudio -fsanitize=address
+LDFLAGS = -lcurl -lpthread -lsqlite3 -lssl -lcrypto -lncurses $(SANITIZERS)
+DEBUG_LDFLAGS = -lcurl -lpthread -lsqlite3 -lssl -lcrypto -lncurses -fsanitize=address
 
 # Installation prefix (can be overridden via command line)
 INSTALL_PREFIX ?= $(HOME)/.local
@@ -39,6 +39,30 @@ else ifeq ($(UNAME_S),Linux)
     # Linux
     LDFLAGS += -lcjson
     DEBUG_LDFLAGS += -lcjson
+endif
+
+# Optional voice input (PortAudio). VOICE=auto|1|0
+VOICE ?= auto
+HAVE_PKGCONFIG := $(shell command -v pkg-config >/dev/null 2>&1 && echo yes || echo no)
+ifeq ($(VOICE),1)
+    CFLAGS += -DHAVE_PORTAUDIO=1
+    LDFLAGS += -lportaudio
+    DEBUG_LDFLAGS += -lportaudio
+else ifeq ($(VOICE),0)
+    CFLAGS += -DDISABLE_VOICE=1
+else
+    # auto-detect via pkg-config if available
+    ifeq ($(HAVE_PKGCONFIG),yes)
+        ifeq ($(shell pkg-config --exists portaudio-2.0 && echo yes || echo no),yes)
+            CFLAGS += -DHAVE_PORTAUDIO=1 $(shell pkg-config --cflags portaudio-2.0)
+            LDFLAGS += $(shell pkg-config --libs portaudio-2.0)
+            DEBUG_LDFLAGS += $(shell pkg-config --libs portaudio-2.0)
+        else
+            CFLAGS += -DDISABLE_VOICE=1
+        endif
+    else
+        CFLAGS += -DDISABLE_VOICE=1
+    endif
 endif
 
 BUILD_DIR = build
