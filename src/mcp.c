@@ -14,6 +14,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <unistd.h>
 #include <errno.h>
 #include <sys/types.h>
@@ -45,14 +46,14 @@ int mcp_init(void) {
         return 0;
     }
     
-    // Check if MCP is enabled via environment variable
+    // Enable by default; allow opt-out via CLAUDE_MCP_ENABLED=0/false/off
     const char *enabled = getenv("CLAUDE_MCP_ENABLED");
-    if (enabled && (strcmp(enabled, "1") == 0 || strcmp(enabled, "true") == 0)) {
-        mcp_enabled = 1;
-        LOG_INFO("MCP subsystem initialized and enabled");
-    } else {
+    if (enabled && (strcmp(enabled, "0") == 0 || strcasecmp(enabled, "false") == 0 || strcasecmp(enabled, "off") == 0)) {
         mcp_enabled = 0;
         LOG_DEBUG("MCP subsystem initialized but disabled (set CLAUDE_MCP_ENABLED=1 to enable)");
+    } else {
+        mcp_enabled = 1;
+        LOG_INFO("MCP subsystem initialized and enabled");
     }
     
     mcp_initialized = 1;

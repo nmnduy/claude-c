@@ -208,22 +208,25 @@ static void test_load_nonexistent_config(void) {
 static void test_mcp_enabled_state(void) {
     printf("Test 7: MCP enabled state... ");
     
-    // Before init, should be disabled
+    // Ensure clean env
+    unsetenv("CLAUDE_MCP_ENABLED");
+
+    // Before init, should be disabled (not initialized yet)
     int enabled = mcp_is_enabled();
     assert(enabled == 0);
     
-    // After init without env var, should be disabled
-    mcp_init();
-    enabled = mcp_is_enabled();
-    assert(enabled == 0);
-    
-    mcp_cleanup();
-    
-    // Set env var and re-init
-    setenv("CLAUDE_MCP_ENABLED", "1", 1);
+    // After init without env var, should be enabled by default
     mcp_init();
     enabled = mcp_is_enabled();
     assert(enabled == 1);
+    
+    mcp_cleanup();
+    
+    // Set env var to disable and re-init
+    setenv("CLAUDE_MCP_ENABLED", "0", 1);
+    mcp_init();
+    enabled = mcp_is_enabled();
+    assert(enabled == 0);
     
     mcp_cleanup();
     unsetenv("CLAUDE_MCP_ENABLED");

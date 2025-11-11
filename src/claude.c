@@ -4753,7 +4753,7 @@ int main(int argc, char *argv[]) {
         }
     } else {
         state.mcp_config = NULL;
-        LOG_DEBUG("MCP: Disabled (set CLAUDE_MCP_ENABLED=1 to enable)");
+        LOG_DEBUG("MCP: Disabled (set CLAUDE_MCP_ENABLED=1 to enable; default is enabled)");
     }
 #else
     state.provider = NULL;
