@@ -480,10 +480,20 @@ int mcp_connect_server(MCPServer *server) {
     cJSON_AddStringToObject(request, "jsonrpc", "2.0");
     cJSON_AddNumberToObject(request, "id", server->message_id++);
     cJSON_AddStringToObject(request, "method", "initialize");
-    
+
     cJSON *params = cJSON_CreateObject();
     cJSON_AddStringToObject(params, "protocolVersion", "2024-11-05");
-    cJSON_AddStringToObject(params, "clientInfo", "claude-c/1.0");
+
+    // clientInfo should be an object with name and version
+    cJSON *clientInfo = cJSON_CreateObject();
+    cJSON_AddStringToObject(clientInfo, "name", "claude-c");
+    cJSON_AddStringToObject(clientInfo, "version", "1.0");
+    cJSON_AddItemToObject(params, "clientInfo", clientInfo);
+
+    // capabilities is required (can be empty for basic client)
+    cJSON *capabilities = cJSON_CreateObject();
+    cJSON_AddItemToObject(params, "capabilities", capabilities);
+
     cJSON_AddItemToObject(request, "params", params);
     
     char *request_str = cJSON_PrintUnformatted(request);
@@ -493,11 +503,48 @@ int mcp_connect_server(MCPServer *server) {
         // Write request with newline (JSON-RPC over stdio uses line-delimited JSON)
         dprintf(server->stdin_fd, "%s\n", request_str);
         free(request_str);
-        
-        // TODO: Read and validate initialize response
-        // For now, assume success
+
+        // Read initialize response
+        char buffer[65536] = {0};
+        size_t total_read = 0;
+
+        // Wait for response (with timeout)
+        for (int i = 0; i < 50; i++) {  // 5 second timeout
+            ssize_t n = read(server->stdout_fd, buffer + total_read, sizeof(buffer) - total_read - 1);
+            if (n > 0) {
+                total_read += (size_t)n;
+
+                // Check if we have a complete line
+                if (strchr(buffer, '\n')) {
+                    break;
+                }
+            }
+            usleep(100000);  // 100ms
+        }
+
+        if (total_read > 0) {
+            buffer[total_read] = '\0';
+            LOG_DEBUG("MCP: Initialize response: %s", buffer);
+
+            // Send "initialized" notification to complete handshake
+            cJSON *notification = cJSON_CreateObject();
+            cJSON_AddStringToObject(notification, "jsonrpc", "2.0");
+            cJSON_AddStringToObject(notification, "method", "notifications/initialized");
+            cJSON_AddItemToObject(notification, "params", cJSON_CreateObject());
+
+            char *notif_str = cJSON_PrintUnformatted(notification);
+            cJSON_Delete(notification);
+
+            if (notif_str) {
+                dprintf(server->stdin_fd, "%s\n", notif_str);
+                free(notif_str);
+                LOG_DEBUG("MCP: Sent initialized notification");
+            }
+        } else {
+            LOG_WARN("MCP: No initialize response received from server '%s'", server->name);
+        }
     }
-    
+
     return 0;
 }
 
@@ -560,9 +607,12 @@ static cJSON* mcp_send_request(MCPServer *server, const char *method, cJSON *par
     cJSON_AddStringToObject(request, "jsonrpc", "2.0");
     cJSON_AddNumberToObject(request, "id", server->message_id++);
     cJSON_AddStringToObject(request, "method", method);
-    
+
+    // Always include params field (even if empty) per JSON-RPC 2.0 spec
     if (params) {
         cJSON_AddItemToObject(request, "params", cJSON_Duplicate(params, 1));
+    } else {
+        cJSON_AddItemToObject(request, "params", cJSON_CreateObject());
     }
     
     char *request_str = cJSON_PrintUnformatted(request);
@@ -643,14 +693,18 @@ int mcp_discover_tools(MCPServer *server) {
     // Extract tools from response
     cJSON *result = cJSON_GetObjectItem(response, "result");
     if (!result) {
-        LOG_ERROR("MCP: No result in tools/list response");
+        char *resp_str = cJSON_Print(response);
+        LOG_ERROR("MCP: No result in tools/list response. Full response: %s", resp_str ? resp_str : "null");
+        free(resp_str);
         cJSON_Delete(response);
         return -1;
     }
-    
+
     cJSON *tools = cJSON_GetObjectItem(result, "tools");
     if (!tools || !cJSON_IsArray(tools)) {
-        LOG_ERROR("MCP: Invalid tools array in response");
+        char *result_str = cJSON_Print(result);
+        LOG_ERROR("MCP: Invalid tools array in response. Result: %s", result_str ? result_str : "null");
+        free(result_str);
         cJSON_Delete(response);
         return -1;
     }
