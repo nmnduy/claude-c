@@ -4,8 +4,19 @@ CC ?= gcc
 CLANG = clang
 CFLAGS = -Werror -Wall -Wextra -Wpedantic -Wformat=2 -Wconversion -Wshadow -Wcast-qual -Wcast-align -Wstrict-prototypes -Wmissing-prototypes -Wmissing-declarations -Wuninitialized -Warray-bounds -Wvla -Wwrite-strings -Wnull-dereference -Wimplicit-fallthrough -Wsign-conversion -Wsign-compare -Wfloat-equal -Wpointer-arith -Wbad-function-cast -Wstrict-overflow -Waggregate-return -Wredundant-decls -Wnested-externs -Winline -Wswitch-enum -Wswitch-default -Wenum-conversion -Wdisabled-optimization -O2 -std=c11 -D_POSIX_C_SOURCE=200809L -D_DEFAULT_SOURCE=1 -Wno-aggregate-return $(SANITIZERS)
 DEBUG_CFLAGS = -Werror -Wall -Wextra -Wpedantic -Wformat=2 -Wconversion -Wshadow -Wcast-qual -Wcast-align -Wstrict-prototypes -Wmissing-prototypes -Wmissing-declarations -Wuninitialized -Warray-bounds -Wvla -Wwrite-strings -Wnull-dereference -Wimplicit-fallthrough -Wsign-conversion -Wsign-compare -Wfloat-equal -Wpointer-arith -Wbad-function-cast -Wstrict-overflow -Waggregate-return -Wredundant-decls -Wnested-externs -Winline -Wswitch-enum -Wswitch-default -Wenum-conversion -Wdisabled-optimization -g -O0 -std=c11 -D_POSIX_C_SOURCE=200809L -D_DEFAULT_SOURCE=1 -fsanitize=address -fno-omit-frame-pointer
-LDFLAGS = -lcurl -lpthread -lsqlite3 -lssl -lcrypto -lncursesw $(SANITIZERS)
-DEBUG_LDFLAGS = -lcurl -lpthread -lsqlite3 -lssl -lcrypto -lncursesw -fsanitize=address
+# Detect OS for ncurses library linking
+UNAME_S := $(shell uname -s)
+
+# Default ncurses library (Linux)
+NCURSES_LIB = -lncursesw
+
+ifeq ($(UNAME_S),Darwin)
+    # macOS typically uses just ncurses (not ncursesw)
+    NCURSES_LIB = -lncurses
+endif
+
+LDFLAGS = -lcurl -lpthread -lsqlite3 -lssl -lcrypto $(NCURSES_LIB) $(SANITIZERS)
+DEBUG_LDFLAGS = -lcurl -lpthread -lsqlite3 -lssl -lcrypto $(NCURSES_LIB) -fsanitize=address
 
 # Installation prefix (can be overridden via command line)
 INSTALL_PREFIX ?= $(HOME)/.local
@@ -16,8 +27,9 @@ VERSION := $(shell cat $(VERSION_FILE) 2>/dev/null || echo "unknown")
 BUILD_DATE := $(shell date +%Y-%m-%d)
 VERSION_H := src/version.h
 
-# Detect OS for cJSON library linking
+# Detect OS for library linking
 UNAME_S := $(shell uname -s)
+
 ifeq ($(UNAME_S),Darwin)
     # macOS - check for Homebrew installation
     HOMEBREW_PREFIX := $(shell brew --prefix 2>/dev/null)
