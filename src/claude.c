@@ -811,6 +811,7 @@ static cJSON* tool_bash(cJSON *params, ConversationState *state) {
 
     char *output = NULL;
     size_t total_size = 0;
+    char buffer[BUFFER_SIZE];
 
     while (fgets(buffer, sizeof(buffer), pipe)) {
         // Check for interrupt during long-running command
