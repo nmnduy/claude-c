@@ -47,9 +47,9 @@ This installs to `$HOME/.local/bin/claude-c`
 ### Quick start
 
 ```sh
-export OPENAI_API_KEY="$OPENROUTER_API_KEY"
-export OPENAI_API_BASE="https://openrouter.ai/api"
-export OPENAI_MODEL="z-ai/glm-4.6"
+export OPENAI_API_KEY=$DEEPSEEK_API_KEY
+export OPENAI_API_BASE=https://api.deepseek.com
+export OPENAI_MODEL=deepseek-chat
 claude-c
 ```
 
