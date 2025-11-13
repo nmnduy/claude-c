@@ -549,6 +549,7 @@ cJSON* tool_read(cJSON *params, ConversationState *state);
 cJSON* tool_write(cJSON *params, ConversationState *state);
 cJSON* tool_edit(cJSON *params, ConversationState *state);
 cJSON* tool_todo_write(cJSON *params, ConversationState *state);
+cJSON* tool_bash(cJSON *params, ConversationState *state);
 static cJSON* tool_sleep(cJSON *params, ConversationState *state);
 #else
 #define STATIC static
@@ -780,7 +781,7 @@ static int show_diff(const char *file_path, const char *original_content) {
 // Tool Implementations
 // ============================================================================
 
-static cJSON* tool_bash(cJSON *params, ConversationState *state) {
+STATIC cJSON* tool_bash(cJSON *params, ConversationState *state) {
     // Check for interrupt before starting
     if (state && state->interrupt_requested) {
         cJSON *error = cJSON_CreateObject();
@@ -797,6 +798,27 @@ static cJSON* tool_bash(cJSON *params, ConversationState *state) {
 
     const char *command = cmd_json->valuestring;
 
+    // Get timeout from parameter, environment, or use default (30 seconds)
+    int timeout_seconds = 30;  // Default timeout
+    
+    // First check if timeout parameter is provided
+    const cJSON *timeout_json = cJSON_GetObjectItem(params, "timeout");
+    if (timeout_json && cJSON_IsNumber(timeout_json)) {
+        timeout_seconds = timeout_json->valueint;
+        if (timeout_seconds < 0) {
+            timeout_seconds = 0;  // Negative values treated as 0 (no timeout)
+        }
+    } else {
+        // Fall back to environment variable
+        const char *timeout_env = getenv("CLAUDE_C_BASH_TIMEOUT");
+        if (timeout_env) {
+            int timeout_val = atoi(timeout_env);
+            if (timeout_val >= 0) {
+                timeout_seconds = timeout_val;
+            }
+        }
+    }
+
     // Execute command and capture both stdout and stderr
     // Use 2>&1 to redirect stderr to stdout so we capture all output
     char full_command[BUFFER_SIZE];
@@ -812,8 +834,13 @@ static cJSON* tool_bash(cJSON *params, ConversationState *state) {
     char *output = NULL;
     size_t total_size = 0;
     char buffer[BUFFER_SIZE];
+    
+    // Get the file descriptor from the pipe
+    int fd = fileno(pipe);
+    
+    int timed_out = 0;
 
-    while (fgets(buffer, sizeof(buffer), pipe)) {
+    while (1) {
         // Check for interrupt during long-running command
         if (state && state->interrupt_requested) {
             free(output);
@@ -826,6 +853,47 @@ static cJSON* tool_bash(cJSON *params, ConversationState *state) {
         // Add cancellation point to allow thread cancellation during long reads
         pthread_testcancel();
 
+        // Use select() to check if there's data available with timeout
+        fd_set readfds;
+        FD_ZERO(&readfds);
+        FD_SET(fd, &readfds);
+        
+        // Set up timeout using select() - pass NULL for timeout if timeout_seconds is 0
+        struct timeval timeout;
+        struct timeval *timeout_ptr = NULL;
+        
+        if (timeout_seconds > 0) {
+            timeout.tv_sec = timeout_seconds;
+            timeout.tv_usec = 0;
+            timeout_ptr = &timeout;
+        }
+        
+        int select_result = select(fd + 1, &readfds, NULL, NULL, timeout_ptr);
+        
+        if (select_result == -1) {
+            // select() error
+            LOG_ERROR("select() failed: %s", strerror(errno));
+            free(output);
+            pclose(pipe);
+            cJSON *error = cJSON_CreateObject();
+            cJSON_AddStringToObject(error, "error", "Failed to monitor command execution");
+            return error;
+        } else if (select_result == 0) {
+            // Timeout occurred
+            timed_out = 1;
+            LOG_WARN("Bash command timed out after %d seconds: %s", timeout_seconds, command);
+            break;
+        }
+        
+        // Data is available, try to read
+        if (fgets(buffer, sizeof(buffer), pipe) == NULL) {
+            // EOF or error
+            if (ferror(pipe)) {
+                LOG_ERROR("Error reading from pipe: %s", strerror(errno));
+            }
+            break;
+        }
+        
         size_t len = strlen(buffer);
         char *new_output = realloc(output, total_size + len + 1);
         if (!new_output) {
@@ -839,14 +907,45 @@ static cJSON* tool_bash(cJSON *params, ConversationState *state) {
         memcpy(output + total_size, buffer, len);
         total_size += len;
         output[total_size] = '\0';
+        
+        // Reset timeout for next read
+        timeout.tv_sec = timeout_seconds;
+        timeout.tv_usec = 0;
     }
 
-    int status = pclose(pipe);
-    int exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+    int status;
+    if (timed_out) {
+        // Kill the process group to ensure all child processes are terminated
+        pid_t pgid = getpgid(fileno(pipe));
+        if (pgid > 0) {
+            kill(-pgid, SIGTERM);
+            // Give it a moment to terminate gracefully
+            usleep(100000); // 100ms
+            kill(-pgid, SIGKILL);
+        }
+        status = pclose(pipe);
+    } else {
+        status = pclose(pipe);
+    }
+    
+    int exit_code;
+    if (timed_out) {
+        exit_code = -2;  // Special code for timeout
+    } else {
+        exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+    }
 
     cJSON *result = cJSON_CreateObject();
     cJSON_AddNumberToObject(result, "exit_code", exit_code);
     cJSON_AddStringToObject(result, "output", output ? output : "");
+    
+    if (timed_out) {
+        char timeout_msg[256];
+        snprintf(timeout_msg, sizeof(timeout_msg), 
+                "Command timed out after %d seconds. Use CLAUDE_C_BASH_TIMEOUT to adjust timeout.", 
+                timeout_seconds);
+        cJSON_AddStringToObject(result, "timeout_error", timeout_msg);
+    }
 
     free(output);
     return result;
@@ -2351,7 +2450,9 @@ cJSON* get_tool_definitions(ConversationState *state, int enable_caching) {
     cJSON_AddStringToObject(bash_func, "description", 
         "Executes bash commands. Note: stderr is automatically redirected to stdout "
         "to prevent terminal corruption, so both stdout and stderr output will be "
-        "captured in the 'output' field.");
+        "captured in the 'output' field. Commands have a configurable timeout "
+        "(default: 30 seconds) to prevent hanging. Use the 'timeout' parameter to "
+        "override the default or set to 0 for no timeout.");
     cJSON *bash_params = cJSON_CreateObject();
     cJSON_AddStringToObject(bash_params, "type", "object");
     cJSON *bash_props = cJSON_CreateObject();
@@ -2359,6 +2460,12 @@ cJSON* get_tool_definitions(ConversationState *state, int enable_caching) {
     cJSON_AddStringToObject(bash_cmd, "type", "string");
     cJSON_AddStringToObject(bash_cmd, "description", "The command to execute");
     cJSON_AddItemToObject(bash_props, "command", bash_cmd);
+    cJSON *bash_timeout = cJSON_CreateObject();
+    cJSON_AddStringToObject(bash_timeout, "type", "integer");
+    cJSON_AddStringToObject(bash_timeout, "description", 
+        "Optional: Timeout in seconds. Default: 30 (from CLAUDE_C_BASH_TIMEOUT env var). "
+        "Set to 0 for no timeout. Commands that timeout will return exit code -2.");
+    cJSON_AddItemToObject(bash_props, "timeout", bash_timeout);
     cJSON_AddItemToObject(bash_params, "properties", bash_props);
     cJSON *bash_req = cJSON_CreateArray();
     cJSON_AddItemToArray(bash_req, cJSON_CreateString("command"));

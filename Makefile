@@ -161,8 +161,10 @@ TEST_WM_SRC = tests/test_window_manager.c
 TEST_CANCEL_FLOW_TARGET = $(BUILD_DIR)/test_cancel_flow
 TEST_BASH_SUMMARY_TARGET = $(BUILD_DIR)/test_bash_summary
 TEST_BASH_SUMMARY_SRC = tests/test_bash_summary.c
+TEST_BASH_TIMEOUT_TARGET = $(BUILD_DIR)/test_bash_timeout
+TEST_BASH_TIMEOUT_SRC = tests/test_bash_timeout.c
 
-.PHONY: all clean check-deps install test test-edit test-read test-todo test-todo-write test-paste test-retry-jitter test-openai-format test-write-diff-integration test-rotation test-patch-parser test-thread-cancel test-aws-cred-rotation test-message-queue test-event-loop test-wrap test-mcp test-bash-summary query-tool debug analyze sanitize-ub sanitize-all sanitize-leak valgrind memscan version show-version update-version bump-version bump-patch build clang ci-test ci-gcc ci-clang ci-gcc-sanitize ci-clang-sanitize ci-all fmt-whitespace
+.PHONY: all clean check-deps install test test-edit test-read test-todo test-todo-write test-paste test-retry-jitter test-openai-format test-write-diff-integration test-rotation test-patch-parser test-thread-cancel test-aws-cred-rotation test-message-queue test-event-loop test-wrap test-mcp test-bash-summary test-bash-timeout query-tool debug analyze sanitize-ub sanitize-all sanitize-leak valgrind memscan version show-version update-version bump-version bump-patch build clang ci-test ci-gcc ci-clang ci-gcc-sanitize ci-clang-sanitize ci-all fmt-whitespace
 
 all: check-deps $(TARGET)
 
@@ -174,7 +176,7 @@ debug: check-deps $(BUILD_DIR)/claude-c-debug
 
 query-tool: check-deps $(QUERY_TOOL)
 
-test: test-edit test-read test-todo test-paste test-timing test-openai-format test-write-diff-integration test-rotation test-patch-parser test-thread-cancel test-aws-cred-rotation test-message-queue test-wrap test-mcp test-wm test-bash-summary test-cancel-flow
+test: test-edit test-read test-todo test-paste test-timing test-openai-format test-write-diff-integration test-rotation test-patch-parser test-thread-cancel test-aws-cred-rotation test-message-queue test-wrap test-mcp test-wm test-bash-summary test-bash-timeout test-cancel-flow
 
 test-edit: check-deps $(TEST_EDIT_TARGET)
 	@echo ""
@@ -284,6 +286,12 @@ test-wm: check-deps $(TEST_WM_TARGET)
 	@echo "Running Window Manager tests..."
 	@echo ""
 	@./$(TEST_WM_TARGET)
+
+test-bash-timeout: check-deps $(TEST_BASH_TIMEOUT_TARGET)
+	@echo ""
+	@echo "Running Bash Timeout tests..."
+	@echo ""
+	@./$(TEST_BASH_TIMEOUT_TARGET)
 
 $(TARGET): $(SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(COMMANDS_OBJ) $(COMPLETION_OBJ) $(TUI_OBJ) $(WINDOW_MANAGER_OBJ) $(TODO_OBJ) $(AWS_BEDROCK_OBJ) $(PROVIDER_OBJ) $(OPENAI_PROVIDER_OBJ) $(OPENAI_MESSAGES_OBJ) $(BEDROCK_PROVIDER_OBJ) $(BUILTIN_THEMES_OBJ) $(PATCH_PARSER_OBJ) $(MESSAGE_QUEUE_OBJ) $(AI_WORKER_OBJ) $(VOICE_INPUT_OBJ) $(MCP_OBJ) $(TOOL_UTILS_OBJ) $(HISTORY_FILE_OBJ) $(VERSION_H)
 	@mkdir -p $(BUILD_DIR)
@@ -645,6 +653,19 @@ $(TEST_PASTE_TARGET): $(TEST_PASTE_SRC)
 	@$(CC) $(CFLAGS) -o $(TEST_PASTE_TARGET) $(TEST_PASTE_SRC)
 	@echo ""
 	@echo "✓ Paste Handler test build successful!"
+	@echo ""
+
+# Test target for Bash Timeout - tests bash command timeout functionality
+$(TEST_BASH_TIMEOUT_TARGET): $(SRC) $(TEST_BASH_TIMEOUT_SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(TODO_OBJ) $(PATCH_PARSER_OBJ) $(MESSAGE_QUEUE_OBJ)
+	@mkdir -p $(BUILD_DIR)
+	@echo "Compiling claude.c for bash timeout testing (renaming main)..."
+	@$(CC) $(CFLAGS) -DTEST_BUILD -c -o $(BUILD_DIR)/claude_bash_timeout_test.o $(SRC)
+	@echo "Compiling Bash timeout test suite..."
+	@$(CC) $(CFLAGS) -c -o $(BUILD_DIR)/test_bash_timeout.o $(TEST_BASH_TIMEOUT_SRC)
+	@echo "Linking test executable..."
+	@$(CC) -o $(TEST_BASH_TIMEOUT_TARGET) $(BUILD_DIR)/claude_bash_timeout_test.o $(BUILD_DIR)/test_bash_timeout.o $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(TODO_OBJ) $(PATCH_PARSER_OBJ) $(MESSAGE_QUEUE_OBJ) $(LDFLAGS)
+	@echo ""
+	@echo "✓ Bash timeout test build successful!"
 	@echo ""
 
 # Test target for Retry Jitter - tests exponential backoff with jitter
