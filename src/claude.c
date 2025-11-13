@@ -797,9 +797,12 @@ static cJSON* tool_bash(cJSON *params, ConversationState *state) {
 
     const char *command = cmd_json->valuestring;
 
-    // Execute command and capture output
-    char buffer[BUFFER_SIZE];
-    FILE *pipe = popen(command, "r");
+    // Execute command and capture both stdout and stderr
+    // Use 2>&1 to redirect stderr to stdout so we capture all output
+    char full_command[BUFFER_SIZE];
+    snprintf(full_command, sizeof(full_command), "%s 2>&1", command);
+    
+    FILE *pipe = popen(full_command, "r");
     if (!pipe) {
         cJSON *error = cJSON_CreateObject();
         cJSON_AddStringToObject(error, "error", "Failed to execute command");
@@ -2344,7 +2347,10 @@ cJSON* get_tool_definitions(ConversationState *state, int enable_caching) {
     cJSON_AddStringToObject(bash, "type", "function");
     cJSON *bash_func = cJSON_CreateObject();
     cJSON_AddStringToObject(bash_func, "name", "Bash");
-    cJSON_AddStringToObject(bash_func, "description", "Executes bash commands");
+    cJSON_AddStringToObject(bash_func, "description", 
+        "Executes bash commands. Note: stderr is automatically redirected to stdout "
+        "to prevent terminal corruption, so both stdout and stderr output will be "
+        "captured in the 'output' field.");
     cJSON *bash_params = cJSON_CreateObject();
     cJSON_AddStringToObject(bash_params, "type", "object");
     cJSON *bash_props = cJSON_CreateObject();
