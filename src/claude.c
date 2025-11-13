@@ -549,6 +549,7 @@ cJSON* tool_read(cJSON *params, ConversationState *state);
 cJSON* tool_write(cJSON *params, ConversationState *state);
 cJSON* tool_edit(cJSON *params, ConversationState *state);
 cJSON* tool_todo_write(cJSON *params, ConversationState *state);
+cJSON* tool_bash(cJSON *params, ConversationState *state);
 static cJSON* tool_sleep(cJSON *params, ConversationState *state);
 #else
 #define STATIC static
@@ -780,7 +781,7 @@ static int show_diff(const char *file_path, const char *original_content) {
 // Tool Implementations
 // ============================================================================
 
-static cJSON* tool_bash(cJSON *params, ConversationState *state) {
+STATIC cJSON* tool_bash(cJSON *params, ConversationState *state) {
     // Check for interrupt before starting
     if (state && state->interrupt_requested) {
         cJSON *error = cJSON_CreateObject();
@@ -837,11 +838,6 @@ static cJSON* tool_bash(cJSON *params, ConversationState *state) {
     // Get the file descriptor from the pipe
     int fd = fileno(pipe);
     
-    // Set up timeout using select()
-    struct timeval timeout;
-    timeout.tv_sec = timeout_seconds;
-    timeout.tv_usec = 0;
-    
     int timed_out = 0;
 
     while (1) {
@@ -862,7 +858,17 @@ static cJSON* tool_bash(cJSON *params, ConversationState *state) {
         FD_ZERO(&readfds);
         FD_SET(fd, &readfds);
         
-        int select_result = select(fd + 1, &readfds, NULL, NULL, &timeout);
+        // Set up timeout using select() - pass NULL for timeout if timeout_seconds is 0
+        struct timeval timeout;
+        struct timeval *timeout_ptr = NULL;
+        
+        if (timeout_seconds > 0) {
+            timeout.tv_sec = timeout_seconds;
+            timeout.tv_usec = 0;
+            timeout_ptr = &timeout;
+        }
+        
+        int select_result = select(fd + 1, &readfds, NULL, NULL, timeout_ptr);
         
         if (select_result == -1) {
             // select() error
