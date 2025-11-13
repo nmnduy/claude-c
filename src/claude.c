@@ -2347,7 +2347,10 @@ cJSON* get_tool_definitions(ConversationState *state, int enable_caching) {
     cJSON_AddStringToObject(bash, "type", "function");
     cJSON *bash_func = cJSON_CreateObject();
     cJSON_AddStringToObject(bash_func, "name", "Bash");
-    cJSON_AddStringToObject(bash_func, "description", "Executes bash commands");
+    cJSON_AddStringToObject(bash_func, "description", 
+        "Executes bash commands. Note: stderr is automatically redirected to stdout "
+        "to prevent terminal corruption, so both stdout and stderr output will be "
+        "captured in the 'output' field.");
     cJSON *bash_params = cJSON_CreateObject();
     cJSON_AddStringToObject(bash_params, "type", "object");
     cJSON *bash_props = cJSON_CreateObject();
