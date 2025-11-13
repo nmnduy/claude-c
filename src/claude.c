@@ -797,9 +797,12 @@ static cJSON* tool_bash(cJSON *params, ConversationState *state) {
 
     const char *command = cmd_json->valuestring;
 
-    // Execute command and capture output
-    char buffer[BUFFER_SIZE];
-    FILE *pipe = popen(command, "r");
+    // Execute command and capture both stdout and stderr
+    // Use 2>&1 to redirect stderr to stdout so we capture all output
+    char full_command[BUFFER_SIZE];
+    snprintf(full_command, sizeof(full_command), "%s 2>&1", command);
+    
+    FILE *pipe = popen(full_command, "r");
     if (!pipe) {
         cJSON *error = cJSON_CreateObject();
         cJSON_AddStringToObject(error, "error", "Failed to execute command");
