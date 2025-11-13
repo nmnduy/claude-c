@@ -2410,9 +2410,11 @@ cJSON* get_tool_definitions(ConversationState *state, int enable_caching) {
     cJSON *write_props = cJSON_CreateObject();
     cJSON *write_path = cJSON_CreateObject();
     cJSON_AddStringToObject(write_path, "type", "string");
+    cJSON_AddStringToObject(write_path, "description", "Path to the file to write");
     cJSON_AddItemToObject(write_props, "file_path", write_path);
     cJSON *write_content = cJSON_CreateObject();
     cJSON_AddStringToObject(write_content, "type", "string");
+    cJSON_AddStringToObject(write_content, "description", "Content to write to the file");
     cJSON_AddItemToObject(write_props, "content", write_content);
     cJSON_AddItemToObject(write_params, "properties", write_props);
     cJSON *write_req = cJSON_CreateArray();
@@ -2477,6 +2479,7 @@ cJSON* get_tool_definitions(ConversationState *state, int enable_caching) {
     cJSON *glob_props = cJSON_CreateObject();
     cJSON *glob_pattern = cJSON_CreateObject();
     cJSON_AddStringToObject(glob_pattern, "type", "string");
+    cJSON_AddStringToObject(glob_pattern, "description", "Glob pattern to match files against");
     cJSON_AddItemToObject(glob_props, "pattern", glob_pattern);
     cJSON_AddItemToObject(glob_params, "properties", glob_props);
     cJSON *glob_req = cJSON_CreateArray();
