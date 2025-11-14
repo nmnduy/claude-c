@@ -53,6 +53,13 @@ export OPENAI_MODEL=deepseek-chat
 claude-c
 ```
 
+We dont have config switching yet. But you can also just do this in .bashrc
+
+```bash
+alias deepseek-chat="OPENAI_API_KEY=$DEEPSEEK_API_KEY OPENAI_API_BASE=https://api.deepseek.com OPENAI_MODEL=deepseek-chat claude-c"
+alias glm-4.6="OPENAI_API_KEY=$ZAI_API_KEY OPENAI_API_BASE=https://api.z.ai/api/paas/v4/chat/completions OPENAI_MODEL=glm-4.6 claude-c"
+```
+
 ### Color Theme Support
 
 **Available built-in themes:** `kitty-default`, `dracula`, `gruvbox-dark`, `solarized-dark`, `black-metal`
