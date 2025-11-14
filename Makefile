@@ -166,7 +166,7 @@ TEST_BASH_SUMMARY_SRC = tests/test_bash_summary.c
 TEST_BASH_TIMEOUT_TARGET = $(BUILD_DIR)/test_bash_timeout
 TEST_BASH_TIMEOUT_SRC = tests/test_bash_timeout.c
 
-.PHONY: all clean check-deps install test test-edit test-read test-todo test-todo-write test-paste test-retry-jitter test-openai-format test-write-diff-integration test-rotation test-patch-parser test-thread-cancel test-aws-cred-rotation test-message-queue test-event-loop test-wrap test-mcp test-bash-summary test-bash-timeout query-tool debug analyze sanitize-ub sanitize-all sanitize-leak valgrind memscan version show-version update-version bump-version bump-patch build clang ci-test ci-gcc ci-clang ci-gcc-sanitize ci-clang-sanitize ci-all fmt-whitespace
+.PHONY: all clean check-deps install test test-edit test-read test-todo test-todo-write test-paste test-retry-jitter test-openai-format test-write-diff-integration test-rotation test-patch-parser test-thread-cancel test-aws-cred-rotation test-message-queue test-event-loop test-wrap test-mcp test-bash-summary test-bash-timeout query-tool debug analyze sanitize-ub sanitize-all sanitize-leak valgrind memscan comprehensive-scan clang-tidy cppcheck flawfinder version show-version update-version bump-version bump-patch build clang ci-test ci-gcc ci-clang ci-gcc-sanitize ci-clang-sanitize ci-all fmt-whitespace
 
 all: check-deps $(TARGET)
 
@@ -432,10 +432,35 @@ sanitize-ub: check-deps
 sanitize-all: check-deps
 	@mkdir -p $(BUILD_DIR)
 	@echo "Building with Address + Undefined Behavior Sanitizers (recommended for testing)..."
-	$(CC) $(CFLAGS) -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/logger_all.o $(LOGGER_SRC)
-	$(CC) $(CFLAGS) -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/migrations_all.o $(MIGRATIONS_SRC)
-	$(CC) $(CFLAGS) -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/persistence_all.o $(PERSISTENCE_SRC)
-	$(CC) $(CFLAGS) -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -o $(BUILD_DIR)/claude-c-allsan $(SRC) $(BUILD_DIR)/logger_all.o $(BUILD_DIR)/persistence_all.o $(BUILD_DIR)/migrations_all.o $(LDFLAGS) -fsanitize=address,undefined
+	$(CC) $(CFLAGS) -Wno-format-truncation -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/logger_all.o $(LOGGER_SRC)
+	$(CC) $(CFLAGS) -Wno-format-truncation -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/migrations_all.o $(MIGRATIONS_SRC)
+	$(CC) $(CFLAGS) -Wno-format-truncation -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/persistence_all.o $(PERSISTENCE_SRC)
+	$(CC) $(CFLAGS) -Wno-format-truncation -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/commands_all.o $(COMMANDS_SRC)
+	$(CC) $(CFLAGS) -Wno-format-truncation -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/completion_all.o $(COMPLETION_SRC)
+	$(CC) $(CFLAGS) -Wno-format-truncation -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/tui_all.o $(TUI_SRC)
+	$(CC) $(CFLAGS) -Wno-format-truncation -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/todo_all.o $(TODO_SRC)
+	$(CC) $(CFLAGS) -Wno-format-truncation -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/aws_bedrock_all.o $(AWS_BEDROCK_SRC)
+	$(CC) $(CFLAGS) -Wno-format-truncation -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/provider_all.o $(PROVIDER_SRC)
+	$(CC) $(CFLAGS) -Wno-format-truncation -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/openai_provider_all.o $(OPENAI_PROVIDER_SRC)
+	$(CC) $(CFLAGS) -Wno-format-truncation -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/openai_messages_all.o $(OPENAI_MESSAGES_SRC)
+	$(CC) $(CFLAGS) -Wno-format-truncation -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/bedrock_provider_all.o $(BEDROCK_PROVIDER_SRC)
+	$(CC) $(CFLAGS) -Wno-format-truncation -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/builtin_themes_all.o $(BUILTIN_THEMES_SRC)
+	$(CC) $(CFLAGS) -Wno-format-truncation -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/patch_parser_all.o $(PATCH_PARSER_SRC)
+	$(CC) $(CFLAGS) -Wno-format-truncation -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/message_queue_all.o $(MESSAGE_QUEUE_SRC)
+	$(CC) $(CFLAGS) -Wno-format-truncation -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/ai_worker_all.o $(AI_WORKER_SRC)
+	$(CC) $(CFLAGS) -Wno-format-truncation -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/voice_input_all.o $(VOICE_INPUT_SRC)
+	$(CC) $(CFLAGS) -Wno-format-truncation -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/mcp_all.o $(MCP_SRC)
+	$(CC) $(CFLAGS) -Wno-format-truncation -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/window_manager_all.o $(WINDOW_MANAGER_SRC)
+	$(CC) $(CFLAGS) -Wno-format-truncation -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/tool_utils_all.o $(TOOL_UTILS_SRC)
+	$(CC) $(CFLAGS) -Wno-format-truncation -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/history_file_all.o $(HISTORY_FILE_SRC)
+	$(CC) $(CFLAGS) -Wno-format-truncation -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -o $(BUILD_DIR)/claude-c-allsan $(SRC) \
+		$(BUILD_DIR)/logger_all.o $(BUILD_DIR)/persistence_all.o $(BUILD_DIR)/migrations_all.o $(BUILD_DIR)/commands_all.o \
+		$(BUILD_DIR)/completion_all.o $(BUILD_DIR)/tui_all.o $(BUILD_DIR)/todo_all.o $(BUILD_DIR)/aws_bedrock_all.o \
+		$(BUILD_DIR)/provider_all.o $(BUILD_DIR)/openai_provider_all.o $(BUILD_DIR)/openai_messages_all.o \
+		$(BUILD_DIR)/bedrock_provider_all.o $(BUILD_DIR)/builtin_themes_all.o $(BUILD_DIR)/patch_parser_all.o \
+		$(BUILD_DIR)/message_queue_all.o $(BUILD_DIR)/ai_worker_all.o $(BUILD_DIR)/voice_input_all.o $(BUILD_DIR)/mcp_all.o \
+		$(BUILD_DIR)/window_manager_all.o $(BUILD_DIR)/tool_utils_all.o $(BUILD_DIR)/history_file_all.o \
+		$(LDFLAGS) -fsanitize=address,undefined
 	@echo ""
 	@echo "✓ Build successful with combined sanitizers!"
 	@echo "Run: ./$(BUILD_DIR)/claude-c-allsan \"your prompt here\""
@@ -491,6 +516,60 @@ memscan: analyze sanitize-all
 	@echo ""
 	@echo "For production testing, run all test suites with sanitizers:"
 	@echo "  ./$(BUILD_DIR)/claude-c-allsan --help"
+	@echo ""
+
+# Comprehensive bug finding - runs ALL available analysis tools
+comprehensive-scan: analyze sanitize-all valgrind
+	@echo ""
+	@echo "=========================================="
+	@echo "Comprehensive Bug Finding Scan Complete"
+	@echo "=========================================="
+	@echo ""
+	@echo "Completed checks:"
+	@echo "  ✓ Static analysis (see $(BUILD_DIR)/analyze.log)"
+	@echo "  ✓ Built with combined sanitizers ($(BUILD_DIR)/claude-allsan)"
+	@echo "  ✓ Valgrind memory leak detection"
+	@echo ""
+	@echo "Additional tools available (install manually):"
+	@command -v clang-tidy >/dev/null 2>&1 && echo "  ✓ clang-tidy (static analysis)" || echo "  ○ clang-tidy (not installed)"
+	@command -v cppcheck >/dev/null 2>&1 && echo "  ✓ cppcheck (static analysis)" || echo "  ○ cppcheck (not installed)"
+	@command -v flawfinder >/dev/null 2>&1 && echo "  ✓ flawfinder (security analysis)" || echo "  ○ flawfinder (not installed)"
+	@command -v scan-build >/dev/null 2>&1 && echo "  ✓ scan-build (clang static analyzer)" || echo "  ○ scan-build (not installed)"
+	@echo ""
+	@echo "Next steps:"
+	@echo "  1. Review static analysis: cat $(BUILD_DIR)/analyze.log"
+	@echo "  2. Test with sanitizers: ./$(BUILD_DIR)/claude-c-allsan \"test prompt\""
+	@echo "  3. Run individual sanitizer builds: make sanitize-ub sanitize-leak"
+	@echo ""
+	@echo "For maximum coverage, install additional tools:"
+	@echo "  sudo apt-get install clang-tidy cppcheck flawfinder"
+	@echo ""
+
+# Quick static analysis with clang-tidy (if available)
+clang-tidy:
+	@command -v clang-tidy >/dev/null 2>&1 || { echo "Error: clang-tidy not found. Install with: sudo apt-get install clang-tidy"; exit 1; }
+	@echo "Running clang-tidy static analysis..."
+	@clang-tidy $(SRC) $(LOGGER_SRC) $(PERSISTENCE_SRC) $(MIGRATIONS_SRC) -- $(CFLAGS) 2>&1 | tee $(BUILD_DIR)/clang-tidy.log || true
+	@echo ""
+	@echo "✓ clang-tidy analysis complete. Results saved to $(BUILD_DIR)/clang-tidy.log"
+	@echo ""
+
+# Security-focused static analysis with cppcheck (if available)
+cppcheck:
+	@command -v cppcheck >/dev/null 2>&1 || { echo "Error: cppcheck not found. Install with: sudo apt-get install cppcheck"; exit 1; }
+	@echo "Running cppcheck security analysis..."
+	@cppcheck --enable=all --inconclusive --suppress=missingIncludeSystem $(SRC) $(LOGGER_SRC) $(PERSISTENCE_SRC) $(MIGRATIONS_SRC) 2>&1 | tee $(BUILD_DIR)/cppcheck.log || true
+	@echo ""
+	@echo "✓ cppcheck analysis complete. Results saved to $(BUILD_DIR)/cppcheck.log"
+	@echo ""
+
+# Security vulnerability scanning with flawfinder (if available)
+flawfinder:
+	@command -v flawfinder >/dev/null 2>&1 || { echo "Error: flawfinder not found. Install with: sudo apt-get install flawfinder"; exit 1; }
+	@echo "Running flawfinder security analysis..."
+	@flawfinder $(SRC) $(LOGGER_SRC) $(PERSISTENCE_SRC) $(MIGRATIONS_SRC) 2>&1 | tee $(BUILD_DIR)/flawfinder.log || true
+	@echo ""
+	@echo "✓ flawfinder analysis complete. Results saved to $(BUILD_DIR)/flawfinder.log"
 	@echo ""
 
 $(LOGGER_OBJ): $(LOGGER_SRC) src/logger.h
@@ -889,12 +968,16 @@ help:
 	@echo "  make update-version VERSION=1.0.0 - Set specific version number"
 	@echo ""
 	@echo "Memory Bug Scanning:"
-	@echo "  make memscan      - Run comprehensive memory analysis (recommended)"
-	@echo "  make analyze      - Run static analysis (clang/gcc analyzer)"
-	@echo "  make sanitize-all - Build with Address + UB sanitizers (recommended)"
-	@echo "  make sanitize-ub  - Build with Undefined Behavior Sanitizer only"
-	@echo "  make sanitize-leak - Build with Leak Sanitizer only"
-	@echo "  make valgrind     - Run test suite under Valgrind"
+	@echo "  make memscan           - Run comprehensive memory analysis (recommended)"
+	@echo "  make comprehensive-scan - Run ALL available analysis tools (best coverage)"
+	@echo "  make analyze           - Run static analysis (clang/gcc analyzer)"
+	@echo "  make sanitize-all      - Build with Address + UB sanitizers (recommended)"
+	@echo "  make sanitize-ub       - Build with Undefined Behavior Sanitizer only"
+	@echo "  make sanitize-leak     - Build with Leak Sanitizer only"
+	@echo "  make valgrind          - Run test suite under Valgrind"
+	@echo "  make clang-tidy        - Run clang-tidy static analysis (if installed)"
+	@echo "  make cppcheck          - Run cppcheck security analysis (if installed)"
+	@echo "  make flawfinder        - Run flawfinder security analysis (if installed)"
 	@echo ""
 	@echo "Code Formatting:"
 	@echo "  make fmt-whitespace - Remove trailing whitespaces from all source files"
