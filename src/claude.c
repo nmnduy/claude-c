@@ -656,19 +656,16 @@ int add_directory(ConversationState *state, const char *path) {
     }
 
     if (stat(resolved_path, &st) != 0 || !S_ISDIR(st.st_mode)) {
-        free(resolved_path);
         goto out;  // Not a directory
     }
 
     // Check if directory is already in the list (avoid duplicates)
     if (strcmp(resolved_path, state->working_dir) == 0) {
-        free(resolved_path);
         goto out;  // Already the main working directory
     }
 
     for (int i = 0; i < state->additional_dirs_count; i++) {
         if (strcmp(resolved_path, state->additional_dirs[i]) == 0) {
-            free(resolved_path);
             goto out;  // Already in additional directories
         }
     }
@@ -678,7 +675,6 @@ int add_directory(ConversationState *state, const char *path) {
         int new_capacity = state->additional_dirs_capacity == 0 ? 4 : state->additional_dirs_capacity * 2;
         char **new_array = realloc(state->additional_dirs, (size_t)new_capacity * sizeof(char*));
         if (!new_array) {
-            free(resolved_path);
             goto out;  // Out of memory
         }
         state->additional_dirs = new_array;

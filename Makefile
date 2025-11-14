@@ -541,9 +541,6 @@ comprehensive-scan: analyze sanitize-all valgrind
 	@echo "  2. Test with sanitizers: ./$(BUILD_DIR)/claude-c-allsan \"test prompt\""
 	@echo "  3. Run individual sanitizer builds: make sanitize-ub sanitize-leak"
 	@echo ""
-	@echo "For maximum coverage, install additional tools:"
-	@echo "  sudo apt-get install clang-tidy cppcheck flawfinder"
-	@echo ""
 
 # Quick static analysis with clang-tidy (if available)
 clang-tidy:
