@@ -21,6 +21,7 @@
 
 // API Configuration - defaults can be overridden by environment variables
 // Note: For OpenAI, the provider will automatically append "/v1/chat/completions" if needed
+// unless the URL already contains a versioned endpoint (e.g., /v1/, /v2/, /v3/, /v4/)
 #define API_BASE_URL "https://api.openai.com"
 #define DEFAULT_MODEL "o4-mini"
 #define MAX_TOKENS 16384

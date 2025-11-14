@@ -29,6 +29,21 @@
 //     tool_count INTEGER DEFAULT 0,      -- Number of tool_use blocks in response
 //     created_at INTEGER NOT NULL        -- Unix timestamp for indexing/sorting
 // );
+//
+// Database schema for token_usage table:
+//
+// CREATE TABLE IF NOT EXISTS token_usage (
+//     id INTEGER PRIMARY KEY AUTOINCREMENT,
+//     api_call_id INTEGER NOT NULL,      -- Foreign key to api_calls.id
+//     prompt_tokens INTEGER DEFAULT 0,   -- Number of prompt tokens used
+//     completion_tokens INTEGER DEFAULT 0, -- Number of completion tokens used
+//     total_tokens INTEGER DEFAULT 0,    -- Total tokens used
+//     cached_tokens INTEGER DEFAULT 0,   -- Number of cached tokens (from prompt_tokens_details)
+//     prompt_cache_hit_tokens INTEGER DEFAULT 0, -- Number of prompt cache hit tokens
+//     prompt_cache_miss_tokens INTEGER DEFAULT 0, -- Number of prompt cache miss tokens
+//     created_at INTEGER NOT NULL,       -- Unix timestamp for indexing/sorting
+//     FOREIGN KEY (api_call_id) REFERENCES api_calls(id) ON DELETE CASCADE
+// );
 
 // Persistence handle - opaque structure for database connection
 typedef struct PersistenceDB {

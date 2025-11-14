@@ -386,10 +386,11 @@ Provider* openai_provider_create(const char *api_key, const char *base_url) {
 
     // Copy or set default base URL - ensure it has the proper endpoint path
     if (base_url && base_url[0] != '\0') {
-        // Check if base_url already has an endpoint path (contains "/v1/")
+        // Check if base_url already has an endpoint path (contains "/v1/" or "/v2/" or "/v3/" or "/v4/" etc)
         // If it does, use it as-is; otherwise append the OpenAI endpoint
-        if (strstr(base_url, "/v1/") != NULL) {
-            // Already has an endpoint path (likely Anthropic or custom)
+        if (strstr(base_url, "/v1/") != NULL || strstr(base_url, "/v2/") != NULL ||
+            strstr(base_url, "/v3/") != NULL || strstr(base_url, "/v4/") != NULL) {
+            // Already has an endpoint path (likely Anthropic, OpenAI, or custom)
             config->base_url = strdup(base_url);
         } else {
             // Base domain only - append OpenAI chat completions endpoint
