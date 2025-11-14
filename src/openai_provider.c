@@ -317,8 +317,29 @@ static ApiCallResult openai_call_api(Provider *self, ConversationState *state) {
         cJSON *error_obj = cJSON_GetObjectItem(error_json, "error");
         if (error_obj) {
             cJSON *message = cJSON_GetObjectItem(error_obj, "message");
+            cJSON *error_type = cJSON_GetObjectItem(error_obj, "type");
+            
+            // Check for context length limit error
             if (message && cJSON_IsString(message)) {
-                result.error_message = strdup(message->valuestring);
+                const char *msg_text = message->valuestring;
+                const char *type_text = (error_type && cJSON_IsString(error_type)) ? error_type->valuestring : "";
+                
+                // Detect context length overflow errors
+                if ((strstr(msg_text, "maximum context length") != NULL) ||
+                    (strstr(msg_text, "context length") != NULL && strstr(msg_text, "tokens") != NULL) ||
+                    (strstr(msg_text, "too many tokens") != NULL) ||
+                    (strcmp(type_text, "invalid_request_error") == 0 && strstr(msg_text, "tokens") != NULL)) {
+                    
+                    // Provide user-friendly context length error message
+                    result.error_message = strdup(
+                        "Context length exceeded. The conversation has grown too large for the model's memory. "
+                        "Try starting a new conversation or reduce the amount of code/files being discussed."
+                    );
+                    result.is_retryable = 0;  // Context length errors are not retryable
+                } else {
+                    // Use the original error message for other types of errors
+                    result.error_message = strdup(msg_text);
+                }
             }
         }
         cJSON_Delete(error_json);

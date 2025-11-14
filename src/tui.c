@@ -1444,10 +1444,12 @@ void tui_clear_conversation(TUIState *tui) {
     // Clear pad and reset content lines
     werase(tui->wm.conv_pad);
     window_manager_set_content_lines(&tui->wm, 0);
-    refresh_conversation_viewport(tui);
-
+    
     // Add a system message indicating the clear
     tui_add_conversation_line(tui, "[System]", "Conversation history cleared", COLOR_PAIR_STATUS);
+    
+    // Refresh all windows to ensure consistent state
+    window_manager_refresh_all(&tui->wm);
 }
 
 void tui_handle_resize(TUIState *tui) {
@@ -1576,10 +1578,10 @@ void tui_show_startup_banner(TUIState *tui, const char *version, const char *mod
 
     // Tips array: randomly select one to display at startup
     static const char *tips[] = {
-        "Esc/Ctrl+[ to enter Normal mode (vim-style); press 'i' to insert.",
-        "Scroll: j/k (line), Ctrl+D/U (half page), gg/G (top/bottom).",
+        "Esc/Ctrl+[ to enter Scroll mode (vim-style); press 'i' to insert.",
+        "In Scroll mode, Scroll: j/k (line), Ctrl+D/U (half page), gg/G (top/bottom).",
         /* "Use PageUp/PageDown or Arrow keys to scroll.", */
-        "Type /help for commands (e.g., /clear, /exit, /add-dir).",
+        /* "Type /help for commands (e.g., /clear, /exit, /add-dir).", */
         "Press Ctrl+C to cancel a running API/tool action.",
         /* "Use /add-dir to attach a directory as context.", */
         "Press Ctrl+D to exit quickly.",
@@ -1587,7 +1589,6 @@ void tui_show_startup_banner(TUIState *tui, const char *version, const char *mod
         "Set CLAUDE_C_THEME to change colors. Available: tender (default), kitty-default, dracula, gruvbox-dark, solarized-dark, black-metal.",
         "Set CLAUDE_LOG_LEVEL=DEBUG for verbose logs.",
         "API history stored in ./.claude-c/api_calls.db (configurable via CLAUDE_C_DB_PATH).",
-        "Normal mode: gg jumps to top, G to bottom.",
         "Insert mode supports readline keys: Ctrl+A, Ctrl+E, Alt+B, Alt+F.",
         /* "Switch models via OPENAI_MODEL or ANTHROPIC_MODEL environment variables.", */
         /* "Enable Bedrock with CLAUDE_CODE_USE_BEDROCK=1 and ANTHROPIC_MODEL set.", */
