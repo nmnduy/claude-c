@@ -3607,6 +3607,8 @@ char* build_system_prompt(ConversationState *state) {
     free(git_status);
     free(claude_md);
 
+    (void)offset; // Suppress unused variable warning after final snprintf
+
     return prompt;
 }
 
