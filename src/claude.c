@@ -3880,6 +3880,10 @@ static void add_assistant_message_openai(ConversationState *state, cJSON *messag
             // Parse arguments string as JSON
             if (arguments && cJSON_IsString(arguments)) {
                 msg->contents[idx].tool_params = cJSON_Parse(arguments->valuestring);
+                if (!msg->contents[idx].tool_params) {
+                    LOG_WARN("Failed to parse tool arguments, using empty object");
+                    msg->contents[idx].tool_params = cJSON_CreateObject();
+                }
             } else {
                 msg->contents[idx].tool_params = cJSON_CreateObject();
             }

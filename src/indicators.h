@@ -112,7 +112,7 @@ static void *spinner_thread_func(void *arg) {
         fflush(stdout);
         pthread_mutex_unlock(&s->lock);
         idx = (idx + 1) % s->frame_count;
-        usleep(SPINNER_DELAY_MS * 1000);
+        usleep((unsigned int)(SPINNER_DELAY_MS * 1000));
     }
     // Restore cursor
     printf("\033[?25h"); fflush(stdout);

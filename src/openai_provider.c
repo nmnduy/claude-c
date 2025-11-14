@@ -288,8 +288,12 @@ static ApiCallResult openai_call_api(Provider *self, ConversationState *state) {
                     // Parse arguments string to cJSON
                     if (arguments && cJSON_IsString(arguments)) {
                         api_response->tools[tool_idx].parameters = cJSON_Parse(arguments->valuestring);
+                        if (!api_response->tools[tool_idx].parameters) {
+                            LOG_WARN("Failed to parse tool arguments, using empty object");
+                            api_response->tools[tool_idx].parameters = cJSON_CreateObject();
+                        }
                     } else {
-                        api_response->tools[tool_idx].parameters = NULL;
+                        api_response->tools[tool_idx].parameters = cJSON_CreateObject();
                     }
 
                     tool_idx++;
