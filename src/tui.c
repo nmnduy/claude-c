@@ -1543,15 +1543,27 @@ void tui_handle_resize(TUIState *tui) {
 void tui_show_startup_banner(TUIState *tui, const char *version, const char *model, const char *working_dir) {
     if (!tui || !tui->is_initialized) return;
 
+    // Check if ASCII art cat mascot is enabled
+    const char *cat_env = getenv("CLAUDE_C_CAT");
+    int show_cat_mascot = cat_env && strcmp(cat_env, "1") == 0;
+
     // Format banner lines
     char line1[256];
     char line2[256];
     char line3[256];
     char tip_line[512];
     
-    snprintf(line1, sizeof(line1), " ▐▛███▜▌   claude-c v%s", version);
-    snprintf(line2, sizeof(line2), "▝▜█████▛▘  %s", model);
-    snprintf(line3, sizeof(line3), "  ▘▘ ▝▝    %s", working_dir);
+    if (show_cat_mascot) {
+        // ASCII art cat mascot
+        snprintf(line1, sizeof(line1), "  /\\_/\\   claude-c v%s", version);
+        snprintf(line2, sizeof(line2), " ( o.o )  %s", model);
+        snprintf(line3, sizeof(line3), "  > ^ <    %s", working_dir);
+    } else {
+        // Original box drawing mascot
+        snprintf(line1, sizeof(line1), " ▐▛███▜▌   claude-c v%s", version);
+        snprintf(line2, sizeof(line2), "▝▜█████▛▘  %s", model);
+        snprintf(line3, sizeof(line3), "  ▘▘ ▝▝    %s", working_dir);
+    }
 
     // Add padding before mascot
     tui_add_conversation_line(tui, NULL, "", COLOR_PAIR_FOREGROUND);

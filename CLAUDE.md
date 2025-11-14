@@ -35,6 +35,7 @@ Pure C implementation of a coding agent using Anthropic's Claude API.
 - libcurl (HTTP), cJSON (parsing), pthread, ncurses (TUI)
 - 7 core tools implemented
 - Prompt caching enabled by default
+- Bash command timeout protection (configurable via `CLAUDE_C_BASH_TIMEOUT`)
 
 ## C Coding Standards
 
@@ -87,7 +88,9 @@ export OPENAI_API_KEY="your-api-key"
   - `CLAUDE_C_DB_MAX_RECORDS` - Keep last N records (default: 1000, 0=unlimited)
   - `CLAUDE_C_DB_MAX_SIZE_MB` - Max database size in MB (default: 100, 0=unlimited)
   - `CLAUDE_C_DB_AUTO_ROTATE` - Enable auto-rotation (default: 1, set to 0 to disable)
-- **Tools**: `CLAUDE_C_GREP_MAX_RESULTS` - Max grep results (default: 100)
+- **Tools**: 
+  - `CLAUDE_C_GREP_MAX_RESULTS` - Max grep results (default: 100)
+  - `CLAUDE_C_BASH_TIMEOUT` - Timeout for bash commands in seconds (default: 30, 0=no timeout)
 - **Theme**: `CLAUDE_C_THEME` pointing to Kitty .conf file
 - **MCP**: `CLAUDE_MCP_ENABLED=1` to enable, `CLAUDE_MCP_CONFIG` for config path
 

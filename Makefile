@@ -95,6 +95,7 @@ TEST_AWS_CRED_ROTATION_TARGET = $(BUILD_DIR)/test_aws_credential_rotation
 TEST_MESSAGE_QUEUE_TARGET = $(BUILD_DIR)/test_message_queue
 TEST_EVENT_LOOP_TARGET = $(BUILD_DIR)/test_event_loop
 TEST_TEXT_WRAP_TARGET = $(BUILD_DIR)/test_text_wrap
+TEST_JSON_PARSING_TARGET = $(BUILD_DIR)/test_json_parsing
 TEST_MCP_TARGET = $(BUILD_DIR)/test_mcp
 TEST_WM_TARGET = $(BUILD_DIR)/test_window_manager
 QUERY_TOOL = $(BUILD_DIR)/query_logs
@@ -155,14 +156,17 @@ TEST_THREAD_CANCEL_SRC = tests/test_thread_cancel.c
 TEST_AWS_CRED_ROTATION_SRC = tests/test_aws_credential_rotation.c
 TEST_MESSAGE_QUEUE_SRC = tests/test_message_queue.c
 TEST_EVENT_LOOP_SRC = tests/test_event_loop.c
+TEST_JSON_PARSING_SRC = tests/test_json_parsing.c
 TEST_STUBS_SRC = tests/test_stubs.c
 TEST_MCP_SRC = tests/test_mcp.c
 TEST_WM_SRC = tests/test_window_manager.c
 TEST_CANCEL_FLOW_TARGET = $(BUILD_DIR)/test_cancel_flow
 TEST_BASH_SUMMARY_TARGET = $(BUILD_DIR)/test_bash_summary
 TEST_BASH_SUMMARY_SRC = tests/test_bash_summary.c
+TEST_BASH_TIMEOUT_TARGET = $(BUILD_DIR)/test_bash_timeout
+TEST_BASH_TIMEOUT_SRC = tests/test_bash_timeout.c
 
-.PHONY: all clean check-deps install test test-edit test-read test-todo test-todo-write test-paste test-retry-jitter test-openai-format test-write-diff-integration test-rotation test-patch-parser test-thread-cancel test-aws-cred-rotation test-message-queue test-event-loop test-wrap test-mcp test-bash-summary query-tool debug analyze sanitize-ub sanitize-all sanitize-leak valgrind memscan version show-version update-version bump-version bump-patch build clang ci-test ci-gcc ci-clang ci-gcc-sanitize ci-clang-sanitize ci-all fmt-whitespace
+.PHONY: all clean check-deps install test test-edit test-read test-todo test-todo-write test-paste test-retry-jitter test-openai-format test-write-diff-integration test-rotation test-patch-parser test-thread-cancel test-aws-cred-rotation test-message-queue test-event-loop test-wrap test-mcp test-bash-summary test-bash-timeout query-tool debug analyze sanitize-ub sanitize-all sanitize-leak valgrind memscan version show-version update-version bump-version bump-patch build clang ci-test ci-gcc ci-clang ci-gcc-sanitize ci-clang-sanitize ci-all fmt-whitespace
 
 all: check-deps $(TARGET)
 
@@ -174,7 +178,7 @@ debug: check-deps $(BUILD_DIR)/claude-c-debug
 
 query-tool: check-deps $(QUERY_TOOL)
 
-test: test-edit test-read test-todo test-paste test-timing test-openai-format test-write-diff-integration test-rotation test-patch-parser test-thread-cancel test-aws-cred-rotation test-message-queue test-wrap test-mcp test-wm test-bash-summary test-cancel-flow
+test: test-edit test-read test-todo test-paste test-json-parsing test-timing test-openai-format test-write-diff-integration test-rotation test-patch-parser test-thread-cancel test-aws-cred-rotation test-message-queue test-wrap test-mcp test-wm test-bash-summary test-bash-timeout test-cancel-flow
 
 test-edit: check-deps $(TEST_EDIT_TARGET)
 	@echo ""
@@ -205,6 +209,12 @@ test-paste: check-deps $(TEST_PASTE_TARGET)
 	@echo "Running Paste Handler tests..."
 	@echo ""
 	@./$(TEST_PASTE_TARGET)
+
+test-json-parsing: check-deps $(TEST_JSON_PARSING_TARGET)
+	@echo ""
+	@echo "Running JSON parsing tests..."
+	@echo ""
+	@./$(TEST_JSON_PARSING_TARGET)
 
 test-retry-jitter: check-deps $(TEST_RETRY_JITTER_TARGET)
 	@echo ""
@@ -284,6 +294,12 @@ test-wm: check-deps $(TEST_WM_TARGET)
 	@echo "Running Window Manager tests..."
 	@echo ""
 	@./$(TEST_WM_TARGET)
+
+test-bash-timeout: check-deps $(TEST_BASH_TIMEOUT_TARGET)
+	@echo ""
+	@echo "Running Bash Timeout tests..."
+	@echo ""
+	@./$(TEST_BASH_TIMEOUT_TARGET)
 
 $(TARGET): $(SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(COMMANDS_OBJ) $(COMPLETION_OBJ) $(TUI_OBJ) $(WINDOW_MANAGER_OBJ) $(TODO_OBJ) $(AWS_BEDROCK_OBJ) $(PROVIDER_OBJ) $(OPENAI_PROVIDER_OBJ) $(OPENAI_MESSAGES_OBJ) $(BEDROCK_PROVIDER_OBJ) $(BUILTIN_THEMES_OBJ) $(PATCH_PARSER_OBJ) $(MESSAGE_QUEUE_OBJ) $(AI_WORKER_OBJ) $(VOICE_INPUT_OBJ) $(MCP_OBJ) $(TOOL_UTILS_OBJ) $(HISTORY_FILE_OBJ) $(VERSION_H)
 	@mkdir -p $(BUILD_DIR)
@@ -647,6 +663,28 @@ $(TEST_PASTE_TARGET): $(TEST_PASTE_SRC)
 	@echo "✓ Paste Handler test build successful!"
 	@echo ""
 
+# Test target for Bash Timeout - tests bash command timeout functionality
+$(TEST_BASH_TIMEOUT_TARGET): $(SRC) $(TEST_BASH_TIMEOUT_SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(TODO_OBJ) $(PATCH_PARSER_OBJ) $(MESSAGE_QUEUE_OBJ)
+	@mkdir -p $(BUILD_DIR)
+	@echo "Compiling claude.c for bash timeout testing (renaming main)..."
+	@$(CC) $(CFLAGS) -DTEST_BUILD -c -o $(BUILD_DIR)/claude_bash_timeout_test.o $(SRC)
+	@echo "Compiling Bash timeout test suite..."
+	@$(CC) $(CFLAGS) -c -o $(BUILD_DIR)/test_bash_timeout.o $(TEST_BASH_TIMEOUT_SRC)
+	@echo "Linking test executable..."
+	@$(CC) -o $(TEST_BASH_TIMEOUT_TARGET) $(BUILD_DIR)/claude_bash_timeout_test.o $(BUILD_DIR)/test_bash_timeout.o $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(TODO_OBJ) $(PATCH_PARSER_OBJ) $(MESSAGE_QUEUE_OBJ) $(LDFLAGS)
+	@echo ""
+	@echo "✓ Bash timeout test build successful!"
+	@echo ""
+
+# Test target for JSON Parsing - tests JSON parsing error handling patterns
+$(TEST_JSON_PARSING_TARGET): $(TEST_JSON_PARSING_SRC)
+	@mkdir -p $(BUILD_DIR)
+	@echo "Compiling JSON parsing test suite..."
+	@$(CC) $(CFLAGS) -o $(TEST_JSON_PARSING_TARGET) $(TEST_JSON_PARSING_SRC) -lcjson
+	@echo ""
+	@echo "✓ JSON parsing test build successful!"
+	@echo ""
+
 # Test target for Retry Jitter - tests exponential backoff with jitter
 $(TEST_RETRY_JITTER_TARGET): $(TEST_RETRY_JITTER_SRC)
 	@mkdir -p $(BUILD_DIR)
@@ -826,6 +864,7 @@ help:
 	@echo "  make test-read - Build and run Read tool tests only"
 	@echo "  make test-todo - Build and run TODO list tests only"
 	@echo "  make test-paste - Build and run Paste Handler tests only"
+	@echo "  make test-json-parsing - Build and run JSON parsing tests only"
 	@echo "  make test-retry-jitter - Build and run Retry Jitter tests only"
 	@echo "  make test-message-queue - Build and run Message Queue tests only"
 	@echo "  make query-tool - Build the API call log query utility"
