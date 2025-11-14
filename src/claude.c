@@ -3906,6 +3906,17 @@ static void free_internal_contents(InternalContent *results, int count) {
     free(results);
 }
 
+// Helper: Check if TodoWrite was executed in the results array
+static int check_todo_write_executed(InternalContent *results, int count) {
+    if (!results) return 0;
+    for (int i = 0; i < count; i++) {
+        if (results[i].tool_name && strcmp(results[i].tool_name, "TodoWrite") == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
 static void add_tool_results(ConversationState *state, InternalContent *results, int count) {
     if (conversation_state_lock(state) != 0) {
         free_internal_contents(results, count);
@@ -4314,14 +4325,8 @@ static void process_response(ConversationState *state,
         free(threads);
         free(args);
 
-        // Check if TodoWrite was executed before adding results (which frees memory)
-        int todo_write_executed = 0;
-        for (int i = 0; i < tool_count; i++) {
-            if (results[i].tool_name && strcmp(results[i].tool_name, "TodoWrite") == 0) {
-                todo_write_executed = 1;
-                break;
-            }
-        }
+        // Extract TodoWrite information BEFORE transferring ownership to add_tool_results
+        int todo_write_executed = check_todo_write_executed(results, tool_count);
 
         // Record tool results even in the interrupt path so that every tool_call
         // has a corresponding tool_result. This prevents 400s due to missing results.
