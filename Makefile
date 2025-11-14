@@ -95,6 +95,7 @@ TEST_AWS_CRED_ROTATION_TARGET = $(BUILD_DIR)/test_aws_credential_rotation
 TEST_MESSAGE_QUEUE_TARGET = $(BUILD_DIR)/test_message_queue
 TEST_EVENT_LOOP_TARGET = $(BUILD_DIR)/test_event_loop
 TEST_TEXT_WRAP_TARGET = $(BUILD_DIR)/test_text_wrap
+TEST_JSON_PARSING_TARGET = $(BUILD_DIR)/test_json_parsing
 TEST_MCP_TARGET = $(BUILD_DIR)/test_mcp
 TEST_WM_TARGET = $(BUILD_DIR)/test_window_manager
 QUERY_TOOL = $(BUILD_DIR)/query_logs
@@ -155,6 +156,7 @@ TEST_THREAD_CANCEL_SRC = tests/test_thread_cancel.c
 TEST_AWS_CRED_ROTATION_SRC = tests/test_aws_credential_rotation.c
 TEST_MESSAGE_QUEUE_SRC = tests/test_message_queue.c
 TEST_EVENT_LOOP_SRC = tests/test_event_loop.c
+TEST_JSON_PARSING_SRC = tests/test_json_parsing.c
 TEST_STUBS_SRC = tests/test_stubs.c
 TEST_MCP_SRC = tests/test_mcp.c
 TEST_WM_SRC = tests/test_window_manager.c
@@ -176,7 +178,7 @@ debug: check-deps $(BUILD_DIR)/claude-c-debug
 
 query-tool: check-deps $(QUERY_TOOL)
 
-test: test-edit test-read test-todo test-paste test-timing test-openai-format test-write-diff-integration test-rotation test-patch-parser test-thread-cancel test-aws-cred-rotation test-message-queue test-wrap test-mcp test-wm test-bash-summary test-bash-timeout test-cancel-flow
+test: test-edit test-read test-todo test-paste test-json-parsing test-timing test-openai-format test-write-diff-integration test-rotation test-patch-parser test-thread-cancel test-aws-cred-rotation test-message-queue test-wrap test-mcp test-wm test-bash-summary test-bash-timeout test-cancel-flow
 
 test-edit: check-deps $(TEST_EDIT_TARGET)
 	@echo ""
@@ -207,6 +209,12 @@ test-paste: check-deps $(TEST_PASTE_TARGET)
 	@echo "Running Paste Handler tests..."
 	@echo ""
 	@./$(TEST_PASTE_TARGET)
+
+test-json-parsing: check-deps $(TEST_JSON_PARSING_TARGET)
+	@echo ""
+	@echo "Running JSON parsing tests..."
+	@echo ""
+	@./$(TEST_JSON_PARSING_TARGET)
 
 test-retry-jitter: check-deps $(TEST_RETRY_JITTER_TARGET)
 	@echo ""
@@ -668,6 +676,15 @@ $(TEST_BASH_TIMEOUT_TARGET): $(SRC) $(TEST_BASH_TIMEOUT_SRC) $(LOGGER_OBJ) $(PER
 	@echo "✓ Bash timeout test build successful!"
 	@echo ""
 
+# Test target for JSON Parsing - tests JSON parsing error handling patterns
+$(TEST_JSON_PARSING_TARGET): $(TEST_JSON_PARSING_SRC)
+	@mkdir -p $(BUILD_DIR)
+	@echo "Compiling JSON parsing test suite..."
+	@$(CC) $(CFLAGS) -o $(TEST_JSON_PARSING_TARGET) $(TEST_JSON_PARSING_SRC) -lcjson
+	@echo ""
+	@echo "✓ JSON parsing test build successful!"
+	@echo ""
+
 # Test target for Retry Jitter - tests exponential backoff with jitter
 $(TEST_RETRY_JITTER_TARGET): $(TEST_RETRY_JITTER_SRC)
 	@mkdir -p $(BUILD_DIR)
@@ -847,6 +864,7 @@ help:
 	@echo "  make test-read - Build and run Read tool tests only"
 	@echo "  make test-todo - Build and run TODO list tests only"
 	@echo "  make test-paste - Build and run Paste Handler tests only"
+	@echo "  make test-json-parsing - Build and run JSON parsing tests only"
 	@echo "  make test-retry-jitter - Build and run Retry Jitter tests only"
 	@echo "  make test-message-queue - Build and run Message Queue tests only"
 	@echo "  make query-tool - Build the API call log query utility"
