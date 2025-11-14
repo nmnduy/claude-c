@@ -23,6 +23,7 @@ Project instructions for Claude Code when working with this codebase.
 **TODO system**: `src/todo.h`, `src/todo.c`
 **TUI & Normal Mode**: `src/tui.h`, `src/tui.c`, `docs/normal-mode.md`
 **Color themes**: `src/colorscheme.h`, `src/builtin_themes.h`, `src/builtin_themes.c`
+**Token usage tracking**: `docs/token-usage.md`, `src/persistence.c`
 **Tests**: `tests/test_*.c`
 **Build**: `Makefile`
 
@@ -96,6 +97,7 @@ export OPENAI_API_KEY="your-api-key"
 - Database: `./.claude-c/api_calls.db` (project-local)
 - Prompt caching: Enabled
 - Model: `claude-sonnet-4-20250514`
+- Token usage tracking: Enabled (stores in `token_usage` table)
 
 ## Color Themes
 

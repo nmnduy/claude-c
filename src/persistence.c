@@ -10,9 +10,113 @@
 #include <errno.h>
 #include <limits.h>
 #include <unistd.h>
+#include <cjson/cJSON.h>
 #include "persistence.h"
 #include "migrations.h"
 #include "logger.h"
+
+/**
+ * Extract token usage statistics from API response JSON
+ * 
+ * Parameters:
+ *   response_json: Raw JSON response string
+ *   prompt_tokens: Output parameter for prompt tokens count
+ *   completion_tokens: Output parameter for completion tokens count
+ *   total_tokens: Output parameter for total tokens count
+ *   cached_tokens: Output parameter for cached tokens count
+ *   prompt_cache_hit_tokens: Output parameter for prompt cache hit tokens
+ *   prompt_cache_miss_tokens: Output parameter for prompt cache miss tokens
+ * 
+ * Returns:
+ *   0 on success, -1 if no token usage data found
+ */
+static int extract_token_usage(
+    const char *response_json,
+    int *prompt_tokens,
+    int *completion_tokens,
+    int *total_tokens,
+    int *cached_tokens,
+    int *prompt_cache_hit_tokens,
+    int *prompt_cache_miss_tokens
+) {
+    if (!response_json) {
+        LOG_DEBUG("extract_token_usage: response_json is NULL");
+        return -1;
+    }
+
+    cJSON *json = cJSON_Parse(response_json);
+    if (!json) {
+        LOG_DEBUG("extract_token_usage: failed to parse JSON response");
+        return -1;
+    }
+
+    // Extract usage object
+    cJSON *usage = cJSON_GetObjectItem(json, "usage");
+    if (!usage) {
+        LOG_DEBUG("extract_token_usage: no 'usage' object found in response");
+        cJSON_Delete(json);
+        return -1;
+    }
+
+    // Initialize all output parameters to 0
+    *prompt_tokens = 0;
+    *completion_tokens = 0;
+    *total_tokens = 0;
+    *cached_tokens = 0;
+    *prompt_cache_hit_tokens = 0;
+    *prompt_cache_miss_tokens = 0;
+
+    // Extract basic token counts - these are lenient and won't fail if fields are missing
+    cJSON *prompt_tokens_json = cJSON_GetObjectItem(usage, "prompt_tokens");
+    cJSON *completion_tokens_json = cJSON_GetObjectItem(usage, "completion_tokens");
+    cJSON *total_tokens_json = cJSON_GetObjectItem(usage, "total_tokens");
+
+    if (prompt_tokens_json && cJSON_IsNumber(prompt_tokens_json)) {
+        *prompt_tokens = prompt_tokens_json->valueint;
+        LOG_DEBUG("extract_token_usage: found prompt_tokens = %d", *prompt_tokens);
+    }
+
+    if (completion_tokens_json && cJSON_IsNumber(completion_tokens_json)) {
+        *completion_tokens = completion_tokens_json->valueint;
+        LOG_DEBUG("extract_token_usage: found completion_tokens = %d", *completion_tokens);
+    }
+
+    if (total_tokens_json && cJSON_IsNumber(total_tokens_json)) {
+        *total_tokens = total_tokens_json->valueint;
+        LOG_DEBUG("extract_token_usage: found total_tokens = %d", *total_tokens);
+    }
+
+    // Extract cache-related token counts - optional fields
+    cJSON *prompt_tokens_details = cJSON_GetObjectItem(usage, "prompt_tokens_details");
+    if (prompt_tokens_details) {
+        cJSON *cached_tokens_json = cJSON_GetObjectItem(prompt_tokens_details, "cached_tokens");
+        if (cached_tokens_json && cJSON_IsNumber(cached_tokens_json)) {
+            *cached_tokens = cached_tokens_json->valueint;
+            LOG_DEBUG("extract_token_usage: found cached_tokens = %d", *cached_tokens);
+        }
+    }
+
+    // Extract direct cache metrics - optional fields
+    cJSON *cache_hit_tokens_json = cJSON_GetObjectItem(usage, "prompt_cache_hit_tokens");
+    cJSON *cache_miss_tokens_json = cJSON_GetObjectItem(usage, "prompt_cache_miss_tokens");
+
+    if (cache_hit_tokens_json && cJSON_IsNumber(cache_hit_tokens_json)) {
+        *prompt_cache_hit_tokens = cache_hit_tokens_json->valueint;
+        LOG_DEBUG("extract_token_usage: found prompt_cache_hit_tokens = %d", *prompt_cache_hit_tokens);
+    }
+
+    if (cache_miss_tokens_json && cJSON_IsNumber(cache_miss_tokens_json)) {
+        *prompt_cache_miss_tokens = cache_miss_tokens_json->valueint;
+        LOG_DEBUG("extract_token_usage: found prompt_cache_miss_tokens = %d", *prompt_cache_miss_tokens);
+    }
+
+    cJSON_Delete(json);
+    
+    // Return success even if some fields were missing - we got what we could
+    LOG_DEBUG("extract_token_usage: completed successfully (prompt=%d, completion=%d, total=%d)",
+             *prompt_tokens, *completion_tokens, *total_tokens);
+    return 0;
+}
 
 // SQL schema for the api_calls table
 static const char *SCHEMA_SQL =
@@ -30,12 +134,26 @@ static const char *SCHEMA_SQL =
     "    duration_ms INTEGER,"
     "    tool_count INTEGER DEFAULT 0,"
     "    created_at INTEGER NOT NULL"
+    ");"
+    
+    "CREATE TABLE IF NOT EXISTS token_usage ("
+    "    id INTEGER PRIMARY KEY AUTOINCREMENT,"
+    "    api_call_id INTEGER NOT NULL,"
+    "    prompt_tokens INTEGER DEFAULT 0,"
+    "    completion_tokens INTEGER DEFAULT 0,"
+    "    total_tokens INTEGER DEFAULT 0,"
+    "    cached_tokens INTEGER DEFAULT 0,"
+    "    prompt_cache_hit_tokens INTEGER DEFAULT 0,"
+    "    prompt_cache_miss_tokens INTEGER DEFAULT 0,"
+    "    created_at INTEGER NOT NULL,"
+    "    FOREIGN KEY (api_call_id) REFERENCES api_calls(id) ON DELETE CASCADE"
     ");";
 
 // SQL for creating indexes for faster queries
 static const char *INDEX_SQL =
     "CREATE INDEX IF NOT EXISTS idx_api_calls_timestamp ON api_calls(timestamp);"
-    "CREATE INDEX IF NOT EXISTS idx_api_calls_session_id ON api_calls(session_id);";
+    "CREATE INDEX IF NOT EXISTS idx_api_calls_session_id ON api_calls(session_id);"
+    "CREATE INDEX IF NOT EXISTS idx_token_usage_api_call_id ON token_usage(api_call_id);";
 
 // Get default database path
 // Priority: $CLAUDE_C_DB_PATH > ./.claude-c/api_calls.db > $XDG_DATA_HOME/claude-c/api_calls.db > ~/.local/share/claude-c/api_calls.db
@@ -292,6 +410,76 @@ int persistence_log_api_call(
 
     sqlite3_finalize(stmt);
     free(timestamp);
+
+    // If this was a successful API call with response JSON, also log token usage
+    // This is non-critical functionality - log everything but don't fail on errors
+    if (strcmp(status, "success") == 0 && response_json) {
+        LOG_DEBUG("Attempting to extract token usage from successful API response");
+        
+        int prompt_tokens = 0;
+        int completion_tokens = 0;
+        int total_tokens = 0;
+        int cached_tokens = 0;
+        int prompt_cache_hit_tokens = 0;
+        int prompt_cache_miss_tokens = 0;
+
+        // Extract token usage from response JSON
+        int extract_result = extract_token_usage(response_json, 
+                                               &prompt_tokens, 
+                                               &completion_tokens, 
+                                               &total_tokens,
+                                               &cached_tokens,
+                                               &prompt_cache_hit_tokens,
+                                               &prompt_cache_miss_tokens);
+        
+        if (extract_result == 0) {
+            LOG_DEBUG("Token usage extracted: prompt=%d, completion=%d, total=%d, cached=%d, cache_hit=%d, cache_miss=%d",
+                     prompt_tokens, completion_tokens, total_tokens, cached_tokens, 
+                     prompt_cache_hit_tokens, prompt_cache_miss_tokens);
+            
+            // Get the last inserted API call ID
+            sqlite3_int64 api_call_id = sqlite3_last_insert_rowid(db->db);
+            
+            // Prepare token usage insert statement
+            const char *token_sql =
+                "INSERT INTO token_usage "
+                "(api_call_id, prompt_tokens, completion_tokens, total_tokens, "
+                "cached_tokens, prompt_cache_hit_tokens, prompt_cache_miss_tokens, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?);";
+
+            sqlite3_stmt *token_stmt;
+            rc = sqlite3_prepare_v2(db->db, token_sql, -1, &token_stmt, NULL);
+            if (rc != SQLITE_OK) {
+                LOG_WARN("Failed to prepare token usage statement: %s", sqlite3_errmsg(db->db));
+                // Continue without token logging - don't fail the main API call logging
+            } else {
+                // Bind parameters
+                sqlite3_bind_int64(token_stmt, 1, api_call_id);
+                sqlite3_bind_int(token_stmt, 2, prompt_tokens);
+                sqlite3_bind_int(token_stmt, 3, completion_tokens);
+                sqlite3_bind_int(token_stmt, 4, total_tokens);
+                sqlite3_bind_int(token_stmt, 5, cached_tokens);
+                sqlite3_bind_int(token_stmt, 6, prompt_cache_hit_tokens);
+                sqlite3_bind_int(token_stmt, 7, prompt_cache_miss_tokens);
+                sqlite3_bind_int64(token_stmt, 8, now);
+
+                // Execute token usage insert
+                rc = sqlite3_step(token_stmt);
+                if (rc != SQLITE_DONE) {
+                    LOG_WARN("Failed to insert token usage record: %s", sqlite3_errmsg(db->db));
+                } else {
+                    LOG_DEBUG("Token usage successfully logged for API call ID %lld", (long long)api_call_id);
+                }
+
+                sqlite3_finalize(token_stmt);
+            }
+        } else {
+            LOG_DEBUG("No token usage data found in API response or extraction failed");
+        }
+    } else {
+        LOG_DEBUG("Skipping token usage logging - status=%s, response_json=%s", 
+                 status, response_json ? "present" : "NULL");
+    }
 
     return 0;
 }
