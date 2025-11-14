@@ -756,7 +756,7 @@ $(TEST_BASH_TIMEOUT_TARGET): $(SRC) $(TEST_BASH_TIMEOUT_SRC) $(LOGGER_OBJ) $(PER
 $(TEST_JSON_PARSING_TARGET): $(TEST_JSON_PARSING_SRC)
 	@mkdir -p $(BUILD_DIR)
 	@echo "Compiling JSON parsing test suite..."
-	@$(CC) $(CFLAGS) -o $(TEST_JSON_PARSING_TARGET) $(TEST_JSON_PARSING_SRC) -lcjson
+	@$(CC) $(CFLAGS) -o $(TEST_JSON_PARSING_TARGET) $(TEST_JSON_PARSING_SRC) $(LDFLAGS)
 	@echo ""
 	@echo "✓ JSON parsing test build successful!"
 	@echo ""
