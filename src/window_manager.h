@@ -32,25 +32,25 @@ typedef struct {
     // Screen dimensions
     int screen_width;
     int screen_height;
-    
+
     // Conversation pad (virtual scrollable window)
     WINDOW *conv_pad;
     int conv_pad_capacity;      // Total pad height (allocated)
     int conv_pad_content_lines; // Actual content lines (used)
     int conv_viewport_height;   // Visible area height
     int conv_scroll_offset;     // Current scroll position (0 = top)
-    
+
     // Status window
     WINDOW *status_win;
     int status_height;          // Actual status height (may be 0)
-    
+
     // Input window
     WINDOW *input_win;
     int input_height;           // Current input window height
-    
+
     // Configuration
     WindowManagerConfig config;
-    
+
     // State flags
     int is_initialized;
 } WindowManager;

@@ -414,15 +414,15 @@ void voice_input_cleanup(void) {
 void voice_input_print_status(void) {
     const char *api_key = getenv("OPENAI_API_KEY");
     bool has_api_key = (api_key && *api_key);
-    
+
     // Try to initialize PortAudio
     PaError err = Pa_Initialize();
     bool has_portaudio = (err == paNoError);
-    
+
     if (has_portaudio) {
         PaDeviceIndex device = Pa_GetDefaultInputDevice();
         Pa_Terminate();
-        
+
         if (device == paNoDevice) {
             LOG_WARN("Voice input: No microphone detected");
             fprintf(stderr, "⚠ Voice input unavailable: No microphone detected\n");
@@ -435,14 +435,14 @@ void voice_input_print_status(void) {
         fprintf(stderr, "  Install with: brew install portaudio (macOS)\n");
         fprintf(stderr, "            or: sudo apt-get install portaudio19-dev (Ubuntu)\n");
     }
-    
+
     if (!has_api_key) {
         LOG_WARN("Voice input: OPENAI_API_KEY not set");
         fprintf(stderr, "⚠ Voice input unavailable: OPENAI_API_KEY not set\n");
         fprintf(stderr, "  Set with: export OPENAI_API_KEY=\"your-key\"\n");
         return;
     }
-    
+
     // If we get here, everything is available
     if (has_portaudio && has_api_key) {
         LOG_INFO("Voice input available - use /voice command");
