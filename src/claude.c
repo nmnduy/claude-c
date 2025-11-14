@@ -4224,13 +4224,8 @@ static void process_response(ConversationState *state,
                     break;
                 }
                 
-                int done = 0;
-                int cancelled = 0;
-
                 pthread_mutex_lock(&tracker.mutex);
                 if (tracker.cancelled || tracker.completed >= tracker.total) {
-                    done = tracker.completed >= tracker.total;
-                    cancelled = tracker.cancelled;
                     pthread_mutex_unlock(&tracker.mutex);
                     break;
                 }
@@ -4245,13 +4240,11 @@ static void process_response(ConversationState *state,
 
                 // Wait for condition variable with timeout
                 (void)pthread_cond_timedwait(&tracker.cond, &tracker.mutex, &deadline);
-                done = tracker.completed >= tracker.total;
-                cancelled = tracker.cancelled;
-                pthread_mutex_unlock(&tracker.mutex);
-
-                if (done || cancelled) {
+                if (tracker.cancelled || tracker.completed >= tracker.total) {
+                    pthread_mutex_unlock(&tracker.mutex);
                     break;
                 }
+                pthread_mutex_unlock(&tracker.mutex);
 
                 // Interactive interrupt handling (Ctrl+C) is done by the TUI event loop
                 // Non-TUI mode doesn't have interactive interrupt support here
@@ -4321,11 +4314,7 @@ static void process_response(ConversationState *state,
         free(threads);
         free(args);
 
-        // Record tool results even in the interrupt path so that every tool_call
-        // has a corresponding tool_result. This prevents 400s due to missing results.
-        add_tool_results(state, results, tool_count);
-
-        // Check if TodoWrite was executed and display the updated TODO list
+        // Check if TodoWrite was executed before adding results (which frees memory)
         int todo_write_executed = 0;
         for (int i = 0; i < tool_count; i++) {
             if (results[i].tool_name && strcmp(results[i].tool_name, "TodoWrite") == 0) {
@@ -4333,6 +4322,10 @@ static void process_response(ConversationState *state,
                 break;
             }
         }
+
+        // Record tool results even in the interrupt path so that every tool_call
+        // has a corresponding tool_result. This prevents 400s due to missing results.
+        add_tool_results(state, results, tool_count);
 
         if (todo_write_executed && state->todo_list && state->todo_list->count > 0) {
             // For TUI without queue, use colored rendering
