@@ -414,7 +414,7 @@ static void emit_diff_line(const char *line,
         } else if (trimmed[0] == '-' && trimmed[1] != '-') {
             color = remove_color;
         }
-        
+
         if (color) {
             printf("  %s%s%s\n", color, trimmed, ANSI_RESET);
         } else {
@@ -800,7 +800,7 @@ STATIC cJSON* tool_bash(cJSON *params, ConversationState *state) {
 
     // Get timeout from parameter, environment, or use default (30 seconds)
     int timeout_seconds = 30;  // Default timeout
-    
+
     // First check if timeout parameter is provided
     const cJSON *timeout_json = cJSON_GetObjectItem(params, "timeout");
     if (timeout_json && cJSON_IsNumber(timeout_json)) {
@@ -823,7 +823,7 @@ STATIC cJSON* tool_bash(cJSON *params, ConversationState *state) {
     // Use 2>&1 to redirect stderr to stdout so we capture all output
     char full_command[BUFFER_SIZE];
     snprintf(full_command, sizeof(full_command), "%s 2>&1", command);
-    
+
     FILE *pipe = popen(full_command, "r");
     if (!pipe) {
         cJSON *error = cJSON_CreateObject();
@@ -834,10 +834,10 @@ STATIC cJSON* tool_bash(cJSON *params, ConversationState *state) {
     char *output = NULL;
     size_t total_size = 0;
     char buffer[BUFFER_SIZE];
-    
+
     // Get the file descriptor from the pipe
     int fd = fileno(pipe);
-    
+
     int timed_out = 0;
 
     while (1) {
@@ -849,7 +849,7 @@ STATIC cJSON* tool_bash(cJSON *params, ConversationState *state) {
             cJSON_AddStringToObject(error, "error", "Operation interrupted by user");
             return error;
         }
-        
+
         // Add cancellation point to allow thread cancellation during long reads
         pthread_testcancel();
 
@@ -857,19 +857,19 @@ STATIC cJSON* tool_bash(cJSON *params, ConversationState *state) {
         fd_set readfds;
         FD_ZERO(&readfds);
         FD_SET(fd, &readfds);
-        
+
         // Set up timeout using select() - pass NULL for timeout if timeout_seconds is 0
         struct timeval timeout;
         struct timeval *timeout_ptr = NULL;
-        
+
         if (timeout_seconds > 0) {
             timeout.tv_sec = timeout_seconds;
             timeout.tv_usec = 0;
             timeout_ptr = &timeout;
         }
-        
+
         int select_result = select(fd + 1, &readfds, NULL, NULL, timeout_ptr);
-        
+
         if (select_result == -1) {
             // select() error
             LOG_ERROR("select() failed: %s", strerror(errno));
@@ -884,7 +884,7 @@ STATIC cJSON* tool_bash(cJSON *params, ConversationState *state) {
             LOG_WARN("Bash command timed out after %d seconds: %s", timeout_seconds, command);
             break;
         }
-        
+
         // Data is available, try to read
         if (fgets(buffer, sizeof(buffer), pipe) == NULL) {
             // EOF or error
@@ -893,7 +893,7 @@ STATIC cJSON* tool_bash(cJSON *params, ConversationState *state) {
             }
             break;
         }
-        
+
         size_t len = strlen(buffer);
         char *new_output = realloc(output, total_size + len + 1);
         if (!new_output) {
@@ -907,7 +907,7 @@ STATIC cJSON* tool_bash(cJSON *params, ConversationState *state) {
         memcpy(output + total_size, buffer, len);
         total_size += len;
         output[total_size] = '\0';
-        
+
         // Reset timeout for next read
         timeout.tv_sec = timeout_seconds;
         timeout.tv_usec = 0;
@@ -927,7 +927,7 @@ STATIC cJSON* tool_bash(cJSON *params, ConversationState *state) {
     } else {
         status = pclose(pipe);
     }
-    
+
     int exit_code;
     if (timed_out) {
         exit_code = -2;  // Special code for timeout
@@ -938,11 +938,11 @@ STATIC cJSON* tool_bash(cJSON *params, ConversationState *state) {
     cJSON *result = cJSON_CreateObject();
     cJSON_AddNumberToObject(result, "exit_code", exit_code);
     cJSON_AddStringToObject(result, "output", output ? output : "");
-    
+
     if (timed_out) {
         char timeout_msg[256];
-        snprintf(timeout_msg, sizeof(timeout_msg), 
-                "Command timed out after %d seconds. Use CLAUDE_C_BASH_TIMEOUT to adjust timeout.", 
+        snprintf(timeout_msg, sizeof(timeout_msg),
+                "Command timed out after %d seconds. Use CLAUDE_C_BASH_TIMEOUT to adjust timeout.",
                 timeout_seconds);
         cJSON_AddStringToObject(result, "timeout_error", timeout_msg);
     }
@@ -1026,7 +1026,7 @@ STATIC cJSON* tool_read(cJSON *params, ConversationState *state) {
             if (current_line % 1000 == 0) {
                 pthread_testcancel();
             }
-            
+
             if (*pos == '\n') {
                 // Found end of line
                 int line_len = (int)(pos - line_start + 1);  // Include the newline
@@ -1350,26 +1350,26 @@ static void tool_progress_callback(const ToolCompletion *completion, void *user_
 // Cleanup handler for tool thread cancellation
 static void tool_thread_cleanup(void *arg) {
     ToolThreadArg *t = (ToolThreadArg *)arg;
-    
+
     // Free input JSON if not already freed
     if (t->input) {
         cJSON_Delete(t->input);
         t->input = NULL;
     }
-    
+
     // CRITICAL FIX: Check if we've already written results under mutex
     // to prevent data race with normal completion path
     pthread_mutex_t *mutex = t->tracker ? &t->tracker->mutex : NULL;
     if (mutex) {
         pthread_mutex_lock(mutex);
     }
-    
+
     int should_write_result = !t->notified;
-    
+
     if (mutex) {
         pthread_mutex_unlock(mutex);
     }
-    
+
     // Only write cancellation result if not already completed
     if (should_write_result && t->result_block) {
         t->result_block->type = INTERNAL_TOOL_RESPONSE;
@@ -1931,7 +1931,7 @@ static cJSON* tool_grep(cJSON *params, ConversationState *state) {
 
     // Common exclusions to avoid build artifacts and large binary/generated files
     // This list mimics what tools like ripgrep exclude by default
-    const char *exclusions = 
+    const char *exclusions =
         "--exclude-dir=.git "
         "--exclude-dir=.svn "
         "--exclude-dir=.hg "
@@ -1980,7 +1980,7 @@ static cJSON* tool_grep(cJSON *params, ConversationState *state) {
     while (fgets(buffer, sizeof(buffer), pipe)) {
         // CRITICAL: Add cancellation point for long grep operations
         pthread_testcancel();
-        
+
         if (match_count >= max_results) {
             truncated = 1;
             break;
@@ -2003,7 +2003,7 @@ static cJSON* tool_grep(cJSON *params, ConversationState *state) {
         while (fgets(buffer, sizeof(buffer), pipe)) {
             // CRITICAL: Add cancellation point for long grep operations
             pthread_testcancel();
-            
+
             if (match_count >= max_results) {
                 truncated = 1;
                 break;
@@ -2016,18 +2016,18 @@ static cJSON* tool_grep(cJSON *params, ConversationState *state) {
     }
 
     cJSON_AddItemToObject(result, "matches", matches);
-    
+
     // Add metadata about the search
     if (truncated) {
         char warning[256];
-        snprintf(warning, sizeof(warning), 
+        snprintf(warning, sizeof(warning),
                 "Results truncated at %d matches. Use CLAUDE_C_GREP_MAX_RESULTS to adjust limit, or refine your search pattern.",
                 max_results);
         cJSON_AddStringToObject(result, "warning", warning);
     }
-    
+
     cJSON_AddNumberToObject(result, "match_count", match_count);
-    
+
     return result;
 }
 
@@ -2139,7 +2139,7 @@ STATIC cJSON* tool_sleep(cJSON *params, ConversationState *state) {
 // MCP ListMcpResources tool handler
 static cJSON* tool_list_mcp_resources(cJSON *params, ConversationState *state) {
     LOG_DEBUG("tool_list_mcp_resources: Starting resource listing");
-    
+
     if (!state || !state->mcp_config) {
         LOG_ERROR("tool_list_mcp_resources: MCP not configured");
         cJSON *error = cJSON_CreateObject();
@@ -2171,7 +2171,7 @@ static cJSON* tool_list_mcp_resources(cJSON *params, ConversationState *state) {
     cJSON *result = cJSON_CreateObject();
 
     if (resource_list->is_error) {
-        LOG_ERROR("tool_list_mcp_resources: Resource listing error: %s", 
+        LOG_ERROR("tool_list_mcp_resources: Resource listing error: %s",
                  resource_list->error_message ? resource_list->error_message : "Unknown error");
         cJSON_AddStringToObject(result, "error",
             resource_list->error_message ? resource_list->error_message : "Unknown error");
@@ -2187,8 +2187,8 @@ static cJSON* tool_list_mcp_resources(cJSON *params, ConversationState *state) {
         MCPResource *res = resource_list->resources[i];
         if (!res) continue;
 
-        LOG_DEBUG("tool_list_mcp_resources: Resource %d: server='%s', uri='%s', name='%s'", 
-                 i, res->server ? res->server : "null", res->uri ? res->uri : "null", 
+        LOG_DEBUG("tool_list_mcp_resources: Resource %d: server='%s', uri='%s', name='%s'",
+                 i, res->server ? res->server : "null", res->uri ? res->uri : "null",
                  res->name ? res->name : "null");
 
         cJSON *res_obj = cJSON_CreateObject();
@@ -2212,7 +2212,7 @@ static cJSON* tool_list_mcp_resources(cJSON *params, ConversationState *state) {
 // MCP ReadMcpResource tool handler
 static cJSON* tool_read_mcp_resource(cJSON *params, ConversationState *state) {
     LOG_DEBUG("tool_read_mcp_resource: Starting resource reading");
-    
+
     if (!state || !state->mcp_config) {
         LOG_ERROR("tool_read_mcp_resource: MCP not configured");
         cJSON *error = cJSON_CreateObject();
@@ -2240,7 +2240,7 @@ static cJSON* tool_read_mcp_resource(cJSON *params, ConversationState *state) {
 
     const char *server_name = server_json->valuestring;
     const char *uri = uri_json->valuestring;
-    
+
     LOG_DEBUG("tool_read_mcp_resource: Reading resource from server '%s', uri='%s'", server_name, uri);
 
     // Call mcp_read_resource
@@ -2257,7 +2257,7 @@ static cJSON* tool_read_mcp_resource(cJSON *params, ConversationState *state) {
     cJSON *result = cJSON_CreateObject();
 
     if (content->is_error) {
-        LOG_ERROR("tool_read_mcp_resource: Resource reading error: %s", 
+        LOG_ERROR("tool_read_mcp_resource: Resource reading error: %s",
                  content->error_message ? content->error_message : "Unknown error");
         cJSON_AddStringToObject(result, "error",
             content->error_message ? content->error_message : "Unknown error");
@@ -2265,8 +2265,8 @@ static cJSON* tool_read_mcp_resource(cJSON *params, ConversationState *state) {
         return result;
     }
 
-    LOG_DEBUG("tool_read_mcp_resource: Resource read successfully, uri='%s', mime_type='%s', text_length=%zu", 
-             content->uri ? content->uri : "null", 
+    LOG_DEBUG("tool_read_mcp_resource: Resource read successfully, uri='%s', mime_type='%s', text_length=%zu",
+             content->uri ? content->uri : "null",
              content->mime_type ? content->mime_type : "null",
              content->text ? strlen(content->text) : 0);
 
@@ -2284,7 +2284,7 @@ static cJSON* tool_read_mcp_resource(cJSON *params, ConversationState *state) {
 // MCP CallMcpTool tool handler
 static cJSON* tool_call_mcp_tool(cJSON *params, ConversationState *state) {
     LOG_DEBUG("tool_call_mcp_tool: Starting MCP tool call");
-    
+
     if (!state || !state->mcp_config) {
         LOG_ERROR("tool_call_mcp_tool: MCP not configured");
         cJSON *error = cJSON_CreateObject();
@@ -2313,7 +2313,7 @@ static cJSON* tool_call_mcp_tool(cJSON *params, ConversationState *state) {
 
     const char *server_name = server_json->valuestring;
     const char *tool_name = tool_json->valuestring;
-    
+
     LOG_DEBUG("tool_call_mcp_tool: Looking for server '%s' to call tool '%s'", server_name, tool_name);
 
     // Find server by name
@@ -2346,11 +2346,11 @@ static cJSON* tool_call_mcp_tool(cJSON *params, ConversationState *state) {
     if (args_json && cJSON_IsObject(args_json)) {
         args_object = args_json;
         char *args_str = cJSON_PrintUnformatted(args_json);
-        LOG_DEBUG("tool_call_mcp_tool: Calling tool '%s' on server '%s' with args: %s", 
+        LOG_DEBUG("tool_call_mcp_tool: Calling tool '%s' on server '%s' with args: %s",
                  tool_name, server_name, args_str ? args_str : "null");
         if (args_str) free(args_str);
     } else {
-        LOG_DEBUG("tool_call_mcp_tool: Calling tool '%s' on server '%s' with no arguments", 
+        LOG_DEBUG("tool_call_mcp_tool: Calling tool '%s' on server '%s' with no arguments",
                  tool_name, server_name);
     }
 
@@ -2358,18 +2358,18 @@ static cJSON* tool_call_mcp_tool(cJSON *params, ConversationState *state) {
     MCPToolResult *call_result = mcp_call_tool(target, tool_name, args_object);
     cJSON *result = cJSON_CreateObject();
     if (!call_result) {
-        LOG_ERROR("tool_call_mcp_tool: MCP tool call failed for tool '%s' on server '%s'", 
+        LOG_ERROR("tool_call_mcp_tool: MCP tool call failed for tool '%s' on server '%s'",
                  tool_name, server_name);
         cJSON_AddStringToObject(result, "error", "MCP tool call failed");
         return result;
     }
 
     if (call_result->is_error) {
-        LOG_ERROR("tool_call_mcp_tool: MCP tool returned error: %s", 
+        LOG_ERROR("tool_call_mcp_tool: MCP tool returned error: %s",
                  call_result->result ? call_result->result : "MCP tool error");
         cJSON_AddStringToObject(result, "error", call_result->result ? call_result->result : "MCP tool error");
     } else {
-        LOG_DEBUG("tool_call_mcp_tool: MCP tool call succeeded, result length: %zu", 
+        LOG_DEBUG("tool_call_mcp_tool: MCP tool call succeeded, result length: %zu",
                  call_result->result ? strlen(call_result->result) : 0);
         cJSON_AddStringToObject(result, "content", call_result->result ? call_result->result : "");
     }
@@ -2413,13 +2413,13 @@ static cJSON* execute_tool(const char *tool_name, cJSON *input, ConversationStat
     clock_gettime(CLOCK_MONOTONIC, &start);
 
     cJSON *result = NULL;
-    
+
     // Log tool execution attempt
     char *input_str = cJSON_PrintUnformatted(input);
-    LOG_DEBUG("execute_tool: Attempting to execute tool '%s' with input: %s", 
+    LOG_DEBUG("execute_tool: Attempting to execute tool '%s' with input: %s",
               tool_name, input_str ? input_str : "null");
     if (input_str) free(input_str);
-    
+
     // Try built-in tools first
     for (int i = 0; i < num_tools; i++) {
         if (strcmp(tools[i].name, tool_name) == 0) {
@@ -2440,27 +2440,27 @@ static cJSON* execute_tool(const char *tool_name, cJSON *input, ConversationStat
             const char *actual_tool_name = strchr(tool_name + 4, '_');
             if (actual_tool_name) {
                 actual_tool_name++;  // Skip the underscore
-                
-                LOG_INFO("Calling MCP tool '%s' on server '%s' (original tool name: '%s')", 
+
+                LOG_INFO("Calling MCP tool '%s' on server '%s' (original tool name: '%s')",
                          actual_tool_name, server->name, tool_name);
-                
+
                 MCPToolResult *mcp_result = mcp_call_tool(server, actual_tool_name, input);
                 if (mcp_result) {
                     LOG_DEBUG("execute_tool: MCP tool call succeeded, is_error=%d", mcp_result->is_error);
                     result = cJSON_CreateObject();
-                    
+
                     if (mcp_result->is_error) {
-                        LOG_WARN("execute_tool: MCP tool returned error: %s", 
+                        LOG_WARN("execute_tool: MCP tool returned error: %s",
                                 mcp_result->result ? mcp_result->result : "MCP tool error");
                         cJSON_AddStringToObject(result, "error", mcp_result->result ? mcp_result->result : "MCP tool error");
                     } else {
                         LOG_DEBUG("execute_tool: MCP tool returned success");
                         cJSON_AddStringToObject(result, "content", mcp_result->result ? mcp_result->result : "");
                     }
-                    
+
                     mcp_free_tool_result(mcp_result);
                 } else {
-                    LOG_ERROR("execute_tool: MCP tool call failed for tool '%s' on server '%s'", 
+                    LOG_ERROR("execute_tool: MCP tool call failed for tool '%s' on server '%s'",
                               actual_tool_name, server->name);
                     result = cJSON_CreateObject();
                     cJSON_AddStringToObject(result, "error", "MCP tool call failed");
@@ -2488,7 +2488,7 @@ static cJSON* execute_tool(const char *tool_name, cJSON *input, ConversationStat
                        (end.tv_nsec - start.tv_nsec) / 1000000;
 
     char *result_str = cJSON_PrintUnformatted(result);
-    LOG_DEBUG("execute_tool: Tool '%s' executed in %ld ms, result: %s", 
+    LOG_DEBUG("execute_tool: Tool '%s' executed in %ld ms, result: %s",
               tool_name, duration_ms, result_str ? result_str : "null");
     if (result_str) free(result_str);
 
@@ -2535,7 +2535,7 @@ cJSON* get_tool_definitions(ConversationState *state, int enable_caching) {
     cJSON_AddStringToObject(bash, "type", "function");
     cJSON *bash_func = cJSON_CreateObject();
     cJSON_AddStringToObject(bash_func, "name", "Bash");
-    cJSON_AddStringToObject(bash_func, "description", 
+    cJSON_AddStringToObject(bash_func, "description",
         "Executes bash commands. Note: stderr is automatically redirected to stdout "
         "to prevent terminal corruption, so both stdout and stderr output will be "
         "captured in the 'output' field. Commands have a configurable timeout "
@@ -2550,7 +2550,7 @@ cJSON* get_tool_definitions(ConversationState *state, int enable_caching) {
     cJSON_AddItemToObject(bash_props, "command", bash_cmd);
     cJSON *bash_timeout = cJSON_CreateObject();
     cJSON_AddStringToObject(bash_timeout, "type", "integer");
-    cJSON_AddStringToObject(bash_timeout, "description", 
+    cJSON_AddStringToObject(bash_timeout, "description",
         "Optional: Timeout in seconds. Default: 30 (from CLAUDE_C_BASH_TIMEOUT env var). "
         "Set to 0 for no timeout. Commands that timeout will return exit code -2.");
     cJSON_AddItemToObject(bash_props, "timeout", bash_timeout);
@@ -2689,7 +2689,7 @@ cJSON* get_tool_definitions(ConversationState *state, int enable_caching) {
     cJSON_AddStringToObject(grep_tool, "type", "function");
     cJSON *grep_func = cJSON_CreateObject();
     cJSON_AddStringToObject(grep_func, "name", "Grep");
-    cJSON_AddStringToObject(grep_func, "description", 
+    cJSON_AddStringToObject(grep_func, "description",
         "Searches for patterns in files. Results limited to 100 matches by default "
         "(configurable via CLAUDE_C_GREP_MAX_RESULTS). Automatically excludes common "
         "build directories, dependencies, and binary files (.git, node_modules, build/, "
@@ -2787,7 +2787,7 @@ cJSON* get_tool_definitions(ConversationState *state, int enable_caching) {
     // Add MCP tools if MCP is enabled and configured
     if (state && state->mcp_config && mcp_is_enabled()) {
         LOG_DEBUG("get_tool_definitions: Adding MCP tools to tool definitions");
-        
+
         // 1) Dynamic MCP tools discovered from servers
         cJSON *mcp_tools = mcp_get_all_tools(state->mcp_config);
         if (mcp_tools && cJSON_IsArray(mcp_tools)) {
@@ -2810,7 +2810,7 @@ cJSON* get_tool_definitions(ConversationState *state, int enable_caching) {
 
         // 2) Built-in helper tools for MCP resources and generic invocation
         LOG_DEBUG("get_tool_definitions: Adding built-in MCP resource tools");
-        
+
         // ListMcpResources tool
         cJSON *list_res_tool = cJSON_CreateObject();
         cJSON_AddStringToObject(list_res_tool, "type", "function");
@@ -3211,7 +3211,7 @@ static ApiResponse* call_api_with_retries(ConversationState *state) {
             print_error("Operation interrupted by user");
             return NULL;
         }
-        
+
         // Check if we've exceeded max retry duration
         struct timespec now;
         clock_gettime(CLOCK_MONOTONIC, &now);
@@ -3614,7 +3614,7 @@ char* build_system_prompt(ConversationState *state) {
     return prompt;
 }
 
-// ============================================================================ 
+// ============================================================================
 // Message Management
 // ============================================================================
 
@@ -4127,7 +4127,7 @@ static void process_response(ConversationState *state,
                 }
                 break;  // Stop launching new tools
             }
-            
+
             ToolCall *tool = &tool_calls_array[i];
             InternalContent *result_slot = &results[i];
             result_slot->type = INTERNAL_TOOL_RESPONSE;
@@ -4176,14 +4176,14 @@ static void process_response(ConversationState *state,
             int rc = pthread_create(&threads[started_threads], NULL, tool_thread_func, current);
             if (rc != 0) {
                 LOG_ERROR("Failed to create tool thread for %s (rc=%d)", tool->name, rc);
-                
+
                 // CRITICAL FIX: Cancel already-started threads on failure
                 // This prevents zombie threads if we fail mid-creation
                 for (int cancel_idx = 0; cancel_idx < started_threads; cancel_idx++) {
                     pthread_cancel(threads[cancel_idx]);
                 }
                 // Threads will be joined later in the cleanup path
-                
+
                 cJSON_Delete(input);
                 current->input = NULL;
 
@@ -4207,21 +4207,21 @@ static void process_response(ConversationState *state,
                 if (state->interrupt_requested) {
                     LOG_INFO("Tool execution interrupted by user request");
                     interrupted = 1;
-                    
+
                     // CRITICAL FIX: Actually cancel the threads, not just the tracker
                     // Setting tracker.cancelled alone doesn't stop running threads
                     pthread_mutex_lock(&tracker.mutex);
                     tracker.cancelled = 1;
                     pthread_cond_broadcast(&tracker.cond);
                     pthread_mutex_unlock(&tracker.mutex);
-                    
+
                     // Cancel all running threads - this triggers cleanup handlers
                     for (int t = 0; t < started_threads; t++) {
                         pthread_cancel(threads[t]);
                     }
                     break;
                 }
-                
+
                 int done = 0;
                 int cancelled = 0;
 
@@ -4338,7 +4338,7 @@ static void process_response(ConversationState *state,
                 tui_render_todo_list(tui, state->todo_list);
             } else {
                 // For queue or non-TUI, use plain text rendering
-                char *todo_text = queue ? todo_render_to_string_plain(state->todo_list) 
+                char *todo_text = queue ? todo_render_to_string_plain(state->todo_list)
                                         : todo_render_to_string(state->todo_list);
                 if (todo_text) {
                     ui_append_line(tui, queue, "[Assistant]", todo_text, COLOR_PAIR_ASSISTANT);
@@ -4449,15 +4449,15 @@ static int interrupt_callback(void *user_data) {
     if (!ctx || !ctx->state) {
         return 0;
     }
-    
+
     ConversationState *state = ctx->state;
     TUIMessageQueue *queue = ctx->tui_queue;
     AIInstructionQueue *instr_queue = ctx->instruction_queue;
-    
+
     // Check if there's work in progress
     int queue_depth = instr_queue ? ai_queue_depth(instr_queue) : 0;
     int work_in_progress = (queue_depth > 0) || state->interrupt_requested;
-    
+
     if (work_in_progress) {
         // There's an API call or tool execution in progress - interrupt it
         LOG_INFO("User requested interrupt (Ctrl+C pressed) - canceling ongoing operations");
@@ -4512,7 +4512,7 @@ static int submit_input_callback(const char *input, void *user_data) {
     ConversationState *state = ctx->state;
     AIWorkerContext *worker = ctx->worker;
     TUIMessageQueue *queue = ctx->tui_queue;
-    
+
     // Reset interrupt flag and exit confirmation when new input is submitted
     state->interrupt_requested = 0;
     ctx->exit_confirmation_pending = 0;
@@ -4531,18 +4531,18 @@ static int submit_input_callback(const char *input, void *user_data) {
 
         // Use the command system from commands.c
         int cmd_result = commands_execute(state, input_copy);
-        
+
         // Check if it's an exit command
         if (cmd_result == -2) {
             free(input_copy);
             return 1;  // Exit the program
         }
-        
+
         // For /clear, also clear the TUI
         if (strncmp(input_copy, "/clear", 6) == 0) {
             tui_clear_conversation(tui);
         }
-        
+
         // For /add-dir, rebuild system prompt
         if (strncmp(input_copy, "/add-dir ", 9) == 0 && cmd_result == 0) {
             char *new_system_prompt = build_system_prompt(state);
@@ -4559,7 +4559,7 @@ static int submit_input_callback(const char *input, void *user_data) {
                 ui_show_error(tui, queue, "Failed to rebuild system prompt");
             }
         }
-        
+
         // Check if command added new messages (e.g., /voice adds transcription)
         if (cmd_result == 0 && state->count > msg_count_before) {
             // Display any new user messages that were added
@@ -4578,7 +4578,7 @@ static int submit_input_callback(const char *input, void *user_data) {
                 }
             }
         }
-        
+
         free(input_copy);
         return 0;
     }
@@ -5022,10 +5022,10 @@ int main(int argc, char *argv[]) {
         const char *mcp_config_path = getenv("CLAUDE_MCP_CONFIG");
         LOG_DEBUG("MCP: Using config path: %s", mcp_config_path ? mcp_config_path : "(default)");
         state.mcp_config = mcp_load_config(mcp_config_path);
-        
+
         if (state.mcp_config) {
             LOG_INFO("MCP: Loaded %d server(s) from config", state.mcp_config->server_count);
-            
+
             // Connect to all configured servers
             for (int i = 0; i < state.mcp_config->server_count; i++) {
                 MCPServer *server = state.mcp_config->servers[i];
@@ -5051,7 +5051,7 @@ int main(int argc, char *argv[]) {
                     LOG_WARN("MCP: Failed to connect to server '%s'", server->name);
                 }
             }
-            
+
             // Log status
             char *status = mcp_get_status(state.mcp_config);
             if (status) {

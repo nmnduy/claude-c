@@ -17,7 +17,7 @@
 
 /**
  * Extract token usage statistics from API response JSON
- * 
+ *
  * Parameters:
  *   response_json: Raw JSON response string
  *   prompt_tokens: Output parameter for prompt tokens count
@@ -26,7 +26,7 @@
  *   cached_tokens: Output parameter for cached tokens count
  *   prompt_cache_hit_tokens: Output parameter for prompt cache hit tokens
  *   prompt_cache_miss_tokens: Output parameter for prompt cache miss tokens
- * 
+ *
  * Returns:
  *   0 on success, -1 if no token usage data found
  */
@@ -111,7 +111,7 @@ static int extract_token_usage(
     }
 
     cJSON_Delete(json);
-    
+
     // Return success even if some fields were missing - we got what we could
     LOG_DEBUG("extract_token_usage: completed successfully (prompt=%d, completion=%d, total=%d)",
              *prompt_tokens, *completion_tokens, *total_tokens);
@@ -135,7 +135,7 @@ static const char *SCHEMA_SQL =
     "    tool_count INTEGER DEFAULT 0,"
     "    created_at INTEGER NOT NULL"
     ");"
-    
+
     "CREATE TABLE IF NOT EXISTS token_usage ("
     "    id INTEGER PRIMARY KEY AUTOINCREMENT,"
     "    api_call_id INTEGER NOT NULL,"
@@ -415,7 +415,7 @@ int persistence_log_api_call(
     // This is non-critical functionality - log everything but don't fail on errors
     if (strcmp(status, "success") == 0 && response_json) {
         LOG_DEBUG("Attempting to extract token usage from successful API response");
-        
+
         int prompt_tokens = 0;
         int completion_tokens = 0;
         int total_tokens = 0;
@@ -424,22 +424,22 @@ int persistence_log_api_call(
         int prompt_cache_miss_tokens = 0;
 
         // Extract token usage from response JSON
-        int extract_result = extract_token_usage(response_json, 
-                                               &prompt_tokens, 
-                                               &completion_tokens, 
+        int extract_result = extract_token_usage(response_json,
+                                               &prompt_tokens,
+                                               &completion_tokens,
                                                &total_tokens,
                                                &cached_tokens,
                                                &prompt_cache_hit_tokens,
                                                &prompt_cache_miss_tokens);
-        
+
         if (extract_result == 0) {
             LOG_DEBUG("Token usage extracted: prompt=%d, completion=%d, total=%d, cached=%d, cache_hit=%d, cache_miss=%d",
-                     prompt_tokens, completion_tokens, total_tokens, cached_tokens, 
+                     prompt_tokens, completion_tokens, total_tokens, cached_tokens,
                      prompt_cache_hit_tokens, prompt_cache_miss_tokens);
-            
+
             // Get the last inserted API call ID
             sqlite3_int64 api_call_id = sqlite3_last_insert_rowid(db->db);
-            
+
             // Prepare token usage insert statement
             const char *token_sql =
                 "INSERT INTO token_usage "
@@ -477,7 +477,7 @@ int persistence_log_api_call(
             LOG_DEBUG("No token usage data found in API response or extraction failed");
         }
     } else {
-        LOG_DEBUG("Skipping token usage logging - status=%s, response_json=%s", 
+        LOG_DEBUG("Skipping token usage logging - status=%s, response_json=%s",
                  status, response_json ? "present" : "NULL");
     }
 

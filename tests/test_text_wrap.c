@@ -33,6 +33,6 @@ int main(void) {
     printf("\n");
     printf("All previous text wrapping tests are now obsolete.\n");
     printf("========================================\n");
-    
+
     return 0;
 }
