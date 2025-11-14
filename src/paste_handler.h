@@ -236,12 +236,12 @@ static char* paste_get_preview(const char *content, size_t len, size_t preview_l
     char *preview = malloc(actual_len + 4); // +4 for "..."
     if (!preview) return NULL;
 
-    strncpy(preview, content, actual_len);
-
     if (len > preview_len) {
-        strcpy(preview + actual_len, "...");
+        // Use snprintf for safe bounds-checked string formatting
+        snprintf(preview, actual_len + 4, "%.*s...", (int)actual_len, content);
     } else {
-        preview[actual_len] = '\0';
+        // Use snprintf for safe bounds-checked string copying
+        snprintf(preview, actual_len + 1, "%.*s", (int)actual_len, content);
     }
 
     return preview;
