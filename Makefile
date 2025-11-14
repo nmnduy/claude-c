@@ -802,7 +802,7 @@ clean:
 # Format: Remove trailing whitespaces from source files
 fmt-whitespace:
 	@echo "Removing trailing whitespaces from source files..."
-	@find src tests tools -type f \( -name "*.c" -o -name "*.h" \) -exec sed -i '' 's/[[:space:]]*$$//' {} +
+	@find src tests tools -type f \( -name "*.c" -o -name "*.h" \) -exec sed -i 's/[[:space:]]*$$//' {} +
 	@echo "✓ Trailing whitespaces removed"
 
 check-deps:
