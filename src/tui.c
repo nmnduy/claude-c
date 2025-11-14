@@ -1584,7 +1584,7 @@ void tui_show_startup_banner(TUIState *tui, const char *version, const char *mod
         /* "Use /add-dir to attach a directory as context.", */
         "Press Ctrl+D to exit quickly.",
         /* "Use /voice to record and transcribe audio (requires PortAudio).", */
-        "Set CLAUDE_C_THEME to a Kitty theme file to customize colors.",
+        "Set CLAUDE_C_THEME to change colors. Available: tender (default), kitty-default, dracula, gruvbox-dark, solarized-dark, black-metal.",
         "Set CLAUDE_LOG_LEVEL=DEBUG for verbose logs.",
         "API history stored in ./.claude-c/api_calls.db (configurable via CLAUDE_C_DB_PATH).",
         "Normal mode: gg jumps to top, G to bottom.",
