@@ -2138,7 +2138,10 @@ STATIC cJSON* tool_sleep(cJSON *params, ConversationState *state) {
 #ifndef TEST_BUILD
 // MCP ListMcpResources tool handler
 static cJSON* tool_list_mcp_resources(cJSON *params, ConversationState *state) {
+    LOG_DEBUG("tool_list_mcp_resources: Starting resource listing");
+    
     if (!state || !state->mcp_config) {
+        LOG_ERROR("tool_list_mcp_resources: MCP not configured");
         cJSON *error = cJSON_CreateObject();
         cJSON_AddStringToObject(error, "error", "MCP not configured");
         return error;
@@ -2149,11 +2152,16 @@ static cJSON* tool_list_mcp_resources(cJSON *params, ConversationState *state) {
     cJSON *server_json = cJSON_GetObjectItem(params, "server");
     if (server_json && cJSON_IsString(server_json)) {
         server_name = server_json->valuestring;
+        LOG_DEBUG("tool_list_mcp_resources: Filtering by server '%s'", server_name);
+    } else {
+        LOG_DEBUG("tool_list_mcp_resources: No server filter specified, listing all servers");
     }
 
     // Call mcp_list_resources
+    LOG_DEBUG("tool_list_mcp_resources: Calling mcp_list_resources");
     MCPResourceList *resource_list = mcp_list_resources(state->mcp_config, server_name);
     if (!resource_list) {
+        LOG_ERROR("tool_list_mcp_resources: Failed to list resources");
         cJSON *error = cJSON_CreateObject();
         cJSON_AddStringToObject(error, "error", "Failed to list resources");
         return error;
@@ -2163,17 +2171,25 @@ static cJSON* tool_list_mcp_resources(cJSON *params, ConversationState *state) {
     cJSON *result = cJSON_CreateObject();
 
     if (resource_list->is_error) {
+        LOG_ERROR("tool_list_mcp_resources: Resource listing error: %s", 
+                 resource_list->error_message ? resource_list->error_message : "Unknown error");
         cJSON_AddStringToObject(result, "error",
             resource_list->error_message ? resource_list->error_message : "Unknown error");
         mcp_free_resource_list(resource_list);
         return result;
     }
 
+    LOG_DEBUG("tool_list_mcp_resources: Found %d resources", resource_list->count);
+
     // Create resources array
     cJSON *resources = cJSON_CreateArray();
     for (int i = 0; i < resource_list->count; i++) {
         MCPResource *res = resource_list->resources[i];
         if (!res) continue;
+
+        LOG_DEBUG("tool_list_mcp_resources: Resource %d: server='%s', uri='%s', name='%s'", 
+                 i, res->server ? res->server : "null", res->uri ? res->uri : "null", 
+                 res->name ? res->name : "null");
 
         cJSON *res_obj = cJSON_CreateObject();
         if (res->server) cJSON_AddStringToObject(res_obj, "server", res->server);
@@ -2189,12 +2205,16 @@ static cJSON* tool_list_mcp_resources(cJSON *params, ConversationState *state) {
     cJSON_AddNumberToObject(result, "count", resource_list->count);
 
     mcp_free_resource_list(resource_list);
+    LOG_DEBUG("tool_list_mcp_resources: Completed successfully");
     return result;
 }
 
 // MCP ReadMcpResource tool handler
 static cJSON* tool_read_mcp_resource(cJSON *params, ConversationState *state) {
+    LOG_DEBUG("tool_read_mcp_resource: Starting resource reading");
+    
     if (!state || !state->mcp_config) {
+        LOG_ERROR("tool_read_mcp_resource: MCP not configured");
         cJSON *error = cJSON_CreateObject();
         cJSON_AddStringToObject(error, "error", "MCP not configured");
         return error;
@@ -2205,12 +2225,14 @@ static cJSON* tool_read_mcp_resource(cJSON *params, ConversationState *state) {
     cJSON *uri_json = cJSON_GetObjectItem(params, "uri");
 
     if (!server_json || !cJSON_IsString(server_json)) {
+        LOG_ERROR("tool_read_mcp_resource: Missing or invalid 'server' parameter");
         cJSON *error = cJSON_CreateObject();
         cJSON_AddStringToObject(error, "error", "Missing or invalid 'server' parameter");
         return error;
     }
 
     if (!uri_json || !cJSON_IsString(uri_json)) {
+        LOG_ERROR("tool_read_mcp_resource: Missing or invalid 'uri' parameter");
         cJSON *error = cJSON_CreateObject();
         cJSON_AddStringToObject(error, "error", "Missing or invalid 'uri' parameter");
         return error;
@@ -2218,10 +2240,14 @@ static cJSON* tool_read_mcp_resource(cJSON *params, ConversationState *state) {
 
     const char *server_name = server_json->valuestring;
     const char *uri = uri_json->valuestring;
+    
+    LOG_DEBUG("tool_read_mcp_resource: Reading resource from server '%s', uri='%s'", server_name, uri);
 
     // Call mcp_read_resource
+    LOG_DEBUG("tool_read_mcp_resource: Calling mcp_read_resource");
     MCPResourceContent *content = mcp_read_resource(state->mcp_config, server_name, uri);
     if (!content) {
+        LOG_ERROR("tool_read_mcp_resource: Failed to read resource");
         cJSON *error = cJSON_CreateObject();
         cJSON_AddStringToObject(error, "error", "Failed to read resource");
         return error;
@@ -2231,11 +2257,18 @@ static cJSON* tool_read_mcp_resource(cJSON *params, ConversationState *state) {
     cJSON *result = cJSON_CreateObject();
 
     if (content->is_error) {
+        LOG_ERROR("tool_read_mcp_resource: Resource reading error: %s", 
+                 content->error_message ? content->error_message : "Unknown error");
         cJSON_AddStringToObject(result, "error",
             content->error_message ? content->error_message : "Unknown error");
         mcp_free_resource_content(content);
         return result;
     }
+
+    LOG_DEBUG("tool_read_mcp_resource: Resource read successfully, uri='%s', mime_type='%s', text_length=%zu", 
+             content->uri ? content->uri : "null", 
+             content->mime_type ? content->mime_type : "null",
+             content->text ? strlen(content->text) : 0);
 
     if (content->uri) cJSON_AddStringToObject(result, "uri", content->uri);
     if (content->mime_type) cJSON_AddStringToObject(result, "mimeType", content->mime_type);
@@ -2244,12 +2277,16 @@ static cJSON* tool_read_mcp_resource(cJSON *params, ConversationState *state) {
     // Note: Binary blob not yet supported
 
     mcp_free_resource_content(content);
+    LOG_DEBUG("tool_read_mcp_resource: Completed successfully");
     return result;
 }
 
 // MCP CallMcpTool tool handler
 static cJSON* tool_call_mcp_tool(cJSON *params, ConversationState *state) {
+    LOG_DEBUG("tool_call_mcp_tool: Starting MCP tool call");
+    
     if (!state || !state->mcp_config) {
+        LOG_ERROR("tool_call_mcp_tool: MCP not configured");
         cJSON *error = cJSON_CreateObject();
         cJSON_AddStringToObject(error, "error", "MCP not configured");
         return error;
@@ -2261,12 +2298,14 @@ static cJSON* tool_call_mcp_tool(cJSON *params, ConversationState *state) {
     cJSON *args_json = cJSON_GetObjectItem(params, "arguments");
 
     if (!server_json || !cJSON_IsString(server_json)) {
+        LOG_ERROR("tool_call_mcp_tool: Missing or invalid 'server' parameter");
         cJSON *error = cJSON_CreateObject();
         cJSON_AddStringToObject(error, "error", "Missing or invalid 'server' parameter");
         return error;
     }
 
     if (!tool_json || !cJSON_IsString(tool_json)) {
+        LOG_ERROR("tool_call_mcp_tool: Missing or invalid 'tool' parameter");
         cJSON *error = cJSON_CreateObject();
         cJSON_AddStringToObject(error, "error", "Missing or invalid 'tool' parameter");
         return error;
@@ -2274,6 +2313,8 @@ static cJSON* tool_call_mcp_tool(cJSON *params, ConversationState *state) {
 
     const char *server_name = server_json->valuestring;
     const char *tool_name = tool_json->valuestring;
+    
+    LOG_DEBUG("tool_call_mcp_tool: Looking for server '%s' to call tool '%s'", server_name, tool_name);
 
     // Find server by name
     MCPServer *target = NULL;
@@ -2281,17 +2322,20 @@ static cJSON* tool_call_mcp_tool(cJSON *params, ConversationState *state) {
         MCPServer *srv = state->mcp_config->servers[i];
         if (srv && srv->name && strcmp(srv->name, server_name) == 0) {
             target = srv;
+            LOG_DEBUG("tool_call_mcp_tool: Found server '%s' at index %d", server_name, i);
             break;
         }
     }
 
     if (!target) {
+        LOG_ERROR("tool_call_mcp_tool: MCP server '%s' not found", server_name);
         cJSON *error = cJSON_CreateObject();
         cJSON_AddStringToObject(error, "error", "MCP server not found");
         return error;
     }
 
     if (!target->connected) {
+        LOG_ERROR("tool_call_mcp_tool: MCP server '%s' not connected", server_name);
         cJSON *error = cJSON_CreateObject();
         cJSON_AddStringToObject(error, "error", "MCP server not connected");
         return error;
@@ -2301,22 +2345,37 @@ static cJSON* tool_call_mcp_tool(cJSON *params, ConversationState *state) {
     cJSON *args_object = NULL;
     if (args_json && cJSON_IsObject(args_json)) {
         args_object = args_json;
+        char *args_str = cJSON_PrintUnformatted(args_json);
+        LOG_DEBUG("tool_call_mcp_tool: Calling tool '%s' on server '%s' with args: %s", 
+                 tool_name, server_name, args_str ? args_str : "null");
+        if (args_str) free(args_str);
+    } else {
+        LOG_DEBUG("tool_call_mcp_tool: Calling tool '%s' on server '%s' with no arguments", 
+                 tool_name, server_name);
     }
 
+    LOG_DEBUG("tool_call_mcp_tool: Calling mcp_call_tool");
     MCPToolResult *call_result = mcp_call_tool(target, tool_name, args_object);
     cJSON *result = cJSON_CreateObject();
     if (!call_result) {
+        LOG_ERROR("tool_call_mcp_tool: MCP tool call failed for tool '%s' on server '%s'", 
+                 tool_name, server_name);
         cJSON_AddStringToObject(result, "error", "MCP tool call failed");
         return result;
     }
 
     if (call_result->is_error) {
+        LOG_ERROR("tool_call_mcp_tool: MCP tool returned error: %s", 
+                 call_result->result ? call_result->result : "MCP tool error");
         cJSON_AddStringToObject(result, "error", call_result->result ? call_result->result : "MCP tool error");
     } else {
+        LOG_DEBUG("tool_call_mcp_tool: MCP tool call succeeded, result length: %zu", 
+                 call_result->result ? strlen(call_result->result) : 0);
         cJSON_AddStringToObject(result, "content", call_result->result ? call_result->result : "");
     }
 
     mcp_free_tool_result(call_result);
+    LOG_DEBUG("tool_call_mcp_tool: Completed successfully");
     return result;
 }
 #endif
@@ -2355,9 +2414,16 @@ static cJSON* execute_tool(const char *tool_name, cJSON *input, ConversationStat
 
     cJSON *result = NULL;
     
+    // Log tool execution attempt
+    char *input_str = cJSON_PrintUnformatted(input);
+    LOG_DEBUG("execute_tool: Attempting to execute tool '%s' with input: %s", 
+              tool_name, input_str ? input_str : "null");
+    if (input_str) free(input_str);
+    
     // Try built-in tools first
     for (int i = 0; i < num_tools; i++) {
         if (strcmp(tools[i].name, tool_name) == 0) {
+            LOG_DEBUG("execute_tool: Found built-in tool '%s' at index %d", tool_name, i);
             result = tools[i].handler(input, state);
             break;
         }
@@ -2366,43 +2432,65 @@ static cJSON* execute_tool(const char *tool_name, cJSON *input, ConversationStat
 #ifndef TEST_BUILD
     // If not found in built-in tools, try MCP tools
     if (!result && state && state->mcp_config && strncmp(tool_name, "mcp_", 4) == 0) {
+        LOG_DEBUG("execute_tool: Tool '%s' matches MCP pattern, attempting MCP lookup", tool_name);
         MCPServer *server = mcp_find_tool_server(state->mcp_config, tool_name);
         if (server) {
+            LOG_DEBUG("execute_tool: Found MCP server '%s' for tool '%s'", server->name, tool_name);
             // Extract the actual tool name (remove mcp_<server>_ prefix)
             const char *actual_tool_name = strchr(tool_name + 4, '_');
             if (actual_tool_name) {
                 actual_tool_name++;  // Skip the underscore
                 
-                LOG_INFO("Calling MCP tool '%s' on server '%s'", actual_tool_name, server->name);
+                LOG_INFO("Calling MCP tool '%s' on server '%s' (original tool name: '%s')", 
+                         actual_tool_name, server->name, tool_name);
                 
                 MCPToolResult *mcp_result = mcp_call_tool(server, actual_tool_name, input);
                 if (mcp_result) {
+                    LOG_DEBUG("execute_tool: MCP tool call succeeded, is_error=%d", mcp_result->is_error);
                     result = cJSON_CreateObject();
                     
                     if (mcp_result->is_error) {
+                        LOG_WARN("execute_tool: MCP tool returned error: %s", 
+                                mcp_result->result ? mcp_result->result : "MCP tool error");
                         cJSON_AddStringToObject(result, "error", mcp_result->result ? mcp_result->result : "MCP tool error");
                     } else {
+                        LOG_DEBUG("execute_tool: MCP tool returned success");
                         cJSON_AddStringToObject(result, "content", mcp_result->result ? mcp_result->result : "");
                     }
                     
                     mcp_free_tool_result(mcp_result);
                 } else {
+                    LOG_ERROR("execute_tool: MCP tool call failed for tool '%s' on server '%s'", 
+                              actual_tool_name, server->name);
                     result = cJSON_CreateObject();
                     cJSON_AddStringToObject(result, "error", "MCP tool call failed");
                 }
+            } else {
+                LOG_ERROR("execute_tool: Failed to extract actual tool name from '%s'", tool_name);
             }
+        } else {
+            LOG_WARN("execute_tool: No MCP server found for tool '%s'", tool_name);
         }
+    } else if (!result && state && state->mcp_config) {
+        LOG_DEBUG("execute_tool: Tool '%s' not found in built-in tools and doesn't match MCP pattern", tool_name);
     }
 #endif
 
     if (!result) {
+        LOG_WARN("execute_tool: No result generated for tool '%s'", tool_name);
         result = cJSON_CreateObject();
         cJSON_AddStringToObject(result, "error", "Unknown tool");
     }
 
+    // Log execution time and result
     clock_gettime(CLOCK_MONOTONIC, &end);
     long duration_ms = (end.tv_sec - start.tv_sec) * 1000 +
                        (end.tv_nsec - start.tv_nsec) / 1000000;
+
+    char *result_str = cJSON_PrintUnformatted(result);
+    LOG_DEBUG("execute_tool: Tool '%s' executed in %ld ms, result: %s", 
+              tool_name, duration_ms, result_str ? result_str : "null");
+    if (result_str) free(result_str);
 
     LOG_INFO("Tool '%s' executed in %ld ms", tool_name, duration_ms);
 
@@ -2698,18 +2786,31 @@ cJSON* get_tool_definitions(ConversationState *state, int enable_caching) {
 #ifndef TEST_BUILD
     // Add MCP tools if MCP is enabled and configured
     if (state && state->mcp_config && mcp_is_enabled()) {
+        LOG_DEBUG("get_tool_definitions: Adding MCP tools to tool definitions");
+        
         // 1) Dynamic MCP tools discovered from servers
         cJSON *mcp_tools = mcp_get_all_tools(state->mcp_config);
         if (mcp_tools && cJSON_IsArray(mcp_tools)) {
+            int mcp_tool_count = cJSON_GetArraySize(mcp_tools);
+            LOG_DEBUG("get_tool_definitions: Found %d dynamic MCP tools", mcp_tool_count);
             cJSON *t = NULL;
+            int idx = 0;
             cJSON_ArrayForEach(t, mcp_tools) {
                 // Each t is already a full Claude tool definition object
+                cJSON *name_obj = cJSON_GetObjectItem(t, "name");
+                const char *tool_name = name_obj && cJSON_IsString(name_obj) ? name_obj->valuestring : "unknown";
+                LOG_DEBUG("get_tool_definitions: Adding dynamic MCP tool %d: '%s'", idx, tool_name);
                 cJSON_AddItemToArray(tool_array, cJSON_Duplicate(t, 1));
+                idx++;
             }
             cJSON_Delete(mcp_tools);
+        } else {
+            LOG_DEBUG("get_tool_definitions: No dynamic MCP tools found");
         }
 
         // 2) Built-in helper tools for MCP resources and generic invocation
+        LOG_DEBUG("get_tool_definitions: Adding built-in MCP resource tools");
+        
         // ListMcpResources tool
         cJSON *list_res_tool = cJSON_CreateObject();
         cJSON_AddStringToObject(list_res_tool, "type", "function");
@@ -4917,7 +5018,9 @@ int main(int argc, char *argv[]) {
 
     // Load MCP configuration if enabled
     if (mcp_is_enabled()) {
+        LOG_DEBUG("MCP: MCP is enabled, loading configuration");
         const char *mcp_config_path = getenv("CLAUDE_MCP_CONFIG");
+        LOG_DEBUG("MCP: Using config path: %s", mcp_config_path ? mcp_config_path : "(default)");
         state.mcp_config = mcp_load_config(mcp_config_path);
         
         if (state.mcp_config) {
@@ -4926,11 +5029,23 @@ int main(int argc, char *argv[]) {
             // Connect to all configured servers
             for (int i = 0; i < state.mcp_config->server_count; i++) {
                 MCPServer *server = state.mcp_config->servers[i];
+                LOG_DEBUG("MCP: Attempting to connect to server '%s'", server->name);
                 if (mcp_connect_server(server) == 0) {
+                    LOG_DEBUG("MCP: Connected to server '%s', discovering tools", server->name);
                     // Discover tools from connected server
                     int tool_count = mcp_discover_tools(server);
                     if (tool_count > 0) {
                         LOG_INFO("MCP: Server '%s' provides %d tool(s)", server->name, tool_count);
+                        // Log individual tool names
+                        for (int j = 0; j < tool_count; j++) {
+                            if (server->tools[j]) {
+                                LOG_DEBUG("MCP: Server '%s' tool %d: '%s'", server->name, j, server->tools[j]);
+                            }
+                        }
+                    } else if (tool_count == 0) {
+                        LOG_DEBUG("MCP: Server '%s' provides no tools", server->name);
+                    } else {
+                        LOG_WARN("MCP: Failed to discover tools from server '%s'", server->name);
                     }
                 } else {
                     LOG_WARN("MCP: Failed to connect to server '%s'", server->name);
@@ -4940,7 +5055,7 @@ int main(int argc, char *argv[]) {
             // Log status
             char *status = mcp_get_status(state.mcp_config);
             if (status) {
-                LOG_INFO("%s", status);
+                LOG_INFO("MCP Status: %s", status);
                 free(status);
             }
         } else {
