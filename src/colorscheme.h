@@ -5,9 +5,6 @@
 #pragma GCC diagnostic ignored "-Wcast-qual"
 #pragma GCC diagnostic ignored "-Wunused-but-set-variable"
 #pragma GCC diagnostic ignored "-Wstrict-prototypes"
-#ifdef __clang__
-#pragma GCC diagnostic ignored "-Wdeprecated-non-prototype"
-#endif
 #pragma GCC diagnostic ignored "-Wimplicit-int"
 
 #ifndef _GNU_SOURCE
@@ -195,7 +192,7 @@ static int load_kitty_theme_buf(const char *buf_data, Theme *theme) {
     char line[1024];
     int line_num = 0; (void)line_num;
     int parsed_count = 0;
-    int found_foreground = 0, found_color1 = 0, found_color2 = 0, found_color3 = 0, found_color12 = 0, found_color6 = 0;
+    int found_foreground = 0;
     while (fgets(line, sizeof(line), f)) {
         line_num++;
         size_t len = strlen(line);
@@ -211,19 +208,19 @@ static int load_kitty_theme_buf(const char *buf_data, Theme *theme) {
                 theme->assistant_rgb = rgb;
                 parsed_count++; found_foreground = 1;
             } else if (strcmp(key, "color2") == 0) {
-                theme->user_rgb = rgb; parsed_count++; found_color2 = 1;
+                theme->user_rgb = rgb; parsed_count++;
             } else if (strcmp(key, "color3") == 0) {
-                theme->status_rgb = rgb; parsed_count++; found_color3 = 1;
+                theme->status_rgb = rgb; parsed_count++;
             } else if (strcmp(key, "color12") == 0) {
                 // Use bright blue (color12) for tools across most themes
-                theme->tool_rgb = rgb; parsed_count++; found_color12 = 1;
+                theme->tool_rgb = rgb; parsed_count++;
             } else if (strcmp(key, "color1") == 0) {
-                theme->error_rgb = rgb; parsed_count++; found_color1 = 1;
+                theme->error_rgb = rgb; parsed_count++;
             } else if (strcmp(key, "color6") == 0) {
                 theme->header_rgb = rgb;
                 if (found_foreground) theme->assistant_rgb = rgb;
-                parsed_count++; found_color6 = 1;
-            } else if (strcmp(key, "color4") == 0 && !found_color6) {
+                parsed_count++;
+            } else if (strcmp(key, "color4") == 0) {
                 theme->header_rgb = rgb; parsed_count++;
             }
         }
