@@ -683,7 +683,7 @@ int add_directory(ConversationState *state, const char *path) {
 
     // Add directory to list
     state->additional_dirs[state->additional_dirs_count++] = resolved_path;
-    resolved_path = NULL;  // Ownership transferred to the array
+    resolved_path = NULL;
     result = 0;
 
 out:
@@ -3607,7 +3607,7 @@ char* build_system_prompt(ConversationState *state) {
     free(git_status);
     free(claude_md);
 
-    (void)offset; // Suppress unused variable warning
+    (void)offset; // Suppress unused variable warning after final snprintf
 
     return prompt;
 }
@@ -4229,6 +4229,8 @@ static void process_response(ConversationState *state,
 
                 pthread_mutex_lock(&tracker.mutex);
                 if (tracker.cancelled || tracker.completed >= tracker.total) {
+                    done = tracker.completed >= tracker.total;
+                    cancelled = tracker.cancelled;
                     pthread_mutex_unlock(&tracker.mutex);
                     break;
                 }
@@ -4319,6 +4321,10 @@ static void process_response(ConversationState *state,
         free(threads);
         free(args);
 
+        // Record tool results even in the interrupt path so that every tool_call
+        // has a corresponding tool_result. This prevents 400s due to missing results.
+        add_tool_results(state, results, tool_count);
+
         // Check if TodoWrite was executed and display the updated TODO list
         int todo_write_executed = 0;
         for (int i = 0; i < tool_count; i++) {
@@ -4327,10 +4333,6 @@ static void process_response(ConversationState *state,
                 break;
             }
         }
-
-        // Record tool results even in the interrupt path so that every tool_call
-        // has a corresponding tool_result. This prevents 400s due to missing results.
-        add_tool_results(state, results, tool_count);
 
         if (todo_write_executed && state->todo_list && state->todo_list->count > 0) {
             // For TUI without queue, use colored rendering
