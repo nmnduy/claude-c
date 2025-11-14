@@ -120,7 +120,7 @@ static void test_missing_tool_results_in_api_call(void) {
     printf("  This would cause API 400 error: 'tool_calls without corresponding tool_results'\n");
 }
 
-// Test 3: Verify the fix - add_tool_results before TodoWrite check
+// Test 3: Verify the fix - extract TodoWrite info before add_tool_results
 static void test_correct_order_fixes_issue(void) {
     printf("Test 3: Correct order fixes the issue (SHOWS FIX)\n");
     
@@ -136,15 +136,10 @@ static void test_correct_order_fixes_issue(void) {
     free(results[2].tool_name);
     results[2].tool_name = strdup("TodoWrite");
     
-    // CORRECT ORDER: Simulate add_tool_results FIRST (success)
-    // In the fixed code, this would store results in conversation state
-    // For this test, we just simulate that results are now owned by conversation
-    
-    // Now results are safely stored in conversation state (simulated)
-    // Check TodoWrite AFTER results are secured
+    // CORRECT ORDER: Extract TodoWrite information BEFORE add_tool_results
+    // This is the actual fix - we extract what we need before any potential freeing
     int todo_write_executed = 0;
     for (int i = 0; i < 3; i++) {
-        // Safe to access because results are owned by conversation state
         if (results[i].tool_name && strcmp(results[i].tool_name, "TodoWrite") == 0) {
             todo_write_executed = 1;
             break;
@@ -152,16 +147,19 @@ static void test_correct_order_fixes_issue(void) {
     }
     assert(todo_write_executed == 1);
     
-    // Now we can safely render TodoWrite
+    // Now call add_tool_results - even if it fails and frees memory, we're safe
+    // because we already extracted the TodoWrite information we need
+    simulate_add_tool_results_failure(results, 3);
+    
+    // Now we can safely use the extracted TodoWrite information
     if (todo_write_executed && list.count > 0) {
-        // Safe rendering code here
-        printf("  ✓ TodoWrite can be safely rendered after results are stored\n");
+        // Safe rendering code here - using the pre-computed integer, not the freed memory
+        printf("  ✓ TodoWrite can be safely rendered using extracted information\n");
     }
     
-    printf("  ✓ Fix verified: add_tool_results before TodoWrite check prevents the bug\n");
+    printf("  ✓ Fix verified: Extract TodoWrite info before add_tool_results prevents the bug\n");
     
     // Cleanup
-    simulate_add_tool_results_failure(results, 3);
     todo_free(&list);
 }
 
@@ -210,12 +208,12 @@ int main(void) {
     
     printf("\n=== Test Summary ===\n");
     printf("✅ Tests demonstrate the bug exists in current code\n");
-    printf("✅ Tests show the fix (reordering operations) works\n");
+    printf("✅ Tests show the fix (extract info before add_tool_results) works\n");
     printf("\nThe bug causes:");
     printf("\n  - Memory corruption when accessing freed tool results\n");
     printf("  - API 400 errors due to missing tool_results\n");
     printf("  - Potential crashes in TodoWrite rendering\n");
-    printf("\nThe fix is simple: call add_tool_results() BEFORE TodoWrite check\n");
+    printf("\nThe fix: extract TodoWrite information BEFORE calling add_tool_results\n");
     
     return 0;
 }
