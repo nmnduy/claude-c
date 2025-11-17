@@ -180,7 +180,7 @@ typedef void (*KeypressCallback)(void *user_data);
 // user_data: Opaque pointer passed to callbacks
 // msg_queue: Optional TUI message queue to process (can be NULL)
 // Returns: 0 on normal exit, -1 on error
-int tui_event_loop(TUIState *tui, const char *prompt, 
+int tui_event_loop(TUIState *tui, const char *prompt,
                    InputSubmitCallback submit_callback,
                    InterruptCallback interrupt_callback,
                    KeypressCallback keypress_callback,

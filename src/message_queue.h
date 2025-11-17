@@ -47,16 +47,16 @@ typedef struct {
     size_t head;            /* Next write position */
     size_t tail;            /* Next read position */
     size_t count;           /* Current number of messages */
-    
+
     pthread_mutex_t mutex;
     pthread_cond_t not_empty; /* Signals when messages available */
-    
+
     bool shutdown;          /* Set to true to wake up blocked readers */
 } TUIMessageQueue;
 
 /**
  * Initialize TUI message queue
- * 
+ *
  * @param queue Queue to initialize
  * @param capacity Maximum number of messages before overflow
  * @return 0 on success, -1 on error
@@ -66,7 +66,7 @@ int tui_msg_queue_init(TUIMessageQueue *queue, size_t capacity);
 /**
  * Post a message to the TUI queue
  * Non-blocking. If queue is full, drops oldest message.
- * 
+ *
  * @param queue Queue to post to
  * @param type Message type
  * @param text Message text (will be copied, caller retains ownership)
@@ -76,7 +76,7 @@ int post_tui_message(TUIMessageQueue *queue, TUIMessageType type, const char *te
 
 /**
  * Poll for a message from the TUI queue (non-blocking)
- * 
+ *
  * @param queue Queue to poll
  * @param msg Output parameter for message (caller must free msg->text)
  * @return 1 if message retrieved, 0 if empty, -1 on error
@@ -85,7 +85,7 @@ int poll_tui_message(TUIMessageQueue *queue, TUIMessage *msg);
 
 /**
  * Wait for a message from the TUI queue (blocking)
- * 
+ *
  * @param queue Queue to wait on
  * @param msg Output parameter for message (caller must free msg->text)
  * @return 1 if message retrieved, 0 if shutdown, -1 on error
@@ -94,7 +94,7 @@ int wait_tui_message(TUIMessageQueue *queue, TUIMessage *msg);
 
 /**
  * Shutdown TUI message queue and wake blocked readers
- * 
+ *
  * @param queue Queue to shutdown
  */
 void tui_msg_queue_shutdown(TUIMessageQueue *queue);
@@ -102,7 +102,7 @@ void tui_msg_queue_shutdown(TUIMessageQueue *queue);
 /**
  * Free TUI message queue resources
  * Must be called after all threads have stopped using it
- * 
+ *
  * @param queue Queue to free
  */
 void tui_msg_queue_free(TUIMessageQueue *queue);
@@ -132,17 +132,17 @@ typedef struct {
     size_t head;            /* Next write position */
     size_t tail;            /* Next read position */
     size_t count;           /* Current number of instructions */
-    
+
     pthread_mutex_t mutex;
     pthread_cond_t not_empty; /* Signals when instructions available */
     pthread_cond_t not_full;  /* Signals when space available */
-    
+
     bool shutdown;          /* Set to true to stop worker */
 } AIInstructionQueue;
 
 /**
  * Initialize AI instruction queue
- * 
+ *
  * @param queue Queue to initialize
  * @param capacity Maximum number of queued instructions
  * @return 0 on success, -1 on error
@@ -152,7 +152,7 @@ int ai_queue_init(AIInstructionQueue *queue, size_t capacity);
 /**
  * Enqueue an instruction for the AI worker
  * Blocks if queue is full.
- * 
+ *
  * @param queue Queue to enqueue to
  * @param text Instruction text (will be copied, caller retains ownership)
  * @param conversation_state Pointer to ConversationState (borrowed reference)
@@ -163,7 +163,7 @@ int enqueue_instruction(AIInstructionQueue *queue, const char *text, void *conve
 /**
  * Dequeue an instruction for processing
  * Blocks until instruction available or shutdown.
- * 
+ *
  * @param queue Queue to dequeue from
  * @param instr Output parameter for instruction (caller must free instr->text)
  * @return 1 if instruction retrieved, 0 if shutdown, -1 on error
@@ -172,7 +172,7 @@ int dequeue_instruction(AIInstructionQueue *queue, AIInstruction *instr);
 
 /**
  * Shutdown AI instruction queue and wake blocked threads
- * 
+ *
  * @param queue Queue to shutdown
  */
 void ai_queue_shutdown(AIInstructionQueue *queue);
@@ -180,7 +180,7 @@ void ai_queue_shutdown(AIInstructionQueue *queue);
 /**
  * Free AI instruction queue resources
  * Must be called after all threads have stopped using it
- * 
+ *
  * @param queue Queue to free
  */
 void ai_queue_free(AIInstructionQueue *queue);
@@ -188,7 +188,7 @@ void ai_queue_free(AIInstructionQueue *queue);
 /**
  * Get current queue depth (number of pending instructions)
  * Useful for UI status display
- * 
+ *
  * @param queue Queue to query
  * @return Number of pending instructions, or -1 on error
  */

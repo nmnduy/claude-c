@@ -271,12 +271,12 @@ static ApiCallResult bedrock_execute_request(BedrockConfig *config, const char *
         cJSON *message = cJSON_GetObjectItem(error_json, "message");
         if (message && cJSON_IsString(message)) {
             const char *msg_text = message->valuestring;
-            
+
             // Check for context length overflow errors (after OpenAI conversion)
             if ((strstr(msg_text, "maximum context length") != NULL) ||
                 (strstr(msg_text, "context length") != NULL && strstr(msg_text, "tokens") != NULL) ||
                 (strstr(msg_text, "too many tokens") != NULL)) {
-                
+
                 // Provide user-friendly context length error message
                 result.error_message = strdup(
                     "Context length exceeded. The conversation has grown too large for the model's memory. "

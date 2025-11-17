@@ -144,7 +144,7 @@ char** history_file_load_recent(HistoryFile *hf, int limit, int *out_count) {
             // At end of buffer (i == nread): only process if there's content after the last \n
             // This prevents processing a phantom empty line when file ends with \n
             int should_process = (i < nread) || (len > 0);
-            
+
             if (should_process && line_idx >= start_line) {
                 // Trim carriage return
                 if (len > 0 && line_start[len - 1] == '\r') len--;

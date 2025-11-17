@@ -43,7 +43,7 @@ typedef enum {
 typedef struct MCPServer {
     char *name;                  // Server identifier (e.g., "filesystem")
     MCPTransportType transport;  // Transport type
-    
+
     // For stdio transport
     char *command;               // Command to execute (e.g., "npx")
     char **args;                 // Command arguments
@@ -53,15 +53,15 @@ typedef struct MCPServer {
     pid_t pid;                   // Process ID (if running)
     int stdin_fd;                // Write to server's stdin
     int stdout_fd;               // Read from server's stdout
-    
+
     // For SSE transport
     char *url;                   // Server URL
-    
+
     // Server capabilities
     char **tools;                // List of tool names
     int tool_count;              // Number of tools
     cJSON *tool_schemas;         // Tool JSON schemas from server
-    
+
     // State
     int connected;               // Connection status
     int message_id;              // Message ID counter for JSON-RPC
@@ -135,7 +135,7 @@ void mcp_cleanup(void);
 /*
  * Load MCP server configuration from JSON file
  * Config file format follows Claude Desktop's mcp_servers.json format
- * 
+ *
  * Default location: ~/.config/claude-c/mcp_servers.json
  * Can be overridden with CLAUDE_MCP_CONFIG env var
  *
@@ -168,7 +168,7 @@ int mcp_discover_tools(MCPServer *server);
 
 /*
  * Call an MCP tool
- * 
+ *
  * Parameters:
  *   server: Connected MCP server
  *   tool_name: Name of the tool to call

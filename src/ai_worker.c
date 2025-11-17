@@ -82,26 +82,26 @@ void ai_worker_stop(AIWorkerContext *ctx) {
     }
 
     ctx->running = 0;
-    
+
     // Set interrupt flag to signal any ongoing API calls
     if (ctx->state) {
         ctx->state->interrupt_requested = 1;
     }
-    
+
     ai_queue_shutdown(ctx->instruction_queue);
-    
+
     // Give the thread a brief moment to exit gracefully
     struct timespec sleep_time = {0, 100000000};  // 100ms
     nanosleep(&sleep_time, NULL);
-    
+
     // Cancel the thread forcefully (in case it's stuck in a blocking operation)
     // This is safe because we've already set the interrupt flag and shutdown the queue
     LOG_INFO("Cancelling worker thread");
     pthread_cancel(ctx->thread);
-    
+
     // Wait for the thread to finish cleanup
     pthread_join(ctx->thread, NULL);
-    
+
     ctx->thread_started = 0;
 }
 

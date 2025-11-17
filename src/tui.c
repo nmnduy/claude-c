@@ -120,7 +120,7 @@ static void render_status_window(TUIState *tui) {
     werase(tui->wm.status_win);
 
     int col = 0;
-    
+
     // MODE INDICATOR - Commented out (hiding input box in normal mode instead)
     // If we want to restore mode indicator, uncomment this section:
     /*
@@ -148,7 +148,7 @@ static void render_status_window(TUIState *tui) {
     int mode_col = width - mode_len - 1;
     if (mode_col < 0) mode_col = 0;
     */
-    
+
     // Render status message on the left (if visible)
     if (tui->status_visible && tui->status_message && tui->status_message[0] != '\0') {
         if (has_colors()) {
@@ -192,7 +192,7 @@ static void render_status_window(TUIState *tui) {
             wattroff(tui->wm.status_win, A_BOLD);
         }
     }
-    
+
     // MODE INDICATOR RENDERING - Commented out (hiding input box in normal mode instead)
     /*
     if (mode_col < width) {
@@ -591,7 +591,7 @@ static int input_init(TUIState *tui) {
     input->paste_mode = 0;
     input->rapid_input_count = 0;
     clock_gettime(CLOCK_MONOTONIC, &input->last_input_time);
-    
+
     // Initialize paste tracking
     input->paste_content = NULL;
     input->paste_capacity = 0;
@@ -620,7 +620,7 @@ static void input_free(TUIState *tui) {
     tui->input_buffer->capacity = 0;
     tui->input_buffer->length = 0;
     tui->input_buffer->cursor = 0;
-    
+
     free(tui->input_buffer->paste_content);
     tui->input_buffer->paste_content = NULL;
     tui->input_buffer->paste_capacity = 0;
@@ -649,12 +649,12 @@ static int input_insert_char(TUIInputBuffer *input, const unsigned char *utf8_ch
             input->paste_content = new_buffer;
             input->paste_capacity = new_capacity;
         }
-        
+
         // Append to paste buffer
         for (int i = 0; i < char_bytes; i++) {
             input->paste_content[input->paste_content_len++] = (char)utf8_char[i];
         }
-        
+
         // Don't insert into visible buffer during paste - we'll add placeholder at end
         return 0;
     }
@@ -766,11 +766,11 @@ static void input_finalize_paste(TUIInputBuffer *input) {
     if (!input || !input->paste_content || input->paste_content_len == 0) {
         return;
     }
-    
+
     int insert_pos = input->paste_start_pos;
     if (insert_pos < 0) insert_pos = 0;
     if (insert_pos > input->length) insert_pos = input->length;
-    
+
     // For small pastes, insert directly without placeholder
     if (input->paste_content_len < PASTE_PLACEHOLDER_THRESHOLD) {
         // Check if we have space in buffer
@@ -778,55 +778,55 @@ static void input_finalize_paste(TUIInputBuffer *input) {
             LOG_WARN("[TUI] Not enough space for pasted content (%zu chars)", input->paste_content_len);
             return;
         }
-        
+
         int paste_len = (int)input->paste_content_len;
-        
+
         // Make space for paste content
         memmove(&input->buffer[insert_pos + paste_len],
                 &input->buffer[insert_pos],
                 (size_t)(input->length - insert_pos + 1));
-        
+
         // Copy paste content directly
         memcpy(&input->buffer[insert_pos], input->paste_content, input->paste_content_len);
-        
+
         input->length += paste_len;
         input->cursor = insert_pos + paste_len;
         input->paste_placeholder_len = 0;  // No placeholder used
-        
-        LOG_DEBUG("[TUI] Inserted paste content directly at position %d (%zu chars)", 
+
+        LOG_DEBUG("[TUI] Inserted paste content directly at position %d (%zu chars)",
                   insert_pos, input->paste_content_len);
         return;
     }
-    
+
     // For large pastes, use placeholder
     char placeholder[128];
-    int placeholder_len = snprintf(placeholder, sizeof(placeholder), 
-                                   "[%zu characters pasted]", 
+    int placeholder_len = snprintf(placeholder, sizeof(placeholder),
+                                   "[%zu characters pasted]",
                                    input->paste_content_len);
-    
+
     if (placeholder_len >= (int)sizeof(placeholder)) {
         placeholder_len = sizeof(placeholder) - 1;
     }
-    
+
     // Check if we have space in buffer
     if (input->length + placeholder_len >= (int)input->capacity - 1) {
         LOG_WARN("[TUI] Not enough space for paste placeholder");
         return;
     }
-    
+
     // Make space for placeholder
     memmove(&input->buffer[insert_pos + placeholder_len],
             &input->buffer[insert_pos],
             (size_t)(input->length - insert_pos + 1));
-    
+
     // Copy placeholder
     memcpy(&input->buffer[insert_pos], placeholder, (size_t)placeholder_len);
-    
+
     input->length += placeholder_len;
     input->cursor = insert_pos + placeholder_len;
     input->paste_placeholder_len = placeholder_len;
-    
-    LOG_DEBUG("[TUI] Inserted paste placeholder at position %d: %s", 
+
+    LOG_DEBUG("[TUI] Inserted paste placeholder at position %d: %s",
               insert_pos, placeholder);
 }
 
@@ -912,7 +912,7 @@ static void input_redraw(TUIState *tui, const char *prompt) {
         if (has_colors()) {
             wattron(win, COLOR_PAIR(NCURSES_PAIR_PROMPT) | A_BOLD);
         }
-        
+
         if (tui->mode == TUI_MODE_COMMAND && tui->command_buffer) {
             // Show command buffer
             mvwprintw(win, 1, 1, "%s", tui->command_buffer);
@@ -920,7 +920,7 @@ static void input_redraw(TUIState *tui, const char *prompt) {
             // Show normal prompt
             mvwprintw(win, 1, 1, "%s ", prompt);
         }
-        
+
         if (has_colors()) {
             wattroff(win, COLOR_PAIR(NCURSES_PAIR_PROMPT) | A_BOLD);
         }
@@ -1008,7 +1008,7 @@ static void input_redraw(TUIState *tui, const char *prompt) {
         cursor_screen_x >= 1 && cursor_screen_x <= input->win_width) {
         wmove(win, cursor_screen_y, cursor_screen_x);
     }
-    
+
     // Hide cursor in NORMAL mode, show it in INSERT/COMMAND modes
     if (tui->mode == TUI_MODE_NORMAL) {
         curs_set(0);  // Hide cursor
@@ -1028,12 +1028,12 @@ int tui_init(TUIState *tui) {
 
     // Initialize ncurses
     initscr();
-    
+
     // Set ESC delay to 25ms for responsive ESC/Ctrl+[ mode switching
     // Default is 1000ms which feels sluggish. 25ms is enough to detect
     // escape sequences (arrow keys, etc.) while feeling instant to users.
     set_escdelay(25);
-    
+
     // Use raw mode so Ctrl+C is delivered as a key (ASCII 3)
     raw();     // Disable line buffering and signal generation (incl. SIGINT)
     noecho();  // Don't echo input
@@ -1101,11 +1101,11 @@ int tui_init(TUIState *tui) {
     tui->status_spinner_active = 0;
     tui->status_spinner_frame = 0;
     tui->status_spinner_last_update_ns = 0;
-    
+
     // Initialize mode (start in INSERT mode for immediate input)
     tui->mode = TUI_MODE_INSERT;
     tui->normal_mode_last_key = 0;
-    
+
     // Initialize command mode buffer
     tui->command_buffer = NULL;
     tui->command_buffer_len = 0;
@@ -1176,7 +1176,7 @@ void tui_cleanup(TUIState *tui) {
     // Free status message
     free(tui->status_message);
     tui->status_message = NULL;
-    
+
     // Free command buffer
     free(tui->command_buffer);
     tui->command_buffer = NULL;
@@ -1231,17 +1231,17 @@ void tui_add_conversation_line(TUIState *tui, const char *prefix, const char *te
     int pad_height, pad_width;
     getmaxyx(tui->wm.conv_pad, pad_height, pad_width);
     (void)pad_height;
-    
+
     // Calculate how many lines this entry will take when wrapped
     int prefix_len = (prefix && prefix[0] != '\0') ? (int)strlen(prefix) + 1 : 0; // +1 for space
     int text_len = (text && text[0] != '\0') ? (int)strlen(text) : 0;
-    
+
     // Estimate wrapped lines (conservative)
     int estimated_lines = 1; // At least 1 line
     if (text_len > 0) {
         estimated_lines = ((prefix_len + text_len) / pad_width) + 2; // +2 for newline and safety
     }
-    
+
     // Ensure pad has enough capacity (centralized via WindowManager)
     int current_lines = window_manager_get_content_lines(&tui->wm);
     int needed_capacity = current_lines + estimated_lines + 100;
@@ -1250,7 +1250,7 @@ void tui_add_conversation_line(TUIState *tui, const char *prefix, const char *te
             LOG_ERROR("[TUI] Failed to ensure pad capacity via WindowManager");
         }
     }
-    
+
     // Map color pair
     int mapped_pair = NCURSES_PAIR_FOREGROUND;
     switch (color_pair) {
@@ -1289,11 +1289,11 @@ void tui_add_conversation_line(TUIState *tui, const char *prefix, const char *te
             /* Keep default mapped_pair (foreground) */
             break;
     }
-    
+
     // Move to end of pad
     int start_line = window_manager_get_content_lines(&tui->wm);
     wmove(tui->wm.conv_pad, start_line, 0);
-    
+
     // Write prefix if present
     if (prefix && prefix[0] != '\0') {
         if (has_colors()) {
@@ -1305,7 +1305,7 @@ void tui_add_conversation_line(TUIState *tui, const char *prefix, const char *te
             wattroff(tui->wm.conv_pad, COLOR_PAIR(mapped_pair) | A_BOLD);
         }
     }
-    
+
     // Write text
     if (text && text[0] != '\0') {
         int text_pair = (prefix && prefix[0] != '\0') ? NCURSES_PAIR_FOREGROUND : mapped_pair;
@@ -1317,17 +1317,17 @@ void tui_add_conversation_line(TUIState *tui, const char *prefix, const char *te
             wattroff(tui->wm.conv_pad, COLOR_PAIR(text_pair));
         }
     }
-    
+
     // Add newline
     waddch(tui->wm.conv_pad, '\n');
-    
+
     // Update total lines (get actual cursor position after wrapping)
     int cur_y, cur_x;
     getyx(tui->wm.conv_pad, cur_y, cur_x);
     (void)cur_x;
     window_manager_set_content_lines(&tui->wm, cur_y);
-    
-    LOG_DEBUG("[TUI] Added line, total_lines now %d (estimated %d, actual %d)", 
+
+    LOG_DEBUG("[TUI] Added line, total_lines now %d (estimated %d, actual %d)",
               window_manager_get_content_lines(&tui->wm), estimated_lines, cur_y - start_line);
 
     // Auto-scroll to bottom (show latest messages)
@@ -1383,7 +1383,7 @@ void tui_render_todo_list(TUIState *tui, const TodoList *list) {
 
         // Format the line with indentation
         snprintf(line, sizeof(line), "    %s %s", symbol, text);
-        
+
         // Add line without prefix (so the color applies to the whole line)
         tui_add_conversation_line(tui, NULL, line, color);
     }
@@ -1440,14 +1440,14 @@ void tui_clear_conversation(TUIState *tui) {
 
     // Free all conversation entries
     free_conversation_entries(tui);
-    
+
     // Clear pad and reset content lines
     werase(tui->wm.conv_pad);
     window_manager_set_content_lines(&tui->wm, 0);
-    
+
     // Add a system message indicating the clear
     tui_add_conversation_line(tui, "[System]", "Conversation history cleared", COLOR_PAIR_STATUS);
-    
+
     // Refresh all windows to ensure consistent state
     window_manager_refresh_all(&tui->wm);
 }
@@ -1554,7 +1554,7 @@ void tui_show_startup_banner(TUIState *tui, const char *version, const char *mod
     char line2[256];
     char line3[256];
     char tip_line[512];
-    
+
     if (show_cat_mascot) {
         // ASCII art cat mascot
         snprintf(line1, sizeof(line1), "  /\\_/\\   claude-c v%s", version);
@@ -1569,7 +1569,7 @@ void tui_show_startup_banner(TUIState *tui, const char *version, const char *mod
 
     // Add padding before mascot
     tui_add_conversation_line(tui, NULL, "", COLOR_PAIR_FOREGROUND);
-    
+
     // Add banner lines to conversation window
     tui_add_conversation_line(tui, NULL, line1, COLOR_PAIR_ASSISTANT);
     tui_add_conversation_line(tui, NULL, line2, COLOR_PAIR_ASSISTANT);
@@ -1630,12 +1630,12 @@ int tui_poll_input(TUIState *tui) {
     if (!tui || !tui->is_initialized || !tui->wm.input_win) {
         return ERR;
     }
-    
+
     // Make wgetch() non-blocking temporarily
     nodelay(tui->wm.input_win, TRUE);
     int ch = wgetch(tui->wm.input_win);
     nodelay(tui->wm.input_win, FALSE);
-    
+
     return ch;
 }
 
@@ -1645,7 +1645,7 @@ static int handle_command_mode_input(TUIState *tui, int ch, const char *prompt) 
     if (!tui || !tui->command_buffer) {
         return 0;
     }
-    
+
     if (ch == 27) {  // ESC - cancel command mode
         tui->mode = TUI_MODE_NORMAL;
         tui->command_buffer_len = 0;
@@ -1676,7 +1676,7 @@ static int handle_command_mode_input(TUIState *tui, int ch, const char *prompt) 
     } else if (ch == 13 || ch == 10) {  // Enter - execute command
         // Parse and execute command
         const char *cmd = tui->command_buffer + 1;  // Skip the ':'
-        
+
         if (strcmp(cmd, "q") == 0 || strcmp(cmd, "quit") == 0) {
             // Quit command
             return -1;
@@ -1692,7 +1692,7 @@ static int handle_command_mode_input(TUIState *tui, int ch, const char *prompt) 
             snprintf(error_msg, sizeof(error_msg), "Unknown command: %s", cmd);
             tui_add_conversation_line(tui, "[Error]", error_msg, COLOR_PAIR_ERROR);
         }
-        
+
         // Exit command mode
         tui->mode = TUI_MODE_NORMAL;
         tui->command_buffer_len = 0;
@@ -1711,7 +1711,7 @@ static int handle_command_mode_input(TUIState *tui, int ch, const char *prompt) 
         }
         return 0;
     }
-    
+
     return 0;
 }
 
@@ -1721,7 +1721,7 @@ static int handle_normal_mode_input(TUIState *tui, int ch, const char *prompt) {
     if (!tui || !tui->wm.conv_pad) {
         return 0;
     }
-    
+
     // Calculate scrolling parameters based on the visible viewport height,
     // not the pad capacity (using pad size could make half-page jumps too large
     // or appear to do nothing depending on scroll position).
@@ -1737,7 +1737,7 @@ static int handle_normal_mode_input(TUIState *tui, int ch, const char *prompt) {
     int full_page = viewport_h - 2;  // Leave a bit of overlap
     if (half_page < 1) half_page = 1;
     if (full_page < 1) full_page = 1;
-    
+
     // Handle key combinations (like gg, G)
     if (tui->normal_mode_last_key == 'g' && ch == 'g') {
         // gg: Go to top
@@ -1747,12 +1747,12 @@ static int handle_normal_mode_input(TUIState *tui, int ch, const char *prompt) {
         input_redraw(tui, prompt);
         return 0;
     }
-    
+
     // Reset last key for non-g keys
     if (ch != 'g') {
         tui->normal_mode_last_key = 0;
     }
-    
+
     switch (ch) {
         case 'i':  // Enter insert mode (insert at cursor)
         case 'a':  // Enter insert mode (append after cursor)
@@ -1766,7 +1766,7 @@ static int handle_normal_mode_input(TUIState *tui, int ch, const char *prompt) {
             }
             input_redraw(tui, prompt);  // Redraw to show input box
             return 0;  // Mode switched, continue processing (not submission)
-            
+
         case ':':  // Enter command mode
             tui->mode = TUI_MODE_COMMAND;
             // Initialize command buffer with ':'
@@ -1787,59 +1787,59 @@ static int handle_normal_mode_input(TUIState *tui, int ch, const char *prompt) {
             }
             input_redraw(tui, "");  // Redraw to show command buffer
             return 0;
-            
+
         case 'j':  // Scroll down 1 line (Vim j)
         case KEY_DOWN:
         case 5:  // Ctrl+E: Scroll down 1 line (Vim Ctrl-E)
             tui_scroll_conversation(tui, 1);
             input_redraw(tui, prompt);
             break;
-            
+
         case 'k':  // Scroll up 1 line (Vim k)
         case KEY_UP:
         case 25:  // Ctrl+Y: Scroll up 1 line (Vim Ctrl-Y)
             tui_scroll_conversation(tui, -1);
             input_redraw(tui, prompt);
             break;
-            
+
         case 4:  // Ctrl+D: Scroll down half page
             tui_scroll_conversation(tui, half_page);
             input_redraw(tui, prompt);
             break;
-            
+
         case 21:  // Ctrl+U: Scroll up half page
             tui_scroll_conversation(tui, -half_page);
             input_redraw(tui, prompt);
             break;
-            
+
         case 6:  // Ctrl+F: Scroll down full page
         case KEY_NPAGE:  // Page Down
             tui_scroll_conversation(tui, full_page);
             input_redraw(tui, prompt);
             break;
-            
+
         case 2:  // Ctrl+B: Scroll up full page
         case KEY_PPAGE:  // Page Up
             tui_scroll_conversation(tui, -full_page);
             input_redraw(tui, prompt);
             break;
-            
+
         case 'g':  // First 'g' in 'gg' sequence
             tui->normal_mode_last_key = 'g';
             break;
-            
+
         case 'G':  // Go to bottom
             window_manager_scroll_to_bottom(&tui->wm);
             refresh_conversation_viewport(tui);
             input_redraw(tui, prompt);
             break;
-            
+
         case 'q':  // Quit (when input is empty)
             if (tui->input_buffer && tui->input_buffer->length == 0) {
                 return -1;  // Signal quit
             }
             break;
-            
+
         case KEY_RESIZE:
             tui_handle_resize(tui);
             refresh_conversation_viewport(tui);
@@ -1850,7 +1850,7 @@ static int handle_normal_mode_input(TUIState *tui, int ch, const char *prompt) {
             /* Unhandled key in normal mode */
             break;
     }
-    
+
     return 0;
 }
 
@@ -1860,27 +1860,27 @@ static int check_paste_timeout(TUIState *tui, const char *prompt) {
     if (!tui || !tui->input_buffer) {
         return 0;
     }
-    
+
     TUIInputBuffer *input = tui->input_buffer;
-    
+
     // Only check if we're in paste mode
     if (!input->paste_mode || input->rapid_input_count == 0) {
         return 0;
     }
-    
+
     struct timespec current_time;
     clock_gettime(CLOCK_MONOTONIC, &current_time);
-    
+
     long elapsed_ms = (current_time.tv_sec - input->last_input_time.tv_sec) * 1000 +
                       (current_time.tv_nsec - input->last_input_time.tv_nsec) / 1000000;
-    
+
     // Exit paste mode if there's been a pause exceeding configured timeout
     if (elapsed_ms > g_paste_timeout_ms) {
         input->paste_mode = 0;
         input->rapid_input_count = 0;
-        LOG_DEBUG("[TUI] Paste timeout detected - exiting paste mode (heuristic), pasted %zu characters", 
+        LOG_DEBUG("[TUI] Paste timeout detected - exiting paste mode (heuristic), pasted %zu characters",
                  input->paste_content_len);
-        
+
         // For heuristic mode, remove the already-inserted characters
         int chars_to_remove = input->cursor - input->paste_start_pos;
         if (chars_to_remove > 0) {
@@ -1890,13 +1890,13 @@ static int check_paste_timeout(TUIState *tui, const char *prompt) {
             input->length -= chars_to_remove;
             input->cursor = input->paste_start_pos;
         }
-        
+
         // Insert placeholder or content directly
         input_finalize_paste(input);
         input_redraw(tui, prompt);
         return 1;
     }
-    
+
     return 0;
 }
 
@@ -1909,7 +1909,7 @@ int tui_process_input_char(TUIState *tui, int ch, const char *prompt) {
     if (!input) {
         return -1;
     }
-    
+
     // Handle command mode separately
     if (tui->mode == TUI_MODE_COMMAND) {
         int result = handle_command_mode_input(tui, ch, prompt);
@@ -1919,7 +1919,7 @@ int tui_process_input_char(TUIState *tui, int ch, const char *prompt) {
         // Command mode handles all input internally
         return 0;
     }
-    
+
     // Handle normal mode separately
     if (tui->mode == TUI_MODE_NORMAL) {
         int result = handle_normal_mode_input(tui, ch, prompt);
@@ -1985,7 +1985,7 @@ int tui_process_input_char(TUIState *tui, int ch, const char *prompt) {
 
         input->last_input_time = current_time;
     }
-    
+
     // Handle special keys
     if (ch == KEY_RESIZE) {
         tui_handle_resize(tui);
@@ -2149,13 +2149,13 @@ int tui_process_input_char(TUIState *tui, int ch, const char *prompt) {
         // Set nodelay to check for following character
         nodelay(tui->wm.input_win, TRUE);
         int next_ch = wgetch(tui->wm.input_win);
-        
+
         LOG_DEBUG("[TUI] ESC sequence detected, next_ch=%d", next_ch);
-        
+
         // If standalone ESC (no following character), switch to NORMAL mode (vim-style)
         if (next_ch == ERR) {
             nodelay(tui->wm.input_win, FALSE);
-            
+
             // In INSERT mode, ESC/Ctrl+[ leaves INSERT and enters NORMAL (scroll) mode
             if (tui->mode == TUI_MODE_INSERT) {
                 tui->mode = TUI_MODE_NORMAL;
@@ -2167,7 +2167,7 @@ int tui_process_input_char(TUIState *tui, int ch, const char *prompt) {
             }
             return 0;  // Do not signal interrupt here
         }
-        
+
         if (next_ch == '[') {
             // Could be bracketed paste sequence or other CSI sequence
             // Read the sequence with a small delay to allow characters to arrive
@@ -2176,20 +2176,20 @@ int tui_process_input_char(TUIState *tui, int ch, const char *prompt) {
             // Using timeout() (stdscr) here caused blocking wgetch() on input_win
             // and made the UI appear to hang until more input arrived.
             wtimeout(tui->wm.input_win, 100);  // 100ms timeout for sequence
-            
+
             int ch1 = wgetch(tui->wm.input_win);
             int ch2 = wgetch(tui->wm.input_win);
             int ch3 = wgetch(tui->wm.input_win);
             int ch4 = wgetch(tui->wm.input_win);
-            
+
             // Restore blocking behavior on input window
             wtimeout(tui->wm.input_win, -1);  // Back to blocking
-            
-            LOG_DEBUG("[TUI] Escape sequence: ESC[%c%c%c%c (values: %d %d %d %d)", 
-                     ch1 > 0 ? ch1 : '?', ch2 > 0 ? ch2 : '?', 
+
+            LOG_DEBUG("[TUI] Escape sequence: ESC[%c%c%c%c (values: %d %d %d %d)",
+                     ch1 > 0 ? ch1 : '?', ch2 > 0 ? ch2 : '?',
                      ch3 > 0 ? ch3 : '?', ch4 > 0 ? ch4 : '?',
                      ch1, ch2, ch3, ch4);
-            
+
             // Check for ESC[200~ (paste start) or ESC[201~ (paste end)
             if (ch1 == '2' && ch2 == '0' && ch3 == '0' && ch4 == '~') {
                 // Bracketed paste start
@@ -2211,9 +2211,9 @@ int tui_process_input_char(TUIState *tui, int ch, const char *prompt) {
             } else if (ch1 == '2' && ch2 == '0' && ch3 == '1' && ch4 == '~') {
                 // Bracketed paste end
                 input->paste_mode = 0;
-                LOG_DEBUG("[TUI] Bracketed paste mode ended, pasted %zu characters", 
+                LOG_DEBUG("[TUI] Bracketed paste mode ended, pasted %zu characters",
                          input->paste_content_len);
-                
+
                 // Insert placeholder or content directly
                 input_finalize_paste(input);
                 input_redraw(tui, prompt);
@@ -2222,7 +2222,7 @@ int tui_process_input_char(TUIState *tui, int ch, const char *prompt) {
             // Other CSI sequences - ignore
             return 0;
         }
-        
+
         nodelay(tui->wm.input_win, FALSE);
 
         // Handle Alt key combinations
@@ -2266,19 +2266,19 @@ const char* tui_get_input_buffer(TUIState *tui) {
     if (!tui || !tui->input_buffer || tui->input_buffer->length == 0) {
         return NULL;
     }
-    
+
     TUIInputBuffer *input = tui->input_buffer;
-    
+
     // If there's no paste content, return buffer as-is
-    if (!input->paste_content || input->paste_content_len == 0 || 
+    if (!input->paste_content || input->paste_content_len == 0 ||
         input->paste_placeholder_len == 0) {
         return input->buffer;
     }
-    
+
     // We have paste content that needs to be reconstructed
     // Buffer structure: [text before placeholder][placeholder][text after placeholder]
     // We need: [text before placeholder][actual paste content][text after placeholder]
-    
+
     // Calculate sizes
     size_t before_len = (size_t)input->paste_start_pos;
     size_t after_start = (size_t)(input->paste_start_pos + input->paste_placeholder_len);
@@ -2292,12 +2292,12 @@ const char* tui_get_input_buffer(TUIState *tui) {
         after_len = 0;
     }
     size_t total_len = before_len + input->paste_content_len + after_len;
-    
+
     // Allocate temporary buffer for reconstruction
     // Use a static buffer that grows as needed (freed on next call or cleanup)
     static char *reconstructed = NULL;
     static size_t reconstructed_capacity = 0;
-    
+
     if (total_len + 1 > reconstructed_capacity) {
         reconstructed_capacity = total_len + 1024;  // Extra space
         char *new_buf = realloc(reconstructed, reconstructed_capacity);
@@ -2307,7 +2307,7 @@ const char* tui_get_input_buffer(TUIState *tui) {
         }
         reconstructed = new_buf;
     }
-    
+
     // Reconstruct: before + paste_content + after
     char *dest = reconstructed;
     if (before_len > 0) {
@@ -2323,10 +2323,10 @@ const char* tui_get_input_buffer(TUIState *tui) {
         dest += after_len;
     }
     *dest = '\0';
-    
+
     LOG_DEBUG("[TUI] Reconstructed input with paste: before=%zu, paste=%zu, after=%zu, total=%zu",
               before_len, input->paste_content_len, after_len, total_len);
-    
+
     return reconstructed;
 }
 
@@ -2342,7 +2342,7 @@ void tui_clear_input_buffer(TUIState *tui) {
     tui->input_buffer->line_scroll_offset = 0;
     tui->input_buffer->paste_mode = 0;  // Reset paste mode on clear
     tui->input_buffer->rapid_input_count = 0;
-    
+
     // Clear paste tracking
     tui->input_buffer->paste_content_len = 0;
     tui->input_buffer->paste_start_pos = 0;
@@ -2514,7 +2514,7 @@ static int process_tui_messages(TUIState *tui,
     return processed;
 }
 
-int tui_event_loop(TUIState *tui, const char *prompt, 
+int tui_event_loop(TUIState *tui, const char *prompt,
                    InputSubmitCallback submit_callback,
                    InterruptCallback interrupt_callback,
                    KeypressCallback keypress_callback,
@@ -2527,19 +2527,19 @@ int tui_event_loop(TUIState *tui, const char *prompt,
     TUIMessageQueue *msg_queue = (TUIMessageQueue *)msg_queue_ptr;
     int running = 1;
     const long frame_time_us = 16667;  // ~60 FPS (1/60 second in microseconds)
-    
+
     // Clear input buffer at start
     tui_clear_input_buffer(tui);
-    
+
     // Initial draw (ensure all windows reflect current size)
     refresh_conversation_viewport(tui);
     render_status_window(tui);
     tui_redraw_input(tui, prompt);
-    
+
     while (running) {
         struct timespec frame_start;
         clock_gettime(CLOCK_MONOTONIC, &frame_start);
-        
+
         // 1. Check for resize
         if (g_resize_flag) {
             g_resize_flag = 0;
@@ -2548,26 +2548,26 @@ int tui_event_loop(TUIState *tui, const char *prompt,
             render_status_window(tui);
             tui_redraw_input(tui, prompt);
         }
-        
+
         // 2. Check for paste timeout (even when no input arrives)
         check_paste_timeout(tui, prompt);
-        
+
         // 3. Poll for input (non-blocking)
         // If in paste mode, drain all available input quickly
     int chars_processed = 0;
     // Drain more than 1 char per frame to avoid artificial delays/lag on quick typing
     int max_chars_per_frame = (tui->input_buffer && tui->input_buffer->paste_mode) ? 10000 : 32;
-        
+
         while (chars_processed < max_chars_per_frame) {
             int ch = tui_poll_input(tui);
             if (ch == ERR) {
                 break;  // No more input available
             }
-            
+
             chars_processed++;
-            
+
             int result = tui_process_input_char(tui, ch, prompt);
-            
+
             // Notify about keypress (after processing, and only for normal input)
             // Skip for Ctrl+C (result==2) since interrupt callback handles that
             if (keypress_callback && result == 0) {
@@ -2604,11 +2604,11 @@ int tui_event_loop(TUIState *tui, const char *prompt,
                     tui->input_history_pos = -1;
                     // Call the callback
                     int callback_result = submit_callback(input, user_data);
-                    
+
                     // Clear input buffer after submission
                     tui_clear_input_buffer(tui);
                     tui_redraw_input(tui, prompt);
-                    
+
                     // Check if callback wants to exit
                     if (callback_result != 0) {
                         LOG_DEBUG("[TUI] Callback requested exit (code=%d)", callback_result);
@@ -2634,17 +2634,17 @@ int tui_event_loop(TUIState *tui, const char *prompt,
                 running = 0;
                 break;
             }
-            
+
             // If not in paste mode anymore, stop draining and process one char per frame
             if (tui->input_buffer && !tui->input_buffer->paste_mode) {
                 break;
             }
         }
-        
+
         if (chars_processed > 1) {
             LOG_DEBUG("[TUI] Fast-drained %d characters in paste mode", chars_processed);
         }
-        
+
         // 4. Process TUI message queue (if provided)
         if (msg_queue) {
             int messages_processed = process_tui_messages(tui, msg_queue, TUI_MAX_MESSAGES_PER_FRAME);
@@ -2653,23 +2653,23 @@ int tui_event_loop(TUIState *tui, const char *prompt,
                 tui_redraw_input(tui, prompt);
             }
         }
-        
+
         // Update spinner animation if active
         status_spinner_tick(tui);
 
         // 5. Sleep to maintain frame rate
         struct timespec frame_end;
         clock_gettime(CLOCK_MONOTONIC, &frame_end);
-        
+
         long elapsed_ns = (frame_end.tv_sec - frame_start.tv_sec) * 1000000000L +
                          (frame_end.tv_nsec - frame_start.tv_nsec);
         long elapsed_us = elapsed_ns / 1000;
-        
+
         if (elapsed_us < frame_time_us) {
             usleep((useconds_t)(frame_time_us - elapsed_us));
         }
     }
-    
+
     return 0;
 }
 
