@@ -162,6 +162,8 @@ TEST_EVENT_LOOP_SRC = tests/test_event_loop.c
 TEST_JSON_PARSING_SRC = tests/test_json_parsing.c
 TEST_STUBS_SRC = tests/test_stubs.c
 TEST_MCP_SRC = tests/test_mcp.c
+TEST_MCP_IMAGE_SRC = tests/test_mcp_image.c
+TEST_MCP_IMAGE_TARGET = $(BUILD_DIR)/test_mcp_image
 TEST_WM_SRC = tests/test_window_manager.c
 TEST_TOOL_RESULTS_REGRESSION_SRC = tests/test_tool_results_regression.c
 TEST_BASE64_SRC = tests/test_base64.c
@@ -172,7 +174,7 @@ TEST_BASH_SUMMARY_SRC = tests/test_bash_summary.c
 TEST_BASH_TIMEOUT_TARGET = $(BUILD_DIR)/test_bash_timeout
 TEST_BASH_TIMEOUT_SRC = tests/test_bash_timeout.c
 
-.PHONY: all clean check-deps install test test-edit test-read test-todo test-todo-write test-paste test-retry-jitter test-openai-format test-write-diff-integration test-rotation test-patch-parser test-thread-cancel test-aws-cred-rotation test-message-queue test-event-loop test-wrap test-mcp test-bash-summary test-bash-timeout test-tool-results-regression query-tool debug analyze sanitize-ub sanitize-all sanitize-leak valgrind memscan comprehensive-scan clang-tidy cppcheck flawfinder version show-version update-version bump-version bump-patch build clang ci-test ci-gcc ci-clang ci-gcc-sanitize ci-clang-sanitize ci-all fmt-whitespace
+.PHONY: all clean check-deps install test test-edit test-read test-todo test-todo-write test-paste test-retry-jitter test-openai-format test-write-diff-integration test-rotation test-patch-parser test-thread-cancel test-aws-cred-rotation test-message-queue test-event-loop test-wrap test-mcp test-mcp-image test-bash-summary test-bash-timeout test-tool-results-regression query-tool debug analyze sanitize-ub sanitize-all sanitize-leak valgrind memscan comprehensive-scan clang-tidy cppcheck flawfinder version show-version update-version bump-version bump-patch build clang ci-test ci-gcc ci-clang ci-gcc-sanitize ci-clang-sanitize ci-all fmt-whitespace
 
 all: check-deps $(TARGET)
 
@@ -184,7 +186,7 @@ debug: check-deps $(BUILD_DIR)/claude-c-debug
 
 query-tool: check-deps $(QUERY_TOOL)
 
-test: test-edit test-read test-todo test-paste test-json-parsing test-timing test-openai-format test-write-diff-integration test-rotation test-patch-parser test-thread-cancel test-aws-cred-rotation test-message-queue test-wrap test-mcp test-wm test-bash-summary test-bash-timeout test-cancel-flow test-tool-results-regression test-base64
+test: test-edit test-read test-todo test-paste test-json-parsing test-timing test-openai-format test-write-diff-integration test-rotation test-patch-parser test-thread-cancel test-aws-cred-rotation test-message-queue test-wrap test-mcp test-mcp-image test-wm test-bash-summary test-bash-timeout test-cancel-flow test-tool-results-regression test-base64
 
 test-edit: check-deps $(TEST_EDIT_TARGET)
 	@echo ""
@@ -300,6 +302,12 @@ test-mcp: check-deps $(TEST_MCP_TARGET)
 	@echo "Running MCP integration tests..."
 	@echo ""
 	@./$(TEST_MCP_TARGET)
+
+test-mcp-image: check-deps $(TEST_MCP_IMAGE_TARGET)
+	@echo ""
+	@echo "Running MCP image content handling tests..."
+	@echo ""
+	@./$(TEST_MCP_IMAGE_TARGET)
 
 test-wm: check-deps $(TEST_WM_TARGET)
 	@echo ""
@@ -941,6 +949,14 @@ $(TEST_MCP_TARGET): $(TEST_MCP_SRC) $(MCP_OBJ) $(BASE64_OBJ)
 	@$(CC) $(CFLAGS) -o $(TEST_MCP_TARGET) $(TEST_MCP_SRC) $(MCP_OBJ) $(BASE64_OBJ) $(LDFLAGS)
 	@echo ""
 	@echo "✓ MCP test build successful!"
+	@echo ""
+
+$(TEST_MCP_IMAGE_TARGET): $(TEST_MCP_IMAGE_SRC) $(BASE64_OBJ)
+	@mkdir -p $(BUILD_DIR)
+	@echo "Compiling MCP image content handling tests..."
+	@$(CC) $(CFLAGS) -o $(TEST_MCP_IMAGE_TARGET) $(TEST_MCP_IMAGE_SRC) $(BASE64_OBJ) $(LDFLAGS)
+	@echo ""
+	@echo "✓ MCP image test build successful!"
 	@echo ""
 
 install: $(TARGET)

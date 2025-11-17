@@ -793,14 +793,18 @@ MCPToolResult* mcp_call_tool(MCPServer *server, const char *tool_name, cJSON *ar
     result->blob = NULL;
     result->blob_size = 0;
     result->mime_type = NULL;
-    
+
     // MCP returns content array with different content types
     cJSON *content = cJSON_GetObjectItem(result_obj, "content");
     if (content && cJSON_IsArray(content)) {
         // Process each content item
         cJSON *item = NULL;
+
         cJSON_ArrayForEach(item, content) {
-            // Check for text content
+            // Check content type first
+            cJSON *content_type = cJSON_GetObjectItem(item, "type");
+
+            // Handle text content (type: 'text' or legacy 'text' field)
             cJSON *text = cJSON_GetObjectItem(item, "text");
             if (text && cJSON_IsString(text)) {
                 // Handle text content
@@ -817,14 +821,43 @@ MCPToolResult* mcp_call_tool(MCPServer *server, const char *tool_name, cJSON *ar
                     }
                 }
             }
-            
-            // Check for blob (binary) content
+
+            // Handle image content (type: 'image' with data field)
+            if (content_type && cJSON_IsString(content_type) &&
+                strcmp(content_type->valuestring, "image") == 0) {
+                cJSON *image_data = cJSON_GetObjectItem(item, "data");
+                if (image_data && cJSON_IsString(image_data)) {
+                    // Handle image content (base64 encoded)
+                    const char *image_str = image_data->valuestring;
+                    size_t image_len = strlen(image_str);
+
+                    // Decode base64
+                    size_t decoded_size = 0;
+                    unsigned char *decoded_data = base64_decode(image_str, image_len, &decoded_size);
+                    if (decoded_data) {
+                        result->blob = decoded_data;
+                        result->blob_size = decoded_size;
+                        LOG_DEBUG("MCP: Image content received and decoded (encoded size: %zu, decoded size: %zu)", image_len, decoded_size);
+                    } else {
+                        LOG_WARN("MCP: Failed to decode base64 image content");
+                        // Fallback: store as-is
+                        result->blob = malloc(image_len);
+                        if (result->blob) {
+                            memcpy(result->blob, image_str, image_len);
+                            result->blob_size = image_len;
+                            LOG_DEBUG("MCP: Image content stored as-is (size: %zu)", image_len);
+                        }
+                    }
+                }
+            }
+
+            // Handle blob (binary) content (legacy format)
             cJSON *blob = cJSON_GetObjectItem(item, "blob");
-            if (blob && cJSON_IsString(blob)) {
+            if (blob && cJSON_IsString(blob) && !result->blob) {
                 // Handle binary content (base64 encoded)
                 const char *blob_str = blob->valuestring;
                 size_t blob_len = strlen(blob_str);
-                
+
                 // Decode base64
                 size_t decoded_size = 0;
                 unsigned char *decoded_data = base64_decode(blob_str, blob_len, &decoded_size);
@@ -843,7 +876,7 @@ MCPToolResult* mcp_call_tool(MCPServer *server, const char *tool_name, cJSON *ar
                     }
                 }
             }
-            
+
             // Check for MIME type
             cJSON *mime_type = cJSON_GetObjectItem(item, "mimeType");
             if (mime_type && cJSON_IsString(mime_type) && !result->mime_type) {
@@ -1307,11 +1340,60 @@ MCPResourceContent* mcp_read_resource(MCPConfig *config, const char *server_name
             // NULL is OK for optional fields
         }
 
-        // Get blob content (base64 encoded)
+        // Get image content (type: 'image' with data field)
+        cJSON *content_type = cJSON_GetObjectItem(content_item, "type");
+        if (content_type && cJSON_IsString(content_type) &&
+            strcmp(content_type->valuestring, "image") == 0) {
+            cJSON *image_data = cJSON_GetObjectItem(content_item, "data");
+            if (image_data && cJSON_IsString(image_data)) {
+                // Handle image content (base64 encoded)
+                const char *image_str = image_data->valuestring;
+                size_t image_len = strlen(image_str);
+
+                // Decode base64
+                size_t decoded_size = 0;
+                unsigned char *decoded_data = base64_decode(image_str, image_len, &decoded_size);
+                if (decoded_data) {
+                    result->blob = decoded_data;
+                    result->blob_size = decoded_size;
+                    LOG_DEBUG("MCP: Image content received and decoded (encoded size: %zu, decoded size: %zu)", image_len, decoded_size);
+                } else {
+                    LOG_WARN("MCP: Failed to decode base64 image content");
+                    // Fallback: store as-is
+                    result->blob = malloc(image_len);
+                    if (result->blob) {
+                        memcpy(result->blob, image_str, image_len);
+                        result->blob_size = image_len;
+                        LOG_DEBUG("MCP: Image content stored as-is (size: %zu)", image_len);
+                    }
+                }
+            }
+        }
+
+        // Get blob content (base64 encoded) - legacy format
         cJSON *blob = cJSON_GetObjectItem(content_item, "blob");
-        if (blob && cJSON_IsString(blob)) {
-            // TODO: Decode base64 if needed
-            LOG_DEBUG("MCP: Binary blob content received (not decoded)");
+        if (blob && cJSON_IsString(blob) && !result->blob) {
+            // Handle binary content (base64 encoded)
+            const char *blob_str = blob->valuestring;
+            size_t blob_len = strlen(blob_str);
+
+            // Decode base64
+            size_t decoded_size = 0;
+            unsigned char *decoded_data = base64_decode(blob_str, blob_len, &decoded_size);
+            if (decoded_data) {
+                result->blob = decoded_data;
+                result->blob_size = decoded_size;
+                LOG_DEBUG("MCP: Binary blob content received and decoded (encoded size: %zu, decoded size: %zu)", blob_len, decoded_size);
+            } else {
+                LOG_WARN("MCP: Failed to decode base64 blob content");
+                // Fallback: store as-is
+                result->blob = malloc(blob_len);
+                if (result->blob) {
+                    memcpy(result->blob, blob_str, blob_len);
+                    result->blob_size = blob_len;
+                    LOG_DEBUG("MCP: Binary blob content stored as-is (size: %zu)", blob_len);
+                }
+            }
         }
     }
 

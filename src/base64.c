@@ -37,7 +37,7 @@ char *base64_encode(const unsigned char *data, size_t input_length, size_t *outp
 
     // Calculate output length: 4 * ceil(input_length / 3)
     size_t encoded_length = 4 * ((input_length + 2) / 3);
-    
+
     // Allocate output buffer with space for null terminator
     char *encoded_data = malloc(encoded_length + 1);
     if (!encoded_data) {
@@ -46,7 +46,7 @@ char *base64_encode(const unsigned char *data, size_t input_length, size_t *outp
 
     size_t i = 0;
     size_t j = 0;
-    
+
     // Process input in chunks of 3 bytes
     for (i = 0; i < input_length; i += 3) {
         unsigned char octet_a = i < input_length ? data[i] : 0;
@@ -68,7 +68,7 @@ char *base64_encode(const unsigned char *data, size_t input_length, size_t *outp
 
     encoded_data[encoded_length] = '\0';
     *output_length = encoded_length;
-    
+
     return encoded_data;
 }
 
@@ -84,7 +84,7 @@ unsigned char *base64_decode(const char *data, size_t input_length, size_t *outp
 
     // Calculate output length: floor(input_length * 3 / 4)
     size_t decoded_length = (input_length * 3) / 4;
-    
+
     // Allocate output buffer
     unsigned char *decoded_data = malloc(decoded_length + 1);
     if (!decoded_data) {
@@ -93,7 +93,7 @@ unsigned char *base64_decode(const char *data, size_t input_length, size_t *outp
 
     size_t i = 0;
     size_t j = 0;
-    
+
     // Process input in chunks of 4 characters
     for (i = 0; i < input_length; i += 4) {
         // Get 4 base64 characters
@@ -120,6 +120,6 @@ unsigned char *base64_decode(const char *data, size_t input_length, size_t *outp
     // Null terminate for safety (though this is binary data)
     decoded_data[decoded_length] = '\0';
     *output_length = decoded_length;
-    
+
     return decoded_data;
 }

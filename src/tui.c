@@ -1444,10 +1444,10 @@ void tui_clear_conversation(TUIState *tui) {
     // Clear pad and reset content lines
     werase(tui->wm.conv_pad);
     window_manager_set_content_lines(&tui->wm, 0);
-    
+
     // Add a system message indicating the clear
     tui_add_conversation_line(tui, "[System]", "Conversation history cleared", COLOR_PAIR_STATUS);
-    
+
     // Refresh all windows to ensure consistent state
     window_manager_refresh_all(&tui->wm);
 }
