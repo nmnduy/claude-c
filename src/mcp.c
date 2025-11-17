@@ -23,6 +23,7 @@
 #include <fcntl.h>
 #include <cjson/cJSON.h>
 #include "mcp.h"
+#include "base64.h"
 
 #ifndef TEST_BUILD
 #include "logger.h"
@@ -789,32 +790,65 @@ MCPToolResult* mcp_call_tool(MCPServer *server, const char *tool_name, cJSON *ar
     
     result->tool_name = strdup(tool_name);
     result->is_error = 0;
+    result->blob = NULL;
+    result->blob_size = 0;
+    result->mime_type = NULL;
     
-    // MCP returns content array with text items
+    // MCP returns content array with different content types
     cJSON *content = cJSON_GetObjectItem(result_obj, "content");
     if (content && cJSON_IsArray(content)) {
-        // Concatenate all text items
-        size_t total_len = 0;
+        // Process each content item
         cJSON *item = NULL;
         
-        // Calculate total length
         cJSON_ArrayForEach(item, content) {
+            // Check for text content
             cJSON *text = cJSON_GetObjectItem(item, "text");
             if (text && cJSON_IsString(text)) {
-                total_len += strlen(text->valuestring) + 1;
-            }
-        }
-        
-        if (total_len > 0) {
-            result->result = calloc(total_len + 1, 1);
-            if (result->result) {
-                cJSON_ArrayForEach(item, content) {
-                    cJSON *text = cJSON_GetObjectItem(item, "text");
-                    if (text && cJSON_IsString(text)) {
-                        strcat(result->result, text->valuestring);
+                // Handle text content
+                if (!result->result) {
+                    result->result = strdup(text->valuestring);
+                } else {
+                    // Append to existing text with newline
+                    size_t new_len = strlen(result->result) + strlen(text->valuestring) + 2;
+                    char *new_result = realloc(result->result, new_len);
+                    if (new_result) {
+                        result->result = new_result;
                         strcat(result->result, "\n");
+                        strcat(result->result, text->valuestring);
                     }
                 }
+            }
+            
+            // Check for blob (binary) content
+            cJSON *blob = cJSON_GetObjectItem(item, "blob");
+            if (blob && cJSON_IsString(blob)) {
+                // Handle binary content (base64 encoded)
+                const char *blob_str = blob->valuestring;
+                size_t blob_len = strlen(blob_str);
+                
+                // Decode base64
+                size_t decoded_size = 0;
+                unsigned char *decoded_data = base64_decode(blob_str, blob_len, &decoded_size);
+                if (decoded_data) {
+                    result->blob = decoded_data;
+                    result->blob_size = decoded_size;
+                    LOG_DEBUG("MCP: Binary blob content received and decoded (encoded size: %zu, decoded size: %zu)", blob_len, decoded_size);
+                } else {
+                    LOG_WARN("MCP: Failed to decode base64 blob content");
+                    // Fallback: store as-is
+                    result->blob = malloc(blob_len);
+                    if (result->blob) {
+                        memcpy(result->blob, blob_str, blob_len);
+                        result->blob_size = blob_len;
+                        LOG_DEBUG("MCP: Binary blob content stored as-is (size: %zu)", blob_len);
+                    }
+                }
+            }
+            
+            // Check for MIME type
+            cJSON *mime_type = cJSON_GetObjectItem(item, "mimeType");
+            if (mime_type && cJSON_IsString(mime_type) && !result->mime_type) {
+                result->mime_type = strdup(mime_type->valuestring);
             }
         }
     }
@@ -839,6 +873,10 @@ void mcp_free_tool_result(MCPToolResult *result) {
     
     free(result->tool_name);
     free(result->result);
+    free(result->mime_type);
+    if (result->blob) {
+        free(result->blob);
+    }
     free(result);
 }
 

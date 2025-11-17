@@ -143,6 +143,8 @@ WINDOW_MANAGER_SRC = src/window_manager.c
 WINDOW_MANAGER_OBJ = $(BUILD_DIR)/window_manager.o
 TOOL_UTILS_SRC = src/tool_utils.c
 TOOL_UTILS_OBJ = $(BUILD_DIR)/tool_utils.o
+BASE64_SRC = src/base64.c
+BASE64_OBJ = $(BUILD_DIR)/base64.o
 TEST_EDIT_SRC = tests/test_edit.c
 TEST_READ_SRC = tests/test_read.c
 TEST_TODO_SRC = tests/test_todo.c
@@ -162,6 +164,8 @@ TEST_STUBS_SRC = tests/test_stubs.c
 TEST_MCP_SRC = tests/test_mcp.c
 TEST_WM_SRC = tests/test_window_manager.c
 TEST_TOOL_RESULTS_REGRESSION_SRC = tests/test_tool_results_regression.c
+TEST_BASE64_SRC = tests/test_base64.c
+TEST_BASE64_TARGET = $(BUILD_DIR)/test_base64
 TEST_CANCEL_FLOW_TARGET = $(BUILD_DIR)/test_cancel_flow
 TEST_BASH_SUMMARY_TARGET = $(BUILD_DIR)/test_bash_summary
 TEST_BASH_SUMMARY_SRC = tests/test_bash_summary.c
@@ -180,7 +184,7 @@ debug: check-deps $(BUILD_DIR)/claude-c-debug
 
 query-tool: check-deps $(QUERY_TOOL)
 
-test: test-edit test-read test-todo test-paste test-json-parsing test-timing test-openai-format test-write-diff-integration test-rotation test-patch-parser test-thread-cancel test-aws-cred-rotation test-message-queue test-wrap test-mcp test-wm test-bash-summary test-bash-timeout test-cancel-flow test-tool-results-regression
+test: test-edit test-read test-todo test-paste test-json-parsing test-timing test-openai-format test-write-diff-integration test-rotation test-patch-parser test-thread-cancel test-aws-cred-rotation test-message-queue test-wrap test-mcp test-wm test-bash-summary test-bash-timeout test-cancel-flow test-tool-results-regression test-base64
 
 test-edit: check-deps $(TEST_EDIT_TARGET)
 	@echo ""
@@ -309,9 +313,15 @@ test-bash-timeout: check-deps $(TEST_BASH_TIMEOUT_TARGET)
 	@echo ""
 	@./$(TEST_BASH_TIMEOUT_TARGET)
 
-$(TARGET): $(SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(COMMANDS_OBJ) $(COMPLETION_OBJ) $(TUI_OBJ) $(WINDOW_MANAGER_OBJ) $(TODO_OBJ) $(AWS_BEDROCK_OBJ) $(PROVIDER_OBJ) $(OPENAI_PROVIDER_OBJ) $(OPENAI_MESSAGES_OBJ) $(BEDROCK_PROVIDER_OBJ) $(BUILTIN_THEMES_OBJ) $(PATCH_PARSER_OBJ) $(MESSAGE_QUEUE_OBJ) $(AI_WORKER_OBJ) $(VOICE_INPUT_OBJ) $(MCP_OBJ) $(TOOL_UTILS_OBJ) $(HISTORY_FILE_OBJ) $(VERSION_H)
+test-base64: check-deps $(TEST_BASE64_TARGET)
+	@echo ""
+	@echo "Running Base64 encoding/decoding tests..."
+	@echo ""
+	@./$(TEST_BASE64_TARGET)
+
+$(TARGET): $(SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(COMMANDS_OBJ) $(COMPLETION_OBJ) $(TUI_OBJ) $(WINDOW_MANAGER_OBJ) $(TODO_OBJ) $(AWS_BEDROCK_OBJ) $(PROVIDER_OBJ) $(OPENAI_PROVIDER_OBJ) $(OPENAI_MESSAGES_OBJ) $(BEDROCK_PROVIDER_OBJ) $(BUILTIN_THEMES_OBJ) $(PATCH_PARSER_OBJ) $(MESSAGE_QUEUE_OBJ) $(AI_WORKER_OBJ) $(VOICE_INPUT_OBJ) $(MCP_OBJ) $(TOOL_UTILS_OBJ) $(BASE64_OBJ) $(HISTORY_FILE_OBJ) $(VERSION_H)
 	@mkdir -p $(BUILD_DIR)
-	$(CC) $(CFLAGS) -o $(TARGET) $(SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(COMMANDS_OBJ) $(COMPLETION_OBJ) $(TUI_OBJ) $(WINDOW_MANAGER_OBJ) $(TODO_OBJ) $(AWS_BEDROCK_OBJ) $(PROVIDER_OBJ) $(OPENAI_PROVIDER_OBJ) $(OPENAI_MESSAGES_OBJ) $(BEDROCK_PROVIDER_OBJ) $(BUILTIN_THEMES_OBJ) $(PATCH_PARSER_OBJ) $(MESSAGE_QUEUE_OBJ) $(AI_WORKER_OBJ) $(VOICE_INPUT_OBJ) $(MCP_OBJ) $(TOOL_UTILS_OBJ) $(HISTORY_FILE_OBJ) $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $(TARGET) $(SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(COMMANDS_OBJ) $(COMPLETION_OBJ) $(TUI_OBJ) $(WINDOW_MANAGER_OBJ) $(TODO_OBJ) $(AWS_BEDROCK_OBJ) $(PROVIDER_OBJ) $(OPENAI_PROVIDER_OBJ) $(OPENAI_MESSAGES_OBJ) $(BEDROCK_PROVIDER_OBJ) $(BUILTIN_THEMES_OBJ) $(PATCH_PARSER_OBJ) $(MESSAGE_QUEUE_OBJ) $(AI_WORKER_OBJ) $(VOICE_INPUT_OBJ) $(MCP_OBJ) $(TOOL_UTILS_OBJ) $(BASE64_OBJ) $(HISTORY_FILE_OBJ) $(LDFLAGS)
 	@echo ""
 	@echo "✓ Build successful!"
 	@echo "Version: $(VERSION)"
@@ -662,6 +672,10 @@ $(TOOL_UTILS_OBJ): $(TOOL_UTILS_SRC) src/tool_utils.h
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c -o $(TOOL_UTILS_OBJ) $(TOOL_UTILS_SRC)
 
+$(BASE64_OBJ): $(BASE64_SRC) src/base64.h
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c -o $(BASE64_OBJ) $(BASE64_SRC)
+
 # Query tool - utility to inspect API call logs
 $(QUERY_TOOL): $(QUERY_TOOL_SRC) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ)
 	@mkdir -p $(BUILD_DIR)
@@ -800,6 +814,19 @@ $(TEST_TOOL_RESULTS_REGRESSION_TARGET): $(SRC) $(TEST_TOOL_RESULTS_REGRESSION_SR
 	@echo "✓ Tool results regression test build successful!"
 	@echo ""
 
+# Test target for Base64 encoding/decoding
+$(TEST_BASE64_TARGET): $(BASE64_SRC) $(TEST_BASE64_SRC)
+	@mkdir -p $(BUILD_DIR)
+	@echo "Compiling Base64 implementation..."
+	@$(CC) $(CFLAGS) -c -o $(BUILD_DIR)/base64_test.o $(BASE64_SRC)
+	@echo "Compiling Base64 test suite..."
+	@$(CC) $(CFLAGS) -c -o $(BUILD_DIR)/test_base64.o $(TEST_BASE64_SRC)
+	@echo "Linking test executable..."
+	@$(CC) -o $(TEST_BASE64_TARGET) $(BUILD_DIR)/base64_test.o $(BUILD_DIR)/test_base64.o $(LDFLAGS)
+	@echo ""
+	@echo "✓ Base64 test build successful!"
+	@echo ""
+
 # Test target for OpenAI message format validation
 $(TEST_OPENAI_FORMAT_TARGET): $(TEST_OPENAI_FORMAT_SRC)
 	@mkdir -p $(BUILD_DIR)
@@ -908,10 +935,10 @@ $(TEST_TEXT_WRAP_TARGET): tests/test_text_wrap.c
 	@echo "✓ Text Wrapping test build successful!"
 	@echo ""
 
-$(TEST_MCP_TARGET): $(TEST_MCP_SRC) $(MCP_OBJ)
+$(TEST_MCP_TARGET): $(TEST_MCP_SRC) $(MCP_OBJ) $(BASE64_OBJ)
 	@mkdir -p $(BUILD_DIR)
 	@echo "Compiling MCP integration tests..."
-	@$(CC) $(CFLAGS) -o $(TEST_MCP_TARGET) $(TEST_MCP_SRC) $(MCP_OBJ) $(LDFLAGS)
+	@$(CC) $(CFLAGS) -o $(TEST_MCP_TARGET) $(TEST_MCP_SRC) $(MCP_OBJ) $(BASE64_OBJ) $(LDFLAGS)
 	@echo ""
 	@echo "✓ MCP test build successful!"
 	@echo ""

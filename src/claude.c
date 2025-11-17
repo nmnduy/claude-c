@@ -127,6 +127,9 @@ static int bedrock_handle_auth_error(BedrockConfig *config, long http_status, co
 #include "mcp.h"
 #endif
 
+// Base64 encoding/decoding for binary content
+#include "base64.h"
+
 #ifdef TEST_BUILD
 #define main claude_main
 #endif
@@ -2365,9 +2368,36 @@ static cJSON* tool_call_mcp_tool(cJSON *params, ConversationState *state) {
                  call_result->result ? call_result->result : "MCP tool error");
         cJSON_AddStringToObject(result, "error", call_result->result ? call_result->result : "MCP tool error");
     } else {
-        LOG_DEBUG("tool_call_mcp_tool: MCP tool call succeeded, result length: %zu", 
-                 call_result->result ? strlen(call_result->result) : 0);
-        cJSON_AddStringToObject(result, "content", call_result->result ? call_result->result : "");
+        LOG_DEBUG("tool_call_mcp_tool: MCP tool call succeeded, result length: %zu, blob size: %zu, mime_type: %s", 
+                 call_result->result ? strlen(call_result->result) : 0,
+                 call_result->blob_size,
+                 call_result->mime_type ? call_result->mime_type : "none");
+        
+        // Handle different content types
+        if (call_result->blob && call_result->blob_size > 0) {
+            // Binary content (e.g., images)
+            cJSON_AddStringToObject(result, "content_type", "binary");
+            cJSON_AddStringToObject(result, "mime_type", call_result->mime_type ? call_result->mime_type : "application/octet-stream");
+            
+            // Encode binary data as base64
+            size_t encoded_size = 0;
+            char *encoded_data = base64_encode(call_result->blob, call_result->blob_size, &encoded_size);
+            if (encoded_data) {
+                cJSON_AddStringToObject(result, "content", encoded_data);
+                free(encoded_data);
+                LOG_DEBUG("tool_call_mcp_tool: Binary content encoded as base64 (original size: %zu bytes, encoded size: %zu)", call_result->blob_size, encoded_size);
+            } else {
+                LOG_WARN("tool_call_mcp_tool: Failed to base64 encode binary content");
+                cJSON_AddStringToObject(result, "content", "[binary data received - base64 encoding failed]");
+            }
+        } else {
+            // Text content
+            cJSON_AddStringToObject(result, "content_type", "text");
+            if (call_result->mime_type) {
+                cJSON_AddStringToObject(result, "mime_type", call_result->mime_type);
+            }
+            cJSON_AddStringToObject(result, "content", call_result->result ? call_result->result : "");
+        }
     }
 
     mcp_free_tool_result(call_result);
@@ -2450,8 +2480,36 @@ static cJSON* execute_tool(const char *tool_name, cJSON *input, ConversationStat
                                 mcp_result->result ? mcp_result->result : "MCP tool error");
                         cJSON_AddStringToObject(result, "error", mcp_result->result ? mcp_result->result : "MCP tool error");
                     } else {
-                        LOG_DEBUG("execute_tool: MCP tool returned success");
-                        cJSON_AddStringToObject(result, "content", mcp_result->result ? mcp_result->result : "");
+                        LOG_DEBUG("execute_tool: MCP tool returned success, result length: %zu, blob size: %zu, mime_type: %s", 
+                                 mcp_result->result ? strlen(mcp_result->result) : 0,
+                                 mcp_result->blob_size,
+                                 mcp_result->mime_type ? mcp_result->mime_type : "none");
+                        
+                        // Handle different content types
+                        if (mcp_result->blob && mcp_result->blob_size > 0) {
+                            // Binary content (e.g., images)
+                            cJSON_AddStringToObject(result, "content_type", "binary");
+                            cJSON_AddStringToObject(result, "mime_type", mcp_result->mime_type ? mcp_result->mime_type : "application/octet-stream");
+                            
+                            // Encode binary data as base64
+                            size_t encoded_size = 0;
+                            char *encoded_data = base64_encode(mcp_result->blob, mcp_result->blob_size, &encoded_size);
+                            if (encoded_data) {
+                                cJSON_AddStringToObject(result, "content", encoded_data);
+                                free(encoded_data);
+                                LOG_DEBUG("execute_tool: Binary content encoded as base64 (original size: %zu bytes, encoded size: %zu)", mcp_result->blob_size, encoded_size);
+                            } else {
+                                LOG_WARN("execute_tool: Failed to base64 encode binary content");
+                                cJSON_AddStringToObject(result, "content", "[binary data received - base64 encoding failed]");
+                            }
+                        } else {
+                            // Text content
+                            cJSON_AddStringToObject(result, "content_type", "text");
+                            if (mcp_result->mime_type) {
+                                cJSON_AddStringToObject(result, "mime_type", mcp_result->mime_type);
+                            }
+                            cJSON_AddStringToObject(result, "content", mcp_result->result ? mcp_result->result : "");
+                        }
                     }
                     
                     mcp_free_tool_result(mcp_result);
