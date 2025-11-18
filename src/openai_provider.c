@@ -211,6 +211,9 @@ static ApiCallResult openai_call_api(Provider *self, ConversationState *state) {
             return result;
         }
 
+        // Initialize error_message to NULL
+        api_response->error_message = NULL;
+
         // Keep raw response for history
         api_response->raw_response = raw_json;
 
