@@ -127,6 +127,7 @@ typedef struct {
     ToolCall *tools;          // Array of tool calls (NULL if no tools)
     int tool_count;           // Number of tool calls
     cJSON *raw_response;      // Raw response for adding to history (owned, must be freed)
+    char *error_message;      // Error message if API call failed (owned, must be freed)
 } ApiResponse;
 
 /**

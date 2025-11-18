@@ -3362,6 +3362,9 @@ void api_response_free(ApiResponse *response) {
         cJSON_Delete(response->raw_response);
     }
 
+    // Free error message
+    free(response->error_message);
+
     free(response);
 }
 
@@ -3512,10 +3515,16 @@ static ApiResponse* call_api_with_retries(ConversationState *state) {
                     result.http_status);
             print_error(error_msg);
 
+            // Create an error response instead of returning NULL
+            ApiResponse *error_response = calloc(1, sizeof(ApiResponse));
+            if (error_response) {
+                error_response->error_message = strdup(result.error_message ? result.error_message : "unknown error");
+            }
+
             free(result.raw_response);
             free(result.request_json);
             free(result.error_message);
-            return NULL;
+            return error_response;
         }
 
         // Calculate backoff with jitter (0-25% reduction)
@@ -4620,6 +4629,13 @@ static void ai_worker_handle_instruction(AIWorkerContext *ctx, const AIInstructi
         return;
     }
 
+    // Check if response contains an error message
+    if (response->error_message) {
+        ui_show_error(NULL, ctx->tui_queue, response->error_message);
+        api_response_free(response);
+        return;
+    }
+
     cJSON *error = cJSON_GetObjectItem(response->raw_response, "error");
     if (error) {
         cJSON *error_message = cJSON_GetObjectItem(error, "message");
@@ -4834,6 +4850,14 @@ static int submit_input_callback(const char *input, void *user_data) {
 
         if (!response) {
             ui_show_error(tui, queue, "Failed to get response from API");
+            free(input_copy);
+            return 0;
+        }
+
+        // Check if response contains an error message
+        if (response->error_message) {
+            ui_show_error(tui, queue, response->error_message);
+            api_response_free(response);
             free(input_copy);
             return 0;
         }
