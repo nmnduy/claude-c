@@ -696,6 +696,112 @@ out:
 }
 
 // ============================================================================
+// Binary File Handling for MCP Tools
+// ============================================================================
+
+/**
+ * Save binary data to a file
+ * Returns: 0 on success, -1 on error
+ */
+static int save_binary_file(const char *filename, const void *data, size_t size) {
+    if (!filename || !data || size == 0) {
+        return -1;
+    }
+
+    // Create parent directories if they don't exist
+    char *path_copy = strdup(filename);
+    if (!path_copy) return -1;
+
+    // Extract directory path
+    char *dir_path = dirname(path_copy);
+
+    // Create directory recursively (ignore errors if directory already exists)
+    char mkdir_cmd[PATH_MAX];
+    snprintf(mkdir_cmd, sizeof(mkdir_cmd), "mkdir -p '%s' 2>/dev/null", dir_path);
+    int mkdir_result = system(mkdir_cmd);
+    (void)mkdir_result; // Suppress unused result warning
+
+    free(path_copy);
+
+    // Open file for writing
+    FILE *f = fopen(filename, "wb");
+    if (!f) {
+        LOG_ERROR("Failed to open file for binary writing: %s", filename);
+        return -1;
+    }
+
+    // Write binary data
+    size_t written = fwrite(data, 1, size, f);
+    fclose(f);
+
+    if (written != size) {
+        LOG_ERROR("Failed to write all binary data to file: %s (written: %zu, expected: %zu)",
+                 filename, written, size);
+        return -1;
+    }
+
+    LOG_DEBUG("Successfully saved binary data to '%s' (%zu bytes)", filename, size);
+    return 0;
+}
+
+/**
+ * Generate timestamped filename
+ * Format: <prefix>_YYYYMMDD_HHMMSS.<extension>
+ */
+static void generate_timestamped_filename(char *buffer, size_t buffer_size,
+                                         const char *prefix, const char *mime_type) {
+    if (!buffer || buffer_size == 0) return;
+
+    // Get current time
+    time_t now = time(NULL);
+    struct tm *tm_info = localtime(&now);
+
+    // Determine file extension from MIME type
+    const char *extension = "bin";
+    if (mime_type) {
+        if (strcmp(mime_type, "image/png") == 0) {
+            extension = "png";
+        } else if (strcmp(mime_type, "image/jpeg") == 0 || strcmp(mime_type, "image/jpg") == 0) {
+            extension = "jpg";
+        } else if (strcmp(mime_type, "image/gif") == 0) {
+            extension = "gif";
+        } else if (strcmp(mime_type, "image/webp") == 0) {
+            extension = "webp";
+        } else if (strncmp(mime_type, "image/", 6) == 0) {
+            // Generic image type
+            extension = "img";
+        }
+    }
+
+    // Generate filename
+    snprintf(buffer, buffer_size, "%s_%04d%02d%02d_%02d%02d%02d.%s",
+             prefix ? prefix : "file",
+             tm_info->tm_year + 1900, tm_info->tm_mon + 1, tm_info->tm_mday,
+             tm_info->tm_hour, tm_info->tm_min, tm_info->tm_sec,
+             extension);
+}
+
+/**
+ * Format file size in human-readable format
+ * Returns: Static buffer with formatted size (not thread-safe)
+ */
+static const char* format_file_size(size_t size) {
+    static char buffer[32];
+
+    if (size < 1024) {
+        snprintf(buffer, sizeof(buffer), "%zu B", size);
+    } else if (size < 1024 * 1024) {
+        snprintf(buffer, sizeof(buffer), "%.1f KB", (double)size / 1024);
+    } else if (size < 1024 * 1024 * 1024) {
+        snprintf(buffer, sizeof(buffer), "%.1f MB", (double)size / (1024 * 1024));
+    } else {
+        snprintf(buffer, sizeof(buffer), "%.1f GB", (double)size / (1024 * 1024 * 1024));
+    }
+
+    return buffer;
+}
+
+// ============================================================================
 // Diff Functionality
 // ============================================================================
 
@@ -2375,20 +2481,46 @@ static cJSON* tool_call_mcp_tool(cJSON *params, ConversationState *state) {
 
         // Handle different content types
         if (call_result->blob && call_result->blob_size > 0) {
-            // Binary content (e.g., images)
-            cJSON_AddStringToObject(result, "content_type", "binary");
-            cJSON_AddStringToObject(result, "mime_type", call_result->mime_type ? call_result->mime_type : "application/octet-stream");
+            // Binary content (e.g., images) - auto-save to file
+            const char *mime_type = call_result->mime_type ? call_result->mime_type : "application/octet-stream";
 
-            // Encode binary data as base64
-            size_t encoded_size = 0;
-            char *encoded_data = base64_encode(call_result->blob, call_result->blob_size, &encoded_size);
-            if (encoded_data) {
-                cJSON_AddStringToObject(result, "content", encoded_data);
-                free(encoded_data);
-                LOG_DEBUG("tool_call_mcp_tool: Binary content encoded as base64 (original size: %zu bytes, encoded size: %zu)", call_result->blob_size, encoded_size);
+            // Generate appropriate filename based on tool and MIME type
+            char filename[256];
+            if (strncmp(tool_name, "screenshot", 10) == 0 ||
+                strncmp(tool_name, "take_screenshot", 15) == 0) {
+                generate_timestamped_filename(filename, sizeof(filename), "screenshot", mime_type);
+            } else if (strncmp(mime_type, "image/", 6) == 0) {
+                generate_timestamped_filename(filename, sizeof(filename), "image", mime_type);
             } else {
-                LOG_WARN("tool_call_mcp_tool: Failed to base64 encode binary content");
-                cJSON_AddStringToObject(result, "content", "[binary data received - base64 encoding failed]");
+                generate_timestamped_filename(filename, sizeof(filename), "file", mime_type);
+            }
+
+            // Save binary data to file
+            int save_result = save_binary_file(filename, call_result->blob, call_result->blob_size);
+
+            if (save_result == 0) {
+                // Success - return file info, not binary data
+                cJSON_AddStringToObject(result, "status", "success");
+                cJSON_AddStringToObject(result, "message", "Binary content saved to file");
+                cJSON_AddStringToObject(result, "file_path", filename);
+                cJSON_AddStringToObject(result, "file_type", mime_type);
+                cJSON_AddNumberToObject(result, "file_size_bytes", call_result->blob_size);
+                cJSON_AddStringToObject(result, "file_size_human", format_file_size(call_result->blob_size));
+                LOG_INFO("tool_call_mcp_tool: Saved binary content to '%s' (%zu bytes)", filename, call_result->blob_size);
+            } else {
+                // Failed to save - fall back to base64 (but this shouldn't happen)
+                LOG_WARN("tool_call_mcp_tool: Failed to save binary content to file, falling back to base64");
+                cJSON_AddStringToObject(result, "content_type", "binary");
+                cJSON_AddStringToObject(result, "mime_type", mime_type);
+
+                size_t encoded_size = 0;
+                char *encoded_data = base64_encode(call_result->blob, call_result->blob_size, &encoded_size);
+                if (encoded_data) {
+                    cJSON_AddStringToObject(result, "content", encoded_data);
+                    free(encoded_data);
+                } else {
+                    cJSON_AddStringToObject(result, "content", "[binary data received - saving and encoding failed]");
+                }
             }
         } else {
             // Text content
@@ -2487,20 +2619,46 @@ static cJSON* execute_tool(const char *tool_name, cJSON *input, ConversationStat
 
                         // Handle different content types
                         if (mcp_result->blob && mcp_result->blob_size > 0) {
-                            // Binary content (e.g., images)
-                            cJSON_AddStringToObject(result, "content_type", "binary");
-                            cJSON_AddStringToObject(result, "mime_type", mcp_result->mime_type ? mcp_result->mime_type : "application/octet-stream");
+                            // Binary content (e.g., images) - auto-save to file
+                            const char *mime_type = mcp_result->mime_type ? mcp_result->mime_type : "application/octet-stream";
 
-                            // Encode binary data as base64
-                            size_t encoded_size = 0;
-                            char *encoded_data = base64_encode(mcp_result->blob, mcp_result->blob_size, &encoded_size);
-                            if (encoded_data) {
-                                cJSON_AddStringToObject(result, "content", encoded_data);
-                                free(encoded_data);
-                                LOG_DEBUG("execute_tool: Binary content encoded as base64 (original size: %zu bytes, encoded size: %zu)", mcp_result->blob_size, encoded_size);
+                            // Generate appropriate filename based on tool and MIME type
+                            char filename[256];
+                            if (strncmp(actual_tool_name, "screenshot", 10) == 0 ||
+                                strncmp(actual_tool_name, "take_screenshot", 15) == 0) {
+                                generate_timestamped_filename(filename, sizeof(filename), "screenshot", mime_type);
+                            } else if (strncmp(mime_type, "image/", 6) == 0) {
+                                generate_timestamped_filename(filename, sizeof(filename), "image", mime_type);
                             } else {
-                                LOG_WARN("execute_tool: Failed to base64 encode binary content");
-                                cJSON_AddStringToObject(result, "content", "[binary data received - base64 encoding failed]");
+                                generate_timestamped_filename(filename, sizeof(filename), "file", mime_type);
+                            }
+
+                            // Save binary data to file
+                            int save_result = save_binary_file(filename, mcp_result->blob, mcp_result->blob_size);
+
+                            if (save_result == 0) {
+                                // Success - return file info, not binary data
+                                cJSON_AddStringToObject(result, "status", "success");
+                                cJSON_AddStringToObject(result, "message", "Binary content saved to file");
+                                cJSON_AddStringToObject(result, "file_path", filename);
+                                cJSON_AddStringToObject(result, "file_type", mime_type);
+                                cJSON_AddNumberToObject(result, "file_size_bytes", mcp_result->blob_size);
+                                cJSON_AddStringToObject(result, "file_size_human", format_file_size(mcp_result->blob_size));
+                                LOG_INFO("execute_tool: Saved binary content to '%s' (%zu bytes)", filename, mcp_result->blob_size);
+                            } else {
+                                // Failed to save - fall back to base64 (but this shouldn't happen)
+                                LOG_WARN("execute_tool: Failed to save binary content to file, falling back to base64");
+                                cJSON_AddStringToObject(result, "content_type", "binary");
+                                cJSON_AddStringToObject(result, "mime_type", mime_type);
+
+                                size_t encoded_size = 0;
+                                char *encoded_data = base64_encode(mcp_result->blob, mcp_result->blob_size, &encoded_size);
+                                if (encoded_data) {
+                                    cJSON_AddStringToObject(result, "content", encoded_data);
+                                    free(encoded_data);
+                                } else {
+                                    cJSON_AddStringToObject(result, "content", "[binary data received - saving and encoding failed]");
+                                }
                             }
                         } else {
                             // Text content
