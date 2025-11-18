@@ -27,9 +27,6 @@ VERSION := $(shell cat $(VERSION_FILE) 2>/dev/null || echo "unknown")
 BUILD_DATE := $(shell date +%Y-%m-%d)
 VERSION_H := src/version.h
 
-# Detect OS for library linking
-UNAME_S := $(shell uname -s)
-
 ifeq ($(UNAME_S),Darwin)
     # macOS - check for Homebrew installation
     HOMEBREW_PREFIX := $(shell brew --prefix 2>/dev/null)
@@ -980,7 +977,11 @@ clean:
 # Format: Remove trailing whitespaces from source files
 fmt-whitespace:
 	@echo "Removing trailing whitespaces from source files..."
+ifeq ($(UNAME_S),Darwin)
+	@find src tests tools -type f \( -name "*.c" -o -name "*.h" \) -exec sed -i '' 's/[[:space:]]*$$//' {} +
+else
 	@find src tests tools -type f \( -name "*.c" -o -name "*.h" \) -exec sed -i 's/[[:space:]]*$$//' {} +
+endif
 	@echo "✓ Trailing whitespaces removed"
 
 check-deps:
