@@ -554,6 +554,7 @@ cJSON* tool_edit(cJSON *params, ConversationState *state);
 cJSON* tool_todo_write(cJSON *params, ConversationState *state);
 cJSON* tool_bash(cJSON *params, ConversationState *state);
 static cJSON* tool_sleep(cJSON *params, ConversationState *state);
+static cJSON* tool_upload_image(cJSON *params, ConversationState *state);
 #else
 #define STATIC static
 // Forward declarations
@@ -692,6 +693,105 @@ int add_directory(ConversationState *state, const char *path) {
 out:
     conversation_state_unlock(state);
     free(resolved_path);
+    return result;
+}
+
+static cJSON* tool_upload_image(cJSON *params, ConversationState *state) {
+    const cJSON *path_json = cJSON_GetObjectItem(params, "file_path");
+    
+    if (!path_json || !cJSON_IsString(path_json)) {
+        cJSON *error = cJSON_CreateObject();
+        cJSON_AddStringToObject(error, "error", "Missing 'file_path' parameter");
+        return error;
+    }
+
+    const char *image_path = path_json->valuestring;
+    
+    // Check for interrupt before starting
+    if (state && state->interrupt_requested) {
+        cJSON *error = cJSON_CreateObject();
+        cJSON_AddStringToObject(error, "error", "Operation interrupted by user");
+        return error;
+    }
+
+    // Read the image file as binary
+    FILE *f = fopen(image_path, "rb");
+    if (!f) {
+        cJSON *error = cJSON_CreateObject();
+        cJSON_AddStringToObject(error, "error", "Failed to open image file");
+        return error;
+    }
+
+    // Get file size
+    fseek(f, 0, SEEK_END);
+    long file_size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+
+    if (file_size <= 0) {
+        fclose(f);
+        cJSON *error = cJSON_CreateObject();
+        cJSON_AddStringToObject(error, "error", "Image file is empty or invalid");
+        return error;
+    }
+
+    // Read file content
+    unsigned char *image_data = malloc((size_t)file_size);
+    if (!image_data) {
+        fclose(f);
+        cJSON *error = cJSON_CreateObject();
+        cJSON_AddStringToObject(error, "error", "Memory allocation failed");
+        return error;
+    }
+
+    size_t bytes_read = fread(image_data, 1, (size_t)file_size, f);
+    fclose(f);
+
+    if (bytes_read != (size_t)file_size) {
+        free(image_data);
+        cJSON *error = cJSON_CreateObject();
+        cJSON_AddStringToObject(error, "error", "Failed to read entire image file");
+        return error;
+    }
+
+    // Base64 encode the image
+    size_t encoded_size = 0;
+    char *base64_data = base64_encode(image_data, (size_t)file_size, &encoded_size);
+    free(image_data);
+
+    if (!base64_data) {
+        cJSON *error = cJSON_CreateObject();
+        cJSON_AddStringToObject(error, "error", "Failed to encode image as base64");
+        return error;
+    }
+
+    // Determine MIME type from file extension
+    const char *mime_type = "image/jpeg"; // default
+    const char *ext = strrchr(image_path, '.');
+    if (ext) {
+        if (strcasecmp(ext, ".png") == 0) {
+            mime_type = "image/png";
+        } else if (strcasecmp(ext, ".jpg") == 0 || strcasecmp(ext, ".jpeg") == 0) {
+            mime_type = "image/jpeg";
+        } else if (strcasecmp(ext, ".gif") == 0) {
+            mime_type = "image/gif";
+        } else if (strcasecmp(ext, ".webp") == 0) {
+            mime_type = "image/webp";
+        }
+    }
+
+    // Create an image content block instead of a regular tool result
+    // This will be handled specially in the message building logic
+    cJSON *result = cJSON_CreateObject();
+    cJSON_AddStringToObject(result, "status", "success");
+    cJSON_AddStringToObject(result, "message", "Image uploaded successfully");
+    cJSON_AddStringToObject(result, "file_path", image_path);
+    cJSON_AddStringToObject(result, "mime_type", mime_type);
+    cJSON_AddNumberToObject(result, "file_size_bytes", file_size);
+    cJSON_AddStringToObject(result, "base64_data", base64_data);
+    cJSON_AddStringToObject(result, "content_type", "image"); // Special marker for image content
+    
+    free(base64_data);
+    
     return result;
 }
 
@@ -1565,11 +1665,26 @@ static void *tool_thread_func(void *arg) {
     cJSON_Delete(t->input);
     t->input = NULL;  // Mark as freed for cleanup handler
     // Populate result block
-    t->result_block->type = INTERNAL_TOOL_RESPONSE;
-    t->result_block->tool_id = t->tool_use_id;
-    t->result_block->tool_name = strdup(t->tool_name);  // Store tool name for error reporting
-    t->result_block->tool_output = res;
-   t->result_block->is_error = cJSON_HasObjectItem(res, "error");
+    // Check if this is an image upload result
+    const cJSON *content_type = cJSON_GetObjectItem(res, "content_type");
+    if (content_type && cJSON_IsString(content_type) && strcmp(content_type->valuestring, "image") == 0) {
+        // This is an image upload - create image content instead of tool response
+        t->result_block->type = INTERNAL_IMAGE;
+        t->result_block->image_path = strdup(cJSON_GetObjectItem(res, "file_path")->valuestring);
+        t->result_block->mime_type = strdup(cJSON_GetObjectItem(res, "mime_type")->valuestring);
+        t->result_block->base64_data = strdup(cJSON_GetObjectItem(res, "base64_data")->valuestring);
+        t->result_block->image_size = (size_t)cJSON_GetObjectItem(res, "file_size_bytes")->valueint;
+        t->result_block->is_error = 0;
+        // Free the result JSON since we've extracted the data
+        cJSON_Delete(res);
+    } else {
+        // Regular tool response
+        t->result_block->type = INTERNAL_TOOL_RESPONSE;
+        t->result_block->tool_id = t->tool_use_id;
+        t->result_block->tool_name = strdup(t->tool_name);  // Store tool name for error reporting
+        t->result_block->tool_output = res;
+        t->result_block->is_error = cJSON_HasObjectItem(res, "error");
+    }
 
     tool_tracker_notify_completion(t);
 
@@ -2613,6 +2728,7 @@ static Tool tools[] = {
     {"Glob", tool_glob},
     {"Grep", tool_grep},
     {"TodoWrite", tool_todo_write},
+    {"UploadImage", tool_upload_image},
 #ifndef TEST_BUILD
     {"ListMcpResources", tool_list_mcp_resources},
     {"ReadMcpResource", tool_read_mcp_resource},
@@ -2982,6 +3098,28 @@ cJSON* get_tool_definitions(ConversationState *state, int enable_caching) {
     cJSON_AddItemToObject(grep_tool, "function", grep_func);
     cJSON_AddItemToArray(tool_array, grep_tool);
 
+    // UploadImage tool
+    cJSON *upload_image_tool = cJSON_CreateObject();
+    cJSON_AddStringToObject(upload_image_tool, "type", "function");
+    cJSON *upload_image_func = cJSON_CreateObject();
+    cJSON_AddStringToObject(upload_image_func, "name", "UploadImage");
+    cJSON_AddStringToObject(upload_image_func, "description",
+        "Uploads an image file to be included in the conversation context using OpenAI-compatible format. Supports common image formats (PNG, JPEG, GIF, WebP).");
+    cJSON *upload_image_params = cJSON_CreateObject();
+    cJSON_AddStringToObject(upload_image_params, "type", "object");
+    cJSON *upload_image_props = cJSON_CreateObject();
+    cJSON *image_path_prop = cJSON_CreateObject();
+    cJSON_AddStringToObject(image_path_prop, "type", "string");
+    cJSON_AddStringToObject(image_path_prop, "description", "Path to the image file to upload");
+    cJSON_AddItemToObject(upload_image_props, "file_path", image_path_prop);
+    cJSON_AddItemToObject(upload_image_params, "properties", upload_image_props);
+    cJSON *upload_image_req = cJSON_CreateArray();
+    cJSON_AddItemToArray(upload_image_req, cJSON_CreateString("file_path"));
+    cJSON_AddItemToObject(upload_image_params, "required", upload_image_req);
+    cJSON_AddItemToObject(upload_image_func, "parameters", upload_image_params);
+    cJSON_AddItemToObject(upload_image_tool, "function", upload_image_func);
+    cJSON_AddItemToArray(tool_array, upload_image_tool);
+
     // TodoWrite tool
     cJSON *todo_tool = cJSON_CreateObject();
     cJSON_AddStringToObject(todo_tool, "type", "function");
@@ -3300,27 +3438,54 @@ char* build_request_json_from_state(ConversationState *state) {
                 cJSON_Delete(msg);
                 continue; // Skip adding the user message itself
             } else {
-                // Regular user text message
-                if (state->messages[i].content_count > 0 &&
-                    state->messages[i].contents[0].type == INTERNAL_TEXT) {
-
-                    // Use content array for recent messages to support cache_control
+                // Regular user message - handle text and image content
+                if (state->messages[i].content_count > 0) {
+                    // Use content array for recent messages to support cache_control and mixed content
                     if (is_recent_message) {
                         cJSON *content_array = cJSON_CreateArray();
-                        cJSON *text_block = cJSON_CreateObject();
-                        cJSON_AddStringToObject(text_block, "type", "text");
-                        cJSON_AddStringToObject(text_block, "text", state->messages[i].contents[0].text);
+                        
+                        for (int j = 0; j < state->messages[i].content_count; j++) {
+                            InternalContent *cb = &state->messages[i].contents[j];
+                            
+                            if (cb->type == INTERNAL_TEXT) {
+                                // Text content
+                                cJSON *text_block = cJSON_CreateObject();
+                                cJSON_AddStringToObject(text_block, "type", "text");
+                                cJSON_AddStringToObject(text_block, "text", cb->text);
 
-                        // Add cache_control to the last user message
-                        if (i == state->count - 1) {
-                            add_cache_control(text_block);
+                                // Add cache_control to the last user message
+                                if (i == state->count - 1) {
+                                    add_cache_control(text_block);
+                                }
+
+                                cJSON_AddItemToArray(content_array, text_block);
+                            } else if (cb->type == INTERNAL_IMAGE) {
+                                // Image content - OpenAI format
+                                cJSON *image_block = cJSON_CreateObject();
+                                cJSON_AddStringToObject(image_block, "type", "image_url");
+                                cJSON *image_url = cJSON_CreateObject();
+                                
+                                // Calculate required buffer size for data URL
+                                size_t data_url_size = strlen("data:") + strlen(cb->mime_type) + 
+                                                     strlen(";base64,") + strlen(cb->base64_data) + 1;
+                                char *data_url = malloc(data_url_size);
+                                if (data_url) {
+                                    snprintf(data_url, data_url_size, "data:%s;base64,%s", 
+                                             cb->mime_type, cb->base64_data);
+                                    cJSON_AddStringToObject(image_url, "url", data_url);
+                                    free(data_url);
+                                }
+                                cJSON_AddItemToObject(image_block, "image_url", image_url);
+                                cJSON_AddItemToArray(content_array, image_block);
+                            }
                         }
-
-                        cJSON_AddItemToArray(content_array, text_block);
+                        
                         cJSON_AddItemToObject(msg, "content", content_array);
                     } else {
-                        // For older messages, use simple string content
-                        cJSON_AddStringToObject(msg, "content", state->messages[i].contents[0].text);
+                        // For older messages, use simple string content (images not supported in simple format)
+                        if (state->messages[i].contents[0].type == INTERNAL_TEXT) {
+                            cJSON_AddStringToObject(msg, "content", state->messages[i].contents[0].text);
+                        }
                     }
                 }
             }
@@ -4184,6 +4349,13 @@ static void free_internal_contents(InternalContent *results, int count) {
         free(cb->tool_name);
         if (cb->tool_params) cJSON_Delete(cb->tool_params);
         if (cb->tool_output) cJSON_Delete(cb->tool_output);
+        
+        // Handle INTERNAL_IMAGE type
+        if (cb->type == INTERNAL_IMAGE) {
+            free(cb->image_path);
+            free(cb->mime_type);
+            free(cb->base64_data);
+        }
     }
     free(results);
 }

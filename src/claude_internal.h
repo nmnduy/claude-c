@@ -75,7 +75,8 @@ typedef enum {
 typedef enum {
     INTERNAL_TEXT,           // Plain text content
     INTERNAL_TOOL_CALL,      // Agent requesting tool execution
-    INTERNAL_TOOL_RESPONSE   // Result from tool execution
+    INTERNAL_TOOL_RESPONSE,  // Result from tool execution
+    INTERNAL_IMAGE           // Image content for upload
 } InternalContentType;
 
 // ============================================================================
@@ -98,6 +99,12 @@ typedef struct {
     cJSON *tool_params;      // Tool parameters (for TOOL_CALL)
     cJSON *tool_output;      // Tool execution result (for TOOL_RESPONSE)
     int is_error;            // Whether tool execution failed (for TOOL_RESPONSE)
+
+    // For INTERNAL_IMAGE
+    char *image_path;        // Path to the image file
+    char *mime_type;         // MIME type of the image
+    char *base64_data;       // Base64 encoded image data
+    size_t image_size;       // Size of the image in bytes
 } InternalContent;
 
 /**
