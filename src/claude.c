@@ -698,7 +698,7 @@ out:
 
 static cJSON* tool_upload_image(cJSON *params, ConversationState *state) {
     const cJSON *path_json = cJSON_GetObjectItem(params, "file_path");
-    
+
     if (!path_json || !cJSON_IsString(path_json)) {
         cJSON *error = cJSON_CreateObject();
         cJSON_AddStringToObject(error, "error", "Missing 'file_path' parameter");
@@ -706,7 +706,7 @@ static cJSON* tool_upload_image(cJSON *params, ConversationState *state) {
     }
 
     const char *image_path = path_json->valuestring;
-    
+
     // Check for interrupt before starting
     if (state && state->interrupt_requested) {
         cJSON *error = cJSON_CreateObject();
@@ -789,9 +789,9 @@ static cJSON* tool_upload_image(cJSON *params, ConversationState *state) {
     cJSON_AddNumberToObject(result, "file_size_bytes", file_size);
     cJSON_AddStringToObject(result, "base64_data", base64_data);
     cJSON_AddStringToObject(result, "content_type", "image"); // Special marker for image content
-    
+
     free(base64_data);
-    
+
     return result;
 }
 
@@ -3443,10 +3443,10 @@ char* build_request_json_from_state(ConversationState *state) {
                     // Use content array for recent messages to support cache_control and mixed content
                     if (is_recent_message) {
                         cJSON *content_array = cJSON_CreateArray();
-                        
+
                         for (int j = 0; j < state->messages[i].content_count; j++) {
                             InternalContent *cb = &state->messages[i].contents[j];
-                            
+
                             if (cb->type == INTERNAL_TEXT) {
                                 // Text content
                                 cJSON *text_block = cJSON_CreateObject();
@@ -3464,13 +3464,13 @@ char* build_request_json_from_state(ConversationState *state) {
                                 cJSON *image_block = cJSON_CreateObject();
                                 cJSON_AddStringToObject(image_block, "type", "image_url");
                                 cJSON *image_url = cJSON_CreateObject();
-                                
+
                                 // Calculate required buffer size for data URL
-                                size_t data_url_size = strlen("data:") + strlen(cb->mime_type) + 
+                                size_t data_url_size = strlen("data:") + strlen(cb->mime_type) +
                                                      strlen(";base64,") + strlen(cb->base64_data) + 1;
                                 char *data_url = malloc(data_url_size);
                                 if (data_url) {
-                                    snprintf(data_url, data_url_size, "data:%s;base64,%s", 
+                                    snprintf(data_url, data_url_size, "data:%s;base64,%s",
                                              cb->mime_type, cb->base64_data);
                                     cJSON_AddStringToObject(image_url, "url", data_url);
                                     free(data_url);
@@ -3479,7 +3479,7 @@ char* build_request_json_from_state(ConversationState *state) {
                                 cJSON_AddItemToArray(content_array, image_block);
                             }
                         }
-                        
+
                         cJSON_AddItemToObject(msg, "content", content_array);
                     } else {
                         // For older messages, use simple string content (images not supported in simple format)
@@ -4349,7 +4349,7 @@ static void free_internal_contents(InternalContent *results, int count) {
         free(cb->tool_name);
         if (cb->tool_params) cJSON_Delete(cb->tool_params);
         if (cb->tool_output) cJSON_Delete(cb->tool_output);
-        
+
         // Handle INTERNAL_IMAGE type
         if (cb->type == INTERNAL_IMAGE) {
             free(cb->image_path);
@@ -4686,6 +4686,8 @@ static void process_response(ConversationState *state,
                     for (int t = 0; t < started_threads; t++) {
                         pthread_cancel(threads[t]);
                     }
+                    // Reset interrupt flag immediately after cancelling threads
+                    state->interrupt_requested = 0;
                     break;
                 }
 
@@ -4758,6 +4760,8 @@ static void process_response(ConversationState *state,
             } else {
                 ui_set_status(tui, queue, "Interrupted by user (Ctrl+C) - tools terminated");
             }
+            // Reset interrupt flag after tool execution is interrupted
+            state->interrupt_requested = 0;
         }
 
         if (!tui && !queue) {
@@ -4917,7 +4921,7 @@ static int interrupt_callback(void *user_data) {
 
     // Check if there's work in progress
     int queue_depth = instr_queue ? ai_queue_depth(instr_queue) : 0;
-    int work_in_progress = (queue_depth > 0) || state->interrupt_requested;
+    int work_in_progress = (queue_depth > 0);
 
     if (work_in_progress) {
         // There's an API call or tool execution in progress - interrupt it
@@ -5109,6 +5113,157 @@ static int submit_input_callback(const char *input, void *user_data) {
     return 0;
 }
 
+// Execute a single command and exit
+static int single_command_mode(ConversationState *state, const char *prompt) {
+    LOG_INFO("Executing single command: %s", prompt);
+
+    // Add user message to conversation
+    add_user_message(state, prompt);
+
+    // Call API synchronously
+    ApiResponse *response = call_api(state);
+    if (!response) {
+        LOG_ERROR("Failed to get response from API");
+        fprintf(stderr, "Error: Failed to get response from API\n");
+        return 1;
+    }
+
+    // Check if response contains an error message
+    if (response->error_message) {
+        LOG_ERROR("API error: %s", response->error_message);
+        fprintf(stderr, "Error: %s\n", response->error_message);
+        api_response_free(response);
+        return 1;
+    }
+
+    cJSON *error = cJSON_GetObjectItem(response->raw_response, "error");
+    if (error) {
+        cJSON *error_message = cJSON_GetObjectItem(error, "message");
+        const char *error_msg = error_message ? error_message->valuestring : "Unknown error";
+        LOG_ERROR("API error: %s", error_msg);
+        fprintf(stderr, "Error: %s\n", error_msg);
+        api_response_free(response);
+        return 1;
+    }
+
+    // Process response without TUI - just print to stdout
+    if (response->message.text && response->message.text[0] != '\0') {
+        // Skip whitespace-only content
+        const char *p = response->message.text;
+        while (*p && isspace((unsigned char)*p)) p++;
+
+        if (*p != '\0') {  // Has non-whitespace content
+            printf("%s\n", p);
+        }
+    }
+
+    // Process tool calls
+    int tool_count = response->tool_count;
+    ToolCall *tool_calls_array = response->tools;
+
+    if (tool_count > 0) {
+        LOG_INFO("Processing %d tool call(s)", tool_count);
+
+        InternalContent *results = calloc((size_t)tool_count, sizeof(InternalContent));
+        if (!results) {
+            LOG_ERROR("Failed to allocate tool result buffer");
+            api_response_free(response);
+            return 1;
+        }
+
+        int valid_tool_calls = 0;
+        for (int i = 0; i < tool_count; i++) {
+            ToolCall *tool = &tool_calls_array[i];
+            if (tool->name && tool->id) {
+                valid_tool_calls++;
+            }
+        }
+
+        if (valid_tool_calls > 0) {
+            // Execute tools
+            for (int i = 0; i < tool_count; i++) {
+                ToolCall *tool = &tool_calls_array[i];
+                if (!tool->name || !tool->id) {
+                    continue;
+                }
+
+                LOG_DEBUG("Executing tool: %s", tool->name);
+                printf("[Tool: %s]\n", tool->name);
+
+                // Convert ToolCall to execute_tool parameters
+                cJSON *input = tool->parameters
+                    ? cJSON_Duplicate(tool->parameters, /*recurse*/1)
+                    : cJSON_CreateObject();
+
+                // Execute tool synchronously
+                cJSON *tool_result = execute_tool(tool->name, input, state);
+
+                // Convert result to InternalContent
+                results[i].type = INTERNAL_TOOL_RESPONSE;
+                results[i].tool_id = strdup(tool->id);
+                results[i].tool_name = strdup(tool->name);
+                results[i].tool_output = tool_result;
+                results[i].is_error = tool_result ? cJSON_HasObjectItem(tool_result, "error") : 1;
+
+                // Print tool result
+                if (tool_result) {
+                    char *result_str = cJSON_PrintUnformatted(tool_result);
+                    if (result_str) {
+                        printf("%s\n", result_str);
+                        free(result_str);
+                    }
+                }
+
+                cJSON_Delete(input);
+            }
+
+            // Add tool results to conversation
+            add_tool_results(state, results, tool_count);
+
+            // Call API again with tool results
+            ApiResponse *next_response = call_api(state);
+            if (next_response) {
+                if (next_response->message.text && next_response->message.text[0] != '\0') {
+                    const char *p = next_response->message.text;
+                    while (*p && isspace((unsigned char)*p)) p++;
+                    if (*p != '\0') {
+                        printf("%s\n", p);
+                    }
+                }
+                api_response_free(next_response);
+            }
+
+            // Free tool results
+            for (int i = 0; i < tool_count; i++) {
+                if (results[i].tool_id) {
+                    free(results[i].tool_id);
+                }
+                if (results[i].tool_name) {
+                    free(results[i].tool_name);
+                }
+                if (results[i].tool_output) {
+                    cJSON_Delete(results[i].tool_output);
+                }
+            }
+        }
+
+        free(results);
+    }
+
+    // Add to conversation history
+    cJSON *choices = cJSON_GetObjectItem(response->raw_response, "choices");
+    if (choices && cJSON_IsArray(choices) && cJSON_GetArraySize(choices) > 0) {
+        cJSON *choice = cJSON_GetArrayItem(choices, 0);
+        cJSON *message = cJSON_GetObjectItem(choice, "message");
+        if (message) {
+            add_assistant_message_openai(state, message);
+        }
+    }
+
+    api_response_free(response);
+    return 0;
+}
+
 // Advanced input handler with readline-like keybindings, driven by non-blocking event loop
 static void interactive_mode(ConversationState *state) {
     const char *prompt = ">";
@@ -5274,6 +5429,7 @@ int main(int argc, char *argv[]) {
         printf("Version: %s\n\n", CLAUDE_C_VERSION_FULL);
         printf("Usage:\n");
         printf("  %s               Start interactive mode\n", argv[0]);
+        printf("  %s \"PROMPT\"       Execute single command and exit\n", argv[0]);
         printf("  %s -h, --help    Show this help message\n", argv[0]);
         printf("  %s --version     Show version information\n\n", argv[0]);
         printf("Environment Variables:\n");
@@ -5309,8 +5465,16 @@ int main(int argc, char *argv[]) {
         return 0;
     }
 
-    // Check that no extra arguments were provided
-    if (argc > 1) {
+    // Check for single command mode: ./claude-c "prompt"
+    int is_single_command_mode = 0;
+    char *single_command = NULL;
+
+    if (argc == 2) {
+        // Single argument provided - treat as prompt for single command mode
+        is_single_command_mode = 1;
+        single_command = argv[1];
+        LOG_INFO("Single command mode enabled with prompt: %s", single_command);
+    } else if (argc > 2) {
         LOG_ERROR("Unexpected arguments provided");
         printf("Try '%s --help' for usage information.\n", argv[0]);
         return 1;
@@ -5583,8 +5747,13 @@ int main(int argc, char *argv[]) {
         LOG_WARN("Failed to build system prompt");
     }
 
-    // Run interactive mode
-    interactive_mode(&state);
+    // Run either single command mode or interactive mode
+    int exit_code = 0;
+    if (is_single_command_mode) {
+        exit_code = single_command_mode(&state, single_command);
+    } else {
+        interactive_mode(&state);
+    }
 
     // Cleanup conversation messages
     conversation_free(&state);
@@ -5642,7 +5811,7 @@ int main(int argc, char *argv[]) {
     LOG_INFO("Application terminated");
     log_shutdown();
 
-    return 0;
+    return exit_code;
 }
 
 #endif // TEST_BUILD

@@ -56,6 +56,7 @@ Pure C implementation of a coding agent using Anthropic's Claude API.
 - Zero warnings, zero leaks (Valgrind)
 - All tests pass with sanitizers enabled
 - See `Makefile` for test targets
+- Run `make fmt-whitespace` once after making code changes.
 
 ## Building and Testing
 
