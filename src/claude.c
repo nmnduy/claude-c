@@ -1067,12 +1067,53 @@ STATIC cJSON* tool_bash(cJSON *params, ConversationState *state) {
     }
 
     // Execute command and capture both stdout and stderr
-    // Use 2>&1 to redirect stderr to stdout so we capture all output
+    // Use shell wrapper with proper quoting and stderr redirection
     char full_command[BUFFER_SIZE];
-    snprintf(full_command, sizeof(full_command), "%s 2>&1", command);
+    // Escape single quotes in the command for shell safety
+    char escaped_command[BUFFER_SIZE];
+    size_t j = 0;
+    for (size_t i = 0; command[i] && j < sizeof(escaped_command) - 1; i++) {
+        if (command[i] == '\'') {
+            if (j < sizeof(escaped_command) - 2) {
+                escaped_command[j++] = '\'';
+                escaped_command[j++] = '\\';
+                escaped_command[j++] = '\'';
+                escaped_command[j++] = '\'';
+            }
+        } else {
+            escaped_command[j++] = command[i];
+        }
+    }
+    escaped_command[j] = '\0';
+    
+    // Use shell wrapper to ensure consistent execution and stderr capture
+    snprintf(full_command, sizeof(full_command), "sh -c '%s' 2>&1", escaped_command);
+
+    // Temporarily redirect stderr to prevent any direct terminal output
+    int saved_stderr = -1;
+    FILE *stderr_redirect = NULL;
+    
+    // Only redirect stderr if we're in TUI mode (g_active_tool_queue is set)
+    if (g_active_tool_queue) {
+        saved_stderr = dup(STDERR_FILENO);
+        stderr_redirect = freopen("/dev/null", "w", stderr);
+        if (!stderr_redirect) {
+            LOG_WARN("Failed to redirect stderr, continuing without redirection");
+            if (saved_stderr != -1) {
+                close(saved_stderr);
+                saved_stderr = -1;
+            }
+        }
+    }
 
     FILE *pipe = popen(full_command, "r");
     if (!pipe) {
+        // Restore stderr before returning error
+        if (saved_stderr != -1) {
+            dup2(saved_stderr, STDERR_FILENO);
+            close(saved_stderr);
+            fflush(stderr);
+        }
         cJSON *error = cJSON_CreateObject();
         cJSON_AddStringToObject(error, "error", "Failed to execute command");
         return error;
@@ -1092,6 +1133,12 @@ STATIC cJSON* tool_bash(cJSON *params, ConversationState *state) {
         if (state && state->interrupt_requested) {
             free(output);
             pclose(pipe);
+            // Restore stderr before returning error
+            if (saved_stderr != -1) {
+                dup2(saved_stderr, STDERR_FILENO);
+                close(saved_stderr);
+                fflush(stderr);
+            }
             cJSON *error = cJSON_CreateObject();
             cJSON_AddStringToObject(error, "error", "Operation interrupted by user");
             return error;
@@ -1122,6 +1169,12 @@ STATIC cJSON* tool_bash(cJSON *params, ConversationState *state) {
             LOG_ERROR("select() failed: %s", strerror(errno));
             free(output);
             pclose(pipe);
+            // Restore stderr before returning error
+            if (saved_stderr != -1) {
+                dup2(saved_stderr, STDERR_FILENO);
+                close(saved_stderr);
+                fflush(stderr);
+            }
             cJSON *error = cJSON_CreateObject();
             cJSON_AddStringToObject(error, "error", "Failed to monitor command execution");
             return error;
@@ -1146,6 +1199,12 @@ STATIC cJSON* tool_bash(cJSON *params, ConversationState *state) {
         if (!new_output) {
             free(output);
             pclose(pipe);
+            // Restore stderr before returning error
+            if (saved_stderr != -1) {
+                dup2(saved_stderr, STDERR_FILENO);
+                close(saved_stderr);
+                fflush(stderr);
+            }
             cJSON *error = cJSON_CreateObject();
             cJSON_AddStringToObject(error, "error", "Out of memory");
             return error;
@@ -1207,6 +1266,13 @@ STATIC cJSON* tool_bash(cJSON *params, ConversationState *state) {
                 "Command timed out after %d seconds. Use CLAUDE_C_BASH_TIMEOUT to adjust timeout.",
                 timeout_seconds);
         cJSON_AddStringToObject(result, "timeout_error", timeout_msg);
+    }
+
+    // Restore stderr if we redirected it
+    if (saved_stderr != -1) {
+        dup2(saved_stderr, STDERR_FILENO);
+        close(saved_stderr);
+        fflush(stderr);
     }
 
     free(output);
