@@ -169,7 +169,11 @@ TEST_CANCEL_FLOW_TARGET = $(BUILD_DIR)/test_cancel_flow
 TEST_BASH_SUMMARY_TARGET = $(BUILD_DIR)/test_bash_summary
 TEST_BASH_SUMMARY_SRC = tests/test_bash_summary.c
 TEST_BASH_TIMEOUT_TARGET = $(BUILD_DIR)/test_bash_timeout
+TEST_HISTORY_FILE_TARGET = $(BUILD_DIR)/test_history_file
+TEST_TUI_INPUT_BUFFER_TARGET = $(BUILD_DIR)/test_tui_input_buffer
 TEST_BASH_TIMEOUT_SRC = tests/test_bash_timeout.c
+TEST_HISTORY_FILE_SRC = tests/test_history_file.c
+TEST_TUI_INPUT_BUFFER_SRC = tests/test_tui_input_buffer.c
 
 .PHONY: all clean check-deps install test test-edit test-read test-todo test-todo-write test-paste test-retry-jitter test-openai-format test-write-diff-integration test-rotation test-patch-parser test-thread-cancel test-aws-cred-rotation test-message-queue test-event-loop test-wrap test-mcp test-mcp-image test-bash-summary test-bash-timeout test-tool-results-regression query-tool debug analyze sanitize-ub sanitize-all sanitize-leak valgrind memscan comprehensive-scan clang-tidy cppcheck flawfinder version show-version update-version bump-version bump-patch build clang ci-test ci-gcc ci-clang ci-gcc-sanitize ci-clang-sanitize ci-all fmt-whitespace
 
@@ -183,7 +187,7 @@ debug: check-deps $(BUILD_DIR)/claude-c-debug
 
 query-tool: check-deps $(QUERY_TOOL)
 
-test: test-edit test-read test-todo test-paste test-json-parsing test-timing test-openai-format test-write-diff-integration test-rotation test-patch-parser test-thread-cancel test-aws-cred-rotation test-message-queue test-wrap test-mcp test-mcp-image test-wm test-bash-summary test-bash-timeout test-cancel-flow test-tool-results-regression test-base64
+test: test-edit test-read test-todo test-paste test-json-parsing test-timing test-openai-format test-write-diff-integration test-rotation test-patch-parser test-thread-cancel test-aws-cred-rotation test-message-queue test-wrap test-mcp test-mcp-image test-wm test-bash-summary test-bash-timeout test-cancel-flow test-tool-results-regression test-base64 test-history-file test-tui-input-buffer
 
 test-edit: check-deps $(TEST_EDIT_TARGET)
 	@echo ""
@@ -323,6 +327,18 @@ test-base64: check-deps $(TEST_BASE64_TARGET)
 	@echo "Running Base64 encoding/decoding tests..."
 	@echo ""
 	@./$(TEST_BASE64_TARGET)
+
+test-history-file: check-deps $(TEST_HISTORY_FILE_TARGET)
+	@echo ""
+	@echo "Running History File tests..."
+	@echo ""
+	@./$(TEST_HISTORY_FILE_TARGET)
+
+test-tui-input-buffer: check-deps $(TEST_TUI_INPUT_BUFFER_TARGET)
+	@echo ""
+	@echo "Running TUI Input Buffer tests..."
+	@echo ""
+	@./$(TEST_TUI_INPUT_BUFFER_TARGET)
 
 $(TARGET): $(SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(COMMANDS_OBJ) $(COMPLETION_OBJ) $(TUI_OBJ) $(WINDOW_MANAGER_OBJ) $(TODO_OBJ) $(AWS_BEDROCK_OBJ) $(PROVIDER_OBJ) $(OPENAI_PROVIDER_OBJ) $(OPENAI_MESSAGES_OBJ) $(BEDROCK_PROVIDER_OBJ) $(BUILTIN_THEMES_OBJ) $(PATCH_PARSER_OBJ) $(MESSAGE_QUEUE_OBJ) $(AI_WORKER_OBJ) $(VOICE_INPUT_OBJ) $(MCP_OBJ) $(TOOL_UTILS_OBJ) $(BASE64_OBJ) $(HISTORY_FILE_OBJ) $(VERSION_H)
 	@mkdir -p $(BUILD_DIR)
@@ -1222,5 +1238,29 @@ ci-test: ci-gcc ci-clang-sanitize
 	@echo ""
 	@echo "For full CI coverage, run: make ci-all"
 	@echo ""
+
+# Test target for History File functionality
+$(TEST_HISTORY_FILE_TARGET): $(HISTORY_FILE_SRC) $(TEST_HISTORY_FILE_SRC) $(LOGGER_OBJ)
+	@mkdir -p $(BUILD_DIR)
+	@echo "Compiling History File test suite..."
+	@$(CC) $(CFLAGS) -DTEST_BUILD -c -o $(BUILD_DIR)/history_file_test.o $(HISTORY_FILE_SRC)
+	@$(CC) $(CFLAGS) -c -o $(BUILD_DIR)/test_history_file.o $(TEST_HISTORY_FILE_SRC)
+	@echo "Linking test executable..."
+	@$(CC) -o $(TEST_HISTORY_FILE_TARGET) $(BUILD_DIR)/history_file_test.o $(BUILD_DIR)/test_history_file.o $(LOGGER_OBJ) $(LDFLAGS)
+	@echo ""
+	@echo "✓ History File test build successful!"
+	@echo ""
+
+# Test target for TUI Input Buffer dynamic resizing (simplified standalone test)
+$(TEST_TUI_INPUT_BUFFER_TARGET): $(TEST_TUI_INPUT_BUFFER_SRC)
+	@mkdir -p $(BUILD_DIR)
+	@echo "Compiling TUI Input Buffer test suite..."
+	@$(CC) $(CFLAGS) -c -o $(BUILD_DIR)/test_tui_input_buffer.o $(TEST_TUI_INPUT_BUFFER_SRC)
+	@echo "Linking test executable..."
+	@$(CC) -o $(TEST_TUI_INPUT_BUFFER_TARGET) $(BUILD_DIR)/test_tui_input_buffer.o $(LDFLAGS)
+	@echo ""
+	@echo "✓ TUI Input Buffer test build successful!"
+	@echo ""
+
 # Test target for Bash command summarization
 # Note: test_bash_summary.c file does not exist, so test-bash-summary target is removed

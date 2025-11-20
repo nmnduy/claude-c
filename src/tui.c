@@ -2057,9 +2057,22 @@ int tui_process_input_char(TUIState *tui, int ch, const char *prompt) {
                 const char *hist = tui->input_history[tui->input_history_pos];
                 if (hist) {
                     size_t len = strlen(hist);
+
+                    // Dynamically resize input buffer if history entry is too large
                     if (len >= (size_t)tui->input_buffer->capacity) {
-                        len = (size_t)tui->input_buffer->capacity - 1;
+                        size_t new_capacity = len + 1024;  // Add some extra space
+                        char *new_buffer = realloc(tui->input_buffer->buffer, new_capacity);
+                        if (new_buffer) {
+                            tui->input_buffer->buffer = new_buffer;
+                            tui->input_buffer->capacity = new_capacity;
+                            LOG_DEBUG("[TUI] Expanded input buffer to %zu bytes for history entry", new_capacity);
+                        } else {
+                            // If realloc fails, truncate to current capacity
+                            LOG_WARN("[TUI] Failed to expand input buffer, truncating history entry");
+                            len = (size_t)tui->input_buffer->capacity - 1;
+                        }
                     }
+
                     memcpy(tui->input_buffer->buffer, hist, len);
                     tui->input_buffer->buffer[len] = '\0';
                     tui->input_buffer->length = (int)len;
@@ -2077,9 +2090,22 @@ int tui_process_input_char(TUIState *tui, int ch, const char *prompt) {
                 // restore saved input
                 const char *saved = tui->input_saved_before_history ? tui->input_saved_before_history : "";
                 size_t len = strlen(saved);
+
+                // Dynamically resize input buffer if saved input is too large
                 if (len >= (size_t)tui->input_buffer->capacity) {
-                    len = (size_t)tui->input_buffer->capacity - 1;
+                    size_t new_capacity = len + 1024;  // Add some extra space
+                    char *new_buffer = realloc(tui->input_buffer->buffer, new_capacity);
+                    if (new_buffer) {
+                        tui->input_buffer->buffer = new_buffer;
+                        tui->input_buffer->capacity = new_capacity;
+                        LOG_DEBUG("[TUI] Expanded input buffer to %zu bytes for saved input", new_capacity);
+                    } else {
+                        // If realloc fails, truncate to current capacity
+                        LOG_WARN("[TUI] Failed to expand input buffer, truncating saved input");
+                        len = (size_t)tui->input_buffer->capacity - 1;
+                    }
                 }
+
                 memcpy(tui->input_buffer->buffer, saved, len);
                 tui->input_buffer->buffer[len] = '\0';
                 tui->input_buffer->length = (int)len;
@@ -2092,9 +2118,22 @@ int tui_process_input_char(TUIState *tui, int ch, const char *prompt) {
                 const char *hist = tui->input_history[tui->input_history_pos];
                 if (hist) {
                     size_t len = strlen(hist);
+
+                    // Dynamically resize input buffer if history entry is too large
                     if (len >= (size_t)tui->input_buffer->capacity) {
-                        len = (size_t)tui->input_buffer->capacity - 1;
+                        size_t new_capacity = len + 1024;  // Add some extra space
+                        char *new_buffer = realloc(tui->input_buffer->buffer, new_capacity);
+                        if (new_buffer) {
+                            tui->input_buffer->buffer = new_buffer;
+                            tui->input_buffer->capacity = new_capacity;
+                            LOG_DEBUG("[TUI] Expanded input buffer to %zu bytes for history entry", new_capacity);
+                        } else {
+                            // If realloc fails, truncate to current capacity
+                            LOG_WARN("[TUI] Failed to expand input buffer, truncating history entry");
+                            len = (size_t)tui->input_buffer->capacity - 1;
+                        }
                     }
+
                     memcpy(tui->input_buffer->buffer, hist, len);
                     tui->input_buffer->buffer[len] = '\0';
                     tui->input_buffer->length = (int)len;
