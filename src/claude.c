@@ -1127,6 +1127,7 @@ STATIC cJSON* tool_bash(cJSON *params, ConversationState *state) {
     int fd = fileno(pipe);
 
     int timed_out = 0;
+    int truncated = 0;
 
     while (1) {
         // Check for interrupt during long-running command
@@ -1195,6 +1196,38 @@ STATIC cJSON* tool_bash(cJSON *params, ConversationState *state) {
         }
 
         size_t len = strlen(buffer);
+        
+        // Check if adding this buffer would exceed maximum output size
+        if (total_size + len >= BASH_OUTPUT_MAX_SIZE) {
+            // Calculate how much we can add before hitting the limit
+            size_t remaining = BASH_OUTPUT_MAX_SIZE - total_size;
+            if (remaining > 0) {
+                // Add partial buffer content
+                char *new_output = realloc(output, total_size + remaining + 1);
+                if (!new_output) {
+                    free(output);
+                    pclose(pipe);
+                    // Restore stderr before returning error
+                    if (saved_stderr != -1) {
+                        dup2(saved_stderr, STDERR_FILENO);
+                        close(saved_stderr);
+                        fflush(stderr);
+                    }
+                    cJSON *error = cJSON_CreateObject();
+                    cJSON_AddStringToObject(error, "error", "Out of memory");
+                    return error;
+                }
+                output = new_output;
+                memcpy(output + total_size, buffer, remaining);
+                total_size += remaining;
+                output[total_size] = '\0';
+            }
+            
+            // Set truncated flag and break out of the loop
+            truncated = 1;
+            break;
+        }
+        
         char *new_output = realloc(output, total_size + len + 1);
         if (!new_output) {
             free(output);
@@ -1266,6 +1299,14 @@ STATIC cJSON* tool_bash(cJSON *params, ConversationState *state) {
                 "Command timed out after %d seconds. Use CLAUDE_C_BASH_TIMEOUT to adjust timeout.",
                 timeout_seconds);
         cJSON_AddStringToObject(result, "timeout_error", timeout_msg);
+    }
+
+    if (truncated) {
+        char truncate_msg[256];
+        snprintf(truncate_msg, sizeof(truncate_msg),
+                "Command output was truncated at %zu bytes (maximum: %d bytes).",
+                total_size, BASH_OUTPUT_MAX_SIZE);
+        cJSON_AddStringToObject(result, "truncation_warning", truncate_msg);
     }
 
     // Restore stderr if we redirected it
@@ -2991,7 +3032,9 @@ cJSON* get_tool_definitions(ConversationState *state, int enable_caching) {
         "to prevent terminal corruption, so both stdout and stderr output will be "
         "captured in the 'output' field. Commands have a configurable timeout "
         "(default: 30 seconds) to prevent hanging. Use the 'timeout' parameter to "
-        "override the default or set to 0 for no timeout.");
+        "override the default or set to 0 for no timeout. If the output exceeds "
+        "12,228 bytes, it will be truncated and a 'truncation_warning' field "
+        "will be added to the result.");
     cJSON *bash_params = cJSON_CreateObject();
     cJSON_AddStringToObject(bash_params, "type", "object");
     cJSON *bash_props = cJSON_CreateObject();

@@ -27,6 +27,7 @@
 #define MAX_TOKENS 16384
 #define MAX_TOOLS 10
 #define BUFFER_SIZE 8192
+#define BASH_OUTPUT_MAX_SIZE 12228  // 12,228 byte limit for bash output
 #define MAX_MESSAGES 10000
 
 // Retry configuration for rate limiting (429 errors)
