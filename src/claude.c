@@ -511,6 +511,44 @@ static char* get_tool_details(const char *tool_name, cJSON *arguments) {
             int count = cJSON_GetArraySize(todos);
             snprintf(details, sizeof(details), "%d task%s", count, count == 1 ? "" : "s");
         }
+    } else if (strncmp(tool_name, "mcp_", 4) == 0) {
+        // Handle MCP tools (format: mcp_<server>_<toolname>)
+        // Extract the actual tool name after the server prefix for display
+        const char *actual_tool = strchr(tool_name + 4, '_');
+        if (actual_tool) {
+            actual_tool++; // Skip the underscore
+
+            // Try to extract the most relevant argument for display
+            // Common patterns: url, text, path, element, values, etc.
+            cJSON *url = cJSON_GetObjectItem(arguments, "url");
+            cJSON *text = cJSON_GetObjectItem(arguments, "text");
+            cJSON *path = cJSON_GetObjectItem(arguments, "path");
+            cJSON *element = cJSON_GetObjectItem(arguments, "element");
+
+            if (cJSON_IsString(url)) {
+                // Tools with URL parameter (navigate, fetch, etc.)
+                snprintf(details, sizeof(details), "%s: %s", actual_tool, url->valuestring);
+            } else if (cJSON_IsString(text) && strlen(text->valuestring) > 0) {
+                // Tools with text parameter (type, search, etc.)
+                snprintf(details, sizeof(details), "%s: %.30s%s", actual_tool,
+                        text->valuestring,
+                        strlen(text->valuestring) > 30 ? "..." : "");
+            } else if (cJSON_IsString(path)) {
+                // Tools with path parameter (read, write, etc.)
+                snprintf(details, sizeof(details), "%s: %s", actual_tool, path->valuestring);
+            } else if (cJSON_IsString(element)) {
+                // Tools with element parameter (click, hover, etc.)
+                snprintf(details, sizeof(details), "%s: %s", actual_tool, element->valuestring);
+            } else {
+                // Generic display: just show the tool name
+                snprintf(details, sizeof(details), "%s", actual_tool);
+            }
+            details[sizeof(details) - 1] = '\0';
+        } else {
+            // Fallback: show the full tool name without "mcp_" prefix
+            snprintf(details, sizeof(details), "%s", tool_name + 4);
+            details[sizeof(details) - 1] = '\0';
+        }
     }
 
     return strlen(details) > 0 ? details : NULL;
@@ -1085,14 +1123,14 @@ STATIC cJSON* tool_bash(cJSON *params, ConversationState *state) {
         }
     }
     escaped_command[j] = '\0';
-    
+
     // Use shell wrapper to ensure consistent execution and stderr capture
     snprintf(full_command, sizeof(full_command), "sh -c '%s' 2>&1", escaped_command);
 
     // Temporarily redirect stderr to prevent any direct terminal output
     int saved_stderr = -1;
     FILE *stderr_redirect = NULL;
-    
+
     // Only redirect stderr if we're in TUI mode (g_active_tool_queue is set)
     if (g_active_tool_queue) {
         saved_stderr = dup(STDERR_FILENO);
@@ -1196,7 +1234,7 @@ STATIC cJSON* tool_bash(cJSON *params, ConversationState *state) {
         }
 
         size_t len = strlen(buffer);
-        
+
         // Check if adding this buffer would exceed maximum output size
         if (total_size + len >= BASH_OUTPUT_MAX_SIZE) {
             // Calculate how much we can add before hitting the limit
@@ -1222,12 +1260,12 @@ STATIC cJSON* tool_bash(cJSON *params, ConversationState *state) {
                 total_size += remaining;
                 output[total_size] = '\0';
             }
-            
+
             // Set truncated flag and break out of the loop
             truncated = 1;
             break;
         }
-        
+
         char *new_output = realloc(output, total_size + len + 1);
         if (!new_output) {
             free(output);
@@ -2778,14 +2816,42 @@ static cJSON* tool_call_mcp_tool(cJSON *params, ConversationState *state) {
             int save_result = save_binary_file(filename, call_result->blob, call_result->blob_size);
 
             if (save_result == 0) {
-                // Success - return file info, not binary data
-                cJSON_AddStringToObject(result, "status", "success");
-                cJSON_AddStringToObject(result, "message", "Binary content saved to file");
-                cJSON_AddStringToObject(result, "file_path", filename);
-                cJSON_AddStringToObject(result, "file_type", mime_type);
-                cJSON_AddNumberToObject(result, "file_size_bytes", call_result->blob_size);
-                cJSON_AddStringToObject(result, "file_size_human", format_file_size(call_result->blob_size));
-                LOG_INFO("tool_call_mcp_tool: Saved binary content to '%s' (%zu bytes)", filename, call_result->blob_size);
+                // Success - encode base64 for image content (if it's an image)
+                int is_image = (strncmp(mime_type, "image/", 6) == 0);
+
+                if (is_image) {
+                    // For images, encode to base64 and mark as image content
+                    // This allows the TUI to display it properly like UploadImage
+                    size_t encoded_size = 0;
+                    char *encoded_data = base64_encode(call_result->blob, call_result->blob_size, &encoded_size);
+                    if (encoded_data) {
+                        cJSON_AddStringToObject(result, "content_type", "image");
+                        cJSON_AddStringToObject(result, "file_path", filename);
+                        cJSON_AddStringToObject(result, "mime_type", mime_type);
+                        cJSON_AddStringToObject(result, "base64_data", encoded_data);
+                        cJSON_AddNumberToObject(result, "file_size_bytes", call_result->blob_size);
+                        free(encoded_data);
+                        LOG_INFO("tool_call_mcp_tool: Saved image to '%s' (%zu bytes)", filename, call_result->blob_size);
+                    } else {
+                        // Encoding failed, fall back to file info only
+                        LOG_WARN("tool_call_mcp_tool: Failed to encode image to base64, returning file info only");
+                        cJSON_AddStringToObject(result, "status", "success");
+                        cJSON_AddStringToObject(result, "message", "Image saved to file");
+                        cJSON_AddStringToObject(result, "file_path", filename);
+                        cJSON_AddStringToObject(result, "file_type", mime_type);
+                        cJSON_AddNumberToObject(result, "file_size_bytes", call_result->blob_size);
+                        cJSON_AddStringToObject(result, "file_size_human", format_file_size(call_result->blob_size));
+                    }
+                } else {
+                    // For non-image binary content, return file info only
+                    cJSON_AddStringToObject(result, "status", "success");
+                    cJSON_AddStringToObject(result, "message", "Binary content saved to file");
+                    cJSON_AddStringToObject(result, "file_path", filename);
+                    cJSON_AddStringToObject(result, "file_type", mime_type);
+                    cJSON_AddNumberToObject(result, "file_size_bytes", call_result->blob_size);
+                    cJSON_AddStringToObject(result, "file_size_human", format_file_size(call_result->blob_size));
+                    LOG_INFO("tool_call_mcp_tool: Saved binary content to '%s' (%zu bytes)", filename, call_result->blob_size);
+                }
             } else {
                 // Failed to save - fall back to base64 (but this shouldn't happen)
                 LOG_WARN("tool_call_mcp_tool: Failed to save binary content to file, falling back to base64");
@@ -2917,14 +2983,42 @@ static cJSON* execute_tool(const char *tool_name, cJSON *input, ConversationStat
                             int save_result = save_binary_file(filename, mcp_result->blob, mcp_result->blob_size);
 
                             if (save_result == 0) {
-                                // Success - return file info, not binary data
-                                cJSON_AddStringToObject(result, "status", "success");
-                                cJSON_AddStringToObject(result, "message", "Binary content saved to file");
-                                cJSON_AddStringToObject(result, "file_path", filename);
-                                cJSON_AddStringToObject(result, "file_type", mime_type);
-                                cJSON_AddNumberToObject(result, "file_size_bytes", mcp_result->blob_size);
-                                cJSON_AddStringToObject(result, "file_size_human", format_file_size(mcp_result->blob_size));
-                                LOG_INFO("execute_tool: Saved binary content to '%s' (%zu bytes)", filename, mcp_result->blob_size);
+                                // Success - encode base64 for image content (if it's an image)
+                                int is_image = (strncmp(mime_type, "image/", 6) == 0);
+
+                                if (is_image) {
+                                    // For images, encode to base64 and mark as image content
+                                    // This allows the TUI to display it properly like UploadImage
+                                    size_t encoded_size = 0;
+                                    char *encoded_data = base64_encode(mcp_result->blob, mcp_result->blob_size, &encoded_size);
+                                    if (encoded_data) {
+                                        cJSON_AddStringToObject(result, "content_type", "image");
+                                        cJSON_AddStringToObject(result, "file_path", filename);
+                                        cJSON_AddStringToObject(result, "mime_type", mime_type);
+                                        cJSON_AddStringToObject(result, "base64_data", encoded_data);
+                                        cJSON_AddNumberToObject(result, "file_size_bytes", mcp_result->blob_size);
+                                        free(encoded_data);
+                                        LOG_INFO("execute_tool: Saved image to '%s' (%zu bytes)", filename, mcp_result->blob_size);
+                                    } else {
+                                        // Encoding failed, fall back to file info only
+                                        LOG_WARN("execute_tool: Failed to encode image to base64, returning file info only");
+                                        cJSON_AddStringToObject(result, "status", "success");
+                                        cJSON_AddStringToObject(result, "message", "Image saved to file");
+                                        cJSON_AddStringToObject(result, "file_path", filename);
+                                        cJSON_AddStringToObject(result, "file_type", mime_type);
+                                        cJSON_AddNumberToObject(result, "file_size_bytes", mcp_result->blob_size);
+                                        cJSON_AddStringToObject(result, "file_size_human", format_file_size(mcp_result->blob_size));
+                                    }
+                                } else {
+                                    // For non-image binary content, return file info only
+                                    cJSON_AddStringToObject(result, "status", "success");
+                                    cJSON_AddStringToObject(result, "message", "Binary content saved to file");
+                                    cJSON_AddStringToObject(result, "file_path", filename);
+                                    cJSON_AddStringToObject(result, "file_type", mime_type);
+                                    cJSON_AddNumberToObject(result, "file_size_bytes", mcp_result->blob_size);
+                                    cJSON_AddStringToObject(result, "file_size_human", format_file_size(mcp_result->blob_size));
+                                    LOG_INFO("execute_tool: Saved binary content to '%s' (%zu bytes)", filename, mcp_result->blob_size);
+                                }
                             } else {
                                 // Failed to save - fall back to base64 (but this shouldn't happen)
                                 LOG_WARN("execute_tool: Failed to save binary content to file, falling back to base64");

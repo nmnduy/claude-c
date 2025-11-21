@@ -117,7 +117,7 @@ static void test_stderr_capture_basic(void) {
     ASSERT(cJSON_IsNumber(exit_code), "Exit code should be a number");
     ASSERT(cJSON_IsString(output), "Output should be a string");
     ASSERT_NUMBER_EQUAL(exit_code->valueint, 0, "Exit code should be 0 for successful command");
-    
+
     // Both stdout and stderr should be captured in the output
     ASSERT_STRING_CONTAINS(output->valuestring, "stdout message", "Output should contain stdout");
     ASSERT_STRING_CONTAINS(output->valuestring, "stderr message", "Output should contain stderr");
@@ -222,7 +222,7 @@ static void test_error_command_stderr(void) {
     // Command should fail with non-zero exit code
     ASSERT(cJSON_IsNumber(exit_code), "Exit code should be a number");
     ASSERT(exit_code->valueint != 0, "Exit code should be non-zero for failed command");
-    
+
     // Error message should be captured in output
     ASSERT(cJSON_IsString(output), "Output should be a string");
     ASSERT(strlen(output->valuestring) > 0, "Output should contain error message");
@@ -250,7 +250,7 @@ static void test_mixed_stdout_stderr(void) {
     cJSON *output = cJSON_GetObjectItem(result, "output");
 
     ASSERT_NUMBER_EQUAL(exit_code->valueint, 0, "Exit code should be 0 for successful command");
-    
+
     // All lines should be present in the output
     ASSERT_STRING_CONTAINS(output->valuestring, "line1: stdout", "Output should contain first stdout line");
     ASSERT_STRING_CONTAINS(output->valuestring, "line2: stderr", "Output should contain first stderr line");
@@ -280,7 +280,7 @@ static void test_command_with_newlines(void) {
     cJSON *output = cJSON_GetObjectItem(result, "output");
 
     ASSERT_NUMBER_EQUAL(exit_code->valueint, 0, "Exit code should be 0 for successful command");
-    
+
     // All lines should be present with proper newlines
     ASSERT_STRING_CONTAINS(output->valuestring, "stdout line1", "Output should contain first stdout line");
     ASSERT_STRING_CONTAINS(output->valuestring, "stdout line2", "Output should contain second stdout line");

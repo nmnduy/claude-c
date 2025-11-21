@@ -173,13 +173,15 @@ TEST_BASH_STDERR_TARGET = $(BUILD_DIR)/test_bash_stderr
 TEST_BASH_TRUNCATION_TARGET = $(BUILD_DIR)/test_bash_truncation
 TEST_HISTORY_FILE_TARGET = $(BUILD_DIR)/test_history_file
 TEST_TUI_INPUT_BUFFER_TARGET = $(BUILD_DIR)/test_tui_input_buffer
+TEST_TOOL_DETAILS_TARGET = $(BUILD_DIR)/test_tool_details_simple
 TEST_BASH_TIMEOUT_SRC = tests/test_bash_timeout.c
 TEST_BASH_STDERR_SRC = tests/test_bash_stderr.c
 TEST_BASH_TRUNCATION_SRC = tests/test_bash_truncation.c
 TEST_HISTORY_FILE_SRC = tests/test_history_file.c
 TEST_TUI_INPUT_BUFFER_SRC = tests/test_tui_input_buffer.c
+TEST_TOOL_DETAILS_SRC = tests/test_tool_details_simple.c
 
-.PHONY: all clean check-deps install test test-edit test-read test-todo test-todo-write test-paste test-retry-jitter test-openai-format test-write-diff-integration test-rotation test-patch-parser test-thread-cancel test-aws-cred-rotation test-message-queue test-event-loop test-wrap test-mcp test-mcp-image test-bash-summary test-bash-timeout test-bash-stderr test-bash-truncation test-tool-results-regression query-tool debug analyze sanitize-ub sanitize-all sanitize-leak valgrind memscan comprehensive-scan clang-tidy cppcheck flawfinder version show-version update-version bump-version bump-patch build clang ci-test ci-gcc ci-clang ci-gcc-sanitize ci-clang-sanitize ci-all fmt-whitespace
+.PHONY: all clean check-deps install test test-edit test-read test-todo test-todo-write test-paste test-retry-jitter test-openai-format test-write-diff-integration test-rotation test-patch-parser test-thread-cancel test-aws-cred-rotation test-message-queue test-event-loop test-wrap test-mcp test-mcp-image test-bash-summary test-bash-timeout test-bash-stderr test-bash-truncation test-tool-results-regression test-tool-details query-tool debug analyze sanitize-ub sanitize-all sanitize-leak valgrind memscan comprehensive-scan clang-tidy cppcheck flawfinder version show-version update-version bump-version bump-patch build clang ci-test ci-gcc ci-clang ci-gcc-sanitize ci-clang-sanitize ci-all fmt-whitespace
 
 all: check-deps $(TARGET)
 
@@ -191,7 +193,7 @@ debug: check-deps $(BUILD_DIR)/claude-c-debug
 
 query-tool: check-deps $(QUERY_TOOL)
 
-test: test-edit test-read test-todo test-paste test-json-parsing test-timing test-openai-format test-write-diff-integration test-rotation test-patch-parser test-thread-cancel test-aws-cred-rotation test-message-queue test-wrap test-mcp test-mcp-image test-wm test-bash-summary test-bash-timeout test-bash-stderr test-bash-truncation test-cancel-flow test-tool-results-regression test-base64 test-history-file test-tui-input-buffer
+test: test-edit test-read test-todo test-paste test-json-parsing test-timing test-openai-format test-write-diff-integration test-rotation test-patch-parser test-thread-cancel test-aws-cred-rotation test-message-queue test-wrap test-mcp test-mcp-image test-wm test-bash-summary test-bash-timeout test-bash-stderr test-bash-truncation test-cancel-flow test-tool-results-regression test-base64 test-history-file test-tui-input-buffer test-tool-details
 
 test-edit: check-deps $(TEST_EDIT_TARGET)
 	@echo ""
@@ -355,6 +357,12 @@ test-tui-input-buffer: check-deps $(TEST_TUI_INPUT_BUFFER_TARGET)
 	@echo "Running TUI Input Buffer tests..."
 	@echo ""
 	@./$(TEST_TUI_INPUT_BUFFER_TARGET)
+
+test-tool-details: check-deps $(TEST_TOOL_DETAILS_TARGET)
+	@echo ""
+	@echo "Running Tool Details Display tests..."
+	@echo ""
+	@./$(TEST_TOOL_DETAILS_TARGET)
 
 $(TARGET): $(SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(COMMANDS_OBJ) $(COMPLETION_OBJ) $(TUI_OBJ) $(WINDOW_MANAGER_OBJ) $(TODO_OBJ) $(AWS_BEDROCK_OBJ) $(PROVIDER_OBJ) $(OPENAI_PROVIDER_OBJ) $(OPENAI_MESSAGES_OBJ) $(BEDROCK_PROVIDER_OBJ) $(BUILTIN_THEMES_OBJ) $(PATCH_PARSER_OBJ) $(MESSAGE_QUEUE_OBJ) $(AI_WORKER_OBJ) $(VOICE_INPUT_OBJ) $(MCP_OBJ) $(TOOL_UTILS_OBJ) $(BASE64_OBJ) $(HISTORY_FILE_OBJ) $(VERSION_H)
 	@mkdir -p $(BUILD_DIR)
@@ -844,6 +852,15 @@ $(TEST_JSON_PARSING_TARGET): $(TEST_JSON_PARSING_SRC)
 	@$(CC) $(CFLAGS) -o $(TEST_JSON_PARSING_TARGET) $(TEST_JSON_PARSING_SRC) $(LDFLAGS)
 	@echo ""
 	@echo "✓ JSON parsing test build successful!"
+	@echo ""
+
+# Test target for Tool Details - tests MCP and built-in tool display
+$(TEST_TOOL_DETAILS_TARGET): $(TEST_TOOL_DETAILS_SRC)
+	@mkdir -p $(BUILD_DIR)
+	@echo "Compiling Tool Details test suite..."
+	@$(CC) $(CFLAGS) -o $(TEST_TOOL_DETAILS_TARGET) $(TEST_TOOL_DETAILS_SRC) $(LDFLAGS)
+	@echo ""
+	@echo "✓ Tool Details test build successful!"
 	@echo ""
 
 # Test target for Retry Jitter - tests exponential backoff with jitter
