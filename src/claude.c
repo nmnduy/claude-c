@@ -1129,7 +1129,8 @@ STATIC cJSON* tool_bash(cJSON *params, ConversationState *state) {
     escaped_command[j] = '\0';
 
     // Use shell wrapper to ensure consistent execution and stderr capture
-    snprintf(full_command, sizeof(full_command), "sh -c '%s' 2>&1", escaped_command);
+    // Redirect stdin to /dev/null to prevent child processes from competing for terminal input
+    snprintf(full_command, sizeof(full_command), "sh -c '%s' </dev/null 2>&1", escaped_command);
 
     // Temporarily redirect stderr to prevent any direct terminal output
     int saved_stderr = -1;
