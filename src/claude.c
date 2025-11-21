@@ -1129,7 +1129,8 @@ STATIC cJSON* tool_bash(cJSON *params, ConversationState *state) {
     escaped_command[j] = '\0';
 
     // Use shell wrapper to ensure consistent execution and stderr capture
-    snprintf(full_command, sizeof(full_command), "sh -c '%s' 2>&1", escaped_command);
+    // Redirect stdin to /dev/null to prevent child processes from competing for terminal input
+    snprintf(full_command, sizeof(full_command), "sh -c '%s' </dev/null 2>&1", escaped_command);
 
     // Temporarily redirect stderr to prevent any direct terminal output
     int saved_stderr = -1;
@@ -5463,6 +5464,15 @@ static int process_single_command_response(ConversationState *state, ApiResponse
                     ? cJSON_Duplicate(tool->parameters, /*recurse*/1)
                     : cJSON_CreateObject();
 
+                // Print tool name header in single command mode (no colors available)
+                char *tool_details = get_tool_details(tool->name, input);
+                if (tool_details && strlen(tool_details) > 0) {
+                    printf(">>> [Tool: %s] %s <<<\n", tool->name, tool_details);
+                } else {
+                    printf(">>> [Tool: %s] <<<\n", tool->name);
+                }
+                fflush(stdout);
+
                 // Execute tool synchronously
                 cJSON *tool_result = execute_tool(tool->name, input, state);
 
@@ -5881,12 +5891,12 @@ int main(int argc, char *argv[]) {
     state.api_key = strdup(api_key);
     state.api_url = strdup(api_base);
     state.model = strdup(model);
-    
+
     // Get current working directory - use PATH_MAX to satisfy static analyzer
     char cwd_buf[PATH_MAX];
     char *cwd = getcwd(cwd_buf, sizeof(cwd_buf));
     state.working_dir = cwd ? strdup(cwd) : NULL;
-    
+
     state.session_id = session_id;
     state.persistence_db = persistence_db;
     state.max_retry_duration_ms = get_env_int_retry("CLAUDE_C_MAX_RETRY_DURATION_MS", MAX_RETRY_DURATION_MS);
