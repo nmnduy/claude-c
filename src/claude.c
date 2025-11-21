@@ -5327,6 +5327,7 @@ static int single_command_mode(ConversationState *state, const char *prompt) {
             }
 
             // Add tool results to conversation
+            // Note: add_tool_results takes ownership of the results array and its contents
             add_tool_results(state, results, tool_count);
 
             // Call API again with tool results
@@ -5342,21 +5343,8 @@ static int single_command_mode(ConversationState *state, const char *prompt) {
                 api_response_free(next_response);
             }
 
-            // Free tool results
-            for (int i = 0; i < tool_count; i++) {
-                if (results[i].tool_id) {
-                    free(results[i].tool_id);
-                }
-                if (results[i].tool_name) {
-                    free(results[i].tool_name);
-                }
-                if (results[i].tool_output) {
-                    cJSON_Delete(results[i].tool_output);
-                }
-            }
+            // Do NOT free results here - add_tool_results() took ownership
         }
-
-        free(results);
     }
 
     // Add to conversation history
