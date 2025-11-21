@@ -495,7 +495,7 @@ int mcp_connect_server(MCPServer *server) {
     if (flags >= 0) {
         fcntl(server->stdout_fd, F_SETFL, flags | O_NONBLOCK);
     }
-    
+
     flags = fcntl(server->stderr_fd, F_GETFL, 0);
     if (flags >= 0) {
         fcntl(server->stderr_fd, F_SETFL, flags | O_NONBLOCK);
@@ -505,10 +505,10 @@ int mcp_connect_server(MCPServer *server) {
     // Use ./.claude-c/mcp/<server-name>.log
     char log_path[512];
     snprintf(log_path, sizeof(log_path), ".claude-c/mcp/%s.log", server->name);
-    
+
     // Create directory if it doesn't exist
     system("mkdir -p .claude-c/mcp");
-    
+
     server->stderr_log = fopen(log_path, "w");
     if (server->stderr_log) {
         LOG_DEBUG("MCP: Logging stderr for '%s' to %s", server->name, log_path);
@@ -555,7 +555,7 @@ int mcp_connect_server(MCPServer *server) {
         for (int i = 0; i < 50; i++) {  // 5 second timeout
             // Read any stderr output during initialization
             mcp_read_stderr(server);
-            
+
             ssize_t n = read(server->stdout_fd, buffer + total_read, sizeof(buffer) - total_read - 1);
             if (n > 0) {
                 total_read += (size_t)n;
@@ -567,7 +567,7 @@ int mcp_connect_server(MCPServer *server) {
             }
             usleep(100000);  // 100ms
         }
-        
+
         // Read any remaining stderr after initialization
         mcp_read_stderr(server);
 
@@ -609,20 +609,20 @@ static void mcp_read_stderr(MCPServer *server) {
 
     char buffer[4096];
     ssize_t n;
-    
+
     while ((n = read(server->stderr_fd, buffer, sizeof(buffer) - 1)) > 0) {
         buffer[n] = '\0';
-        
+
         // Write raw output to server's log file if open
         if (server->stderr_log) {
             fwrite(buffer, 1, (size_t)n, server->stderr_log);
             fflush(server->stderr_log);
         }
-        
+
         // Also log each line to main debug log for convenience
         char *line = buffer;
         char *next_line;
-        
+
         while ((next_line = strchr(line, '\n')) != NULL) {
             *next_line = '\0';
             if (strlen(line) > 0) {
@@ -630,7 +630,7 @@ static void mcp_read_stderr(MCPServer *server) {
             }
             line = next_line + 1;
         }
-        
+
         // Log any remaining partial line
         if (strlen(line) > 0) {
             LOG_DEBUG("MCP[%s stderr]: %s", server->name, line);
@@ -737,10 +737,10 @@ static cJSON* mcp_send_request(MCPServer *server, const char *method, cJSON *par
     for (int i = 0; i < 50; i++) {  // 5 second timeout
         // Read any stderr output (for logging/debugging)
         mcp_read_stderr(server);
-        
+
             // Read any stderr output during initialization
             mcp_read_stderr(server);
-            
+
         ssize_t n = read(server->stdout_fd, buffer + total_read, sizeof(buffer) - total_read - 1);
         if (n > 0) {
             total_read += (size_t)n;
@@ -752,7 +752,7 @@ static cJSON* mcp_send_request(MCPServer *server, const char *method, cJSON *par
         }
         usleep(100000);  // 100ms
     }
-    
+
     // Read any remaining stderr output
     mcp_read_stderr(server);
 

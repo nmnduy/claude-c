@@ -3865,7 +3865,7 @@ static ApiResponse* call_api_with_retries(ConversationState *state) {
         if (attempt_num > 1 && elapsed_ms >= state->max_retry_duration_ms) {
             LOG_ERROR("Maximum retry duration (%d ms) exceeded after %d attempts",
                      state->max_retry_duration_ms, attempt_num - 1);
-            
+
             // Include the last error details for user context
             char error_msg[1024];
             if (last_error && last_http_status > 0) {
@@ -3990,7 +3990,7 @@ static ApiResponse* call_api_with_retries(ConversationState *state) {
             delay_ms = (int)remaining_ms;
             if (delay_ms <= 0) {
                 LOG_ERROR("Maximum retry duration (%d ms) exceeded", state->max_retry_duration_ms);
-                
+
                 // Include the error details for user context
                 char error_msg[1024];
                 if (result.error_message && result.http_status > 0) {
@@ -4002,7 +4002,7 @@ static ApiResponse* call_api_with_retries(ConversationState *state) {
                             "Maximum retry duration exceeded");
                 }
                 print_error(error_msg);
-                
+
                 free(last_error);
                 free(result.raw_response);
                 free(result.request_json);
@@ -5475,7 +5475,7 @@ static int process_single_command_response(ConversationState *state, ApiResponse
                         cJSON *status = cJSON_GetObjectItem(tool_result, "status");
                         cJSON *exit_code = cJSON_GetObjectItem(tool_result, "exit_code");
                         cJSON *message = cJSON_GetObjectItem(tool_result, "message");
-                        
+
                         // Print output field (e.g., Bash command output)
                         if (output && cJSON_IsString(output) && strlen(output->valuestring) > 0) {
                             printf("%s", output->valuestring);
@@ -5500,7 +5500,7 @@ static int process_single_command_response(ConversationState *state, ApiResponse
                             // Only print non-success status (errors should be caught above)
                             printf("Status: %s\n", status->valuestring);
                         }
-                        
+
                         // Print exit code for Bash commands (if non-zero and no output was printed)
                         if (exit_code && cJSON_IsNumber(exit_code)) {
                             int code = exit_code->valueint;
