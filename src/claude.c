@@ -608,6 +608,10 @@ char* read_file(const char *path) {
 
     fseek(f, 0, SEEK_END);
     long fsize = ftell(f);
+    if (fsize < 0) {
+        fclose(f);
+        return NULL;
+    }
     fseek(f, 0, SEEK_SET);
 
     char *content = malloc((size_t)fsize + 1);
@@ -4235,6 +4239,7 @@ char* build_system_prompt(ConversationState *state) {
         free(date);
         free(os_version);
         free(git_status);
+        free(claude_md);
         return NULL;
     }
 
@@ -5500,6 +5505,9 @@ static int process_single_command_response(ConversationState *state, ApiResponse
             }
 
             // Do NOT free results here - add_tool_results() took ownership
+        } else {
+            // No valid tool calls, free the allocated results array
+            free(results);
         }
     }
 
@@ -5873,7 +5881,12 @@ int main(int argc, char *argv[]) {
     state.api_key = strdup(api_key);
     state.api_url = strdup(api_base);
     state.model = strdup(model);
-    state.working_dir = getcwd(NULL, 0);
+    
+    // Get current working directory - use PATH_MAX to satisfy static analyzer
+    char cwd_buf[PATH_MAX];
+    char *cwd = getcwd(cwd_buf, sizeof(cwd_buf));
+    state.working_dir = cwd ? strdup(cwd) : NULL;
+    
     state.session_id = session_id;
     state.persistence_db = persistence_db;
     state.max_retry_duration_ms = get_env_int_retry("CLAUDE_C_MAX_RETRY_DURATION_MS", MAX_RETRY_DURATION_MS);
