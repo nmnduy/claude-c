@@ -658,7 +658,12 @@ static cJSON* mcp_send_request(MCPServer *server, const char *method, cJSON *par
     // Parse response
     cJSON *response = cJSON_Parse(buffer);
     if (!response) {
-        LOG_ERROR("MCP: Failed to parse response: %s", cJSON_GetErrorPtr());
+        // Show first 200 chars of response for debugging
+        char preview[201];
+        strncpy(preview, buffer, 200);
+        preview[200] = '\0';
+        LOG_ERROR("MCP: Failed to parse JSON response from '%s'. First 200 chars: %s%s",
+                 server->name, preview, total_read > 200 ? "..." : "");
         return NULL;
     }
 
