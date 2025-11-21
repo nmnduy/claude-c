@@ -5475,6 +5475,9 @@ static int process_single_command_response(ConversationState *state, ApiResponse
                         cJSON *status = cJSON_GetObjectItem(tool_result, "status");
                         cJSON *exit_code = cJSON_GetObjectItem(tool_result, "exit_code");
                         cJSON *message = cJSON_GetObjectItem(tool_result, "message");
+                        cJSON *resources = cJSON_GetObjectItem(tool_result, "resources");
+                        cJSON *files = cJSON_GetObjectItem(tool_result, "files");
+                        cJSON *matches = cJSON_GetObjectItem(tool_result, "matches");
 
                         // Print output field (e.g., Bash command output)
                         if (output && cJSON_IsString(output) && strlen(output->valuestring) > 0) {
@@ -5489,6 +5492,33 @@ static int process_single_command_response(ConversationState *state, ApiResponse
                             printf("%s", content->valuestring);
                             if (content->valuestring[strlen(content->valuestring) - 1] != '\n') {
                                 printf("\n");
+                            }
+                        }
+                        // Print resources field (e.g., from ListMcpResources)
+                        else if (resources && cJSON_IsArray(resources)) {
+                            // Print resources as formatted JSON
+                            char *json_str = cJSON_Print(tool_result);
+                            if (json_str) {
+                                printf("%s\n", json_str);
+                                free(json_str);
+                            }
+                        }
+                        // Print files field (e.g., from Glob)
+                        else if (files && cJSON_IsArray(files)) {
+                            // Print files as formatted JSON
+                            char *json_str = cJSON_Print(tool_result);
+                            if (json_str) {
+                                printf("%s\n", json_str);
+                                free(json_str);
+                            }
+                        }
+                        // Print matches field (e.g., from Grep)
+                        else if (matches && cJSON_IsArray(matches)) {
+                            // Print matches as formatted JSON
+                            char *json_str = cJSON_Print(tool_result);
+                            if (json_str) {
+                                printf("%s\n", json_str);
+                                free(json_str);
                             }
                         }
                         // For status-only results, only print if there's a meaningful message
