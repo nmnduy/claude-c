@@ -215,18 +215,18 @@ static void test_mcp_enabled_state(void) {
     int enabled = mcp_is_enabled();
     assert(enabled == 0);
 
-    // After init without env var, should be enabled by default
-    mcp_init();
-    enabled = mcp_is_enabled();
-    assert(enabled == 1);
-
-    mcp_cleanup();
-
-    // Set env var to disable and re-init
-    setenv("CLAUDE_MCP_ENABLED", "0", 1);
+    // After init without env var, should be disabled by default
     mcp_init();
     enabled = mcp_is_enabled();
     assert(enabled == 0);
+
+    mcp_cleanup();
+
+    // Set env var to enable and re-init
+    setenv("CLAUDE_MCP_ENABLED", "1", 1);
+    mcp_init();
+    enabled = mcp_is_enabled();
+    assert(enabled == 1);
 
     mcp_cleanup();
     unsetenv("CLAUDE_MCP_ENABLED");

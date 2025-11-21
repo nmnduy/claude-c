@@ -94,7 +94,7 @@ export OPENAI_API_KEY="your-api-key"
   - `CLAUDE_C_GREP_MAX_RESULTS` - Max grep results (default: 100)
   - `CLAUDE_C_BASH_TIMEOUT` - Timeout for bash commands in seconds (default: 30, 0=no timeout)
 - **Theme**: `CLAUDE_C_THEME` pointing to Kitty .conf file
-- **MCP**: `CLAUDE_MCP_ENABLED=1` to enable, `CLAUDE_MCP_CONFIG` for config path
+- **MCP**: `CLAUDE_MCP_ENABLED=1` to enable (disabled by default), `CLAUDE_MCP_CONFIG` for config path
 
 **Defaults:**
 - Logs: `./.claude-c/logs/claude.log` (project-local)

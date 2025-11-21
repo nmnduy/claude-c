@@ -1594,7 +1594,7 @@ void tui_show_startup_banner(TUIState *tui, const char *version, const char *mod
         /* "Enable Bedrock with CLAUDE_CODE_USE_BEDROCK=1 and ANTHROPIC_MODEL set.", */
         "Interrupt long tool runs any time with Ctrl+C.",
         "Disable prompt caching with DISABLE_PROMPT_CACHING=1 if needed.",
-        "MCP is enabled by default; configure servers in ~/.config/claude-c/ (set CLAUDE_MCP_ENABLED=0 to disable).",
+        "MCP is disabled by default; enable with CLAUDE_MCP_ENABLED=1 and configure servers in ~/.config/claude-c/.",
         "Use /clear to clear conversation; /quit or /exit to leave.",
         "Use /help to see all available commands."
     };

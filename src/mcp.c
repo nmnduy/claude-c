@@ -47,14 +47,14 @@ int mcp_init(void) {
         return 0;
     }
 
-    // Enable by default; allow opt-out via CLAUDE_MCP_ENABLED=0/false/off
+    // Disabled by default; allow opt-in via CLAUDE_MCP_ENABLED=1/true/on
     const char *enabled = getenv("CLAUDE_MCP_ENABLED");
-    if (enabled && (strcmp(enabled, "0") == 0 || strcasecmp(enabled, "false") == 0 || strcasecmp(enabled, "off") == 0)) {
-        mcp_enabled = 0;
-        LOG_DEBUG("MCP subsystem initialized but disabled (set CLAUDE_MCP_ENABLED=1 to enable)");
-    } else {
+    if (enabled && (strcmp(enabled, "1") == 0 || strcasecmp(enabled, "true") == 0 || strcasecmp(enabled, "on") == 0)) {
         mcp_enabled = 1;
         LOG_INFO("MCP subsystem initialized and enabled");
+    } else {
+        mcp_enabled = 0;
+        LOG_DEBUG("MCP subsystem initialized but disabled (set CLAUDE_MCP_ENABLED=1 to enable)");
     }
 
     mcp_initialized = 1;
