@@ -1330,8 +1330,10 @@ void tui_add_conversation_line(TUIState *tui, const char *prefix, const char *te
     LOG_DEBUG("[TUI] Added line, total_lines now %d (estimated %d, actual %d)",
               window_manager_get_content_lines(&tui->wm), estimated_lines, cur_y - start_line);
 
-    // Auto-scroll to bottom (show latest messages)
-    window_manager_scroll_to_bottom(&tui->wm);
+    // Auto-scroll to bottom only in INSERT mode (preserve scroll position in NORMAL mode)
+    if (tui->mode == TUI_MODE_INSERT) {
+        window_manager_scroll_to_bottom(&tui->wm);
+    }
     window_manager_refresh_conversation(&tui->wm);
 
     if (tui->wm.status_height > 0) {
