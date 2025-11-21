@@ -53,6 +53,7 @@ typedef struct MCPServer {
     pid_t pid;                   // Process ID (if running)
     int stdin_fd;                // Write to server's stdin
     int stdout_fd;               // Read from server's stdout
+    int stderr_fd;               // Read from server's stderr (for logging)
 
     // For SSE transport
     char *url;                   // Server URL
@@ -65,6 +66,7 @@ typedef struct MCPServer {
     // State
     int connected;               // Connection status
     int message_id;              // Message ID counter for JSON-RPC
+    FILE *stderr_log;            // File handle for logging stderr output
 } MCPServer;
 
 /*

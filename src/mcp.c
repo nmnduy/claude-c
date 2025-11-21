@@ -377,6 +377,11 @@ void mcp_free_config(MCPConfig *config) {
 }
 
 /*
+ * Forward declaration for stderr reading function
+ */
+static void mcp_read_stderr(MCPServer *server);
+
+/*
  * Connect to an MCP server (stdio transport)
  */
 int mcp_connect_server(MCPServer *server) {
@@ -392,9 +397,10 @@ int mcp_connect_server(MCPServer *server) {
 
     LOG_INFO("MCP: Connecting to server '%s'...", server->name);
 
-    // Create pipes for stdin/stdout
+    // Create pipes for stdin/stdout/stderr
     int stdin_pipe[2] = {-1, -1};
     int stdout_pipe[2] = {-1, -1};
+    int stderr_pipe[2] = {-1, -1};
 
     if (pipe(stdin_pipe) < 0) {
         LOG_ERROR("MCP: Failed to create stdin pipe: %s", strerror(errno));
@@ -408,6 +414,15 @@ int mcp_connect_server(MCPServer *server) {
         return -1;
     }
 
+    if (pipe(stderr_pipe) < 0) {
+        LOG_ERROR("MCP: Failed to create stderr pipe: %s", strerror(errno));
+        close(stdin_pipe[0]);
+        close(stdin_pipe[1]);
+        close(stdout_pipe[0]);
+        close(stdout_pipe[1]);
+        return -1;
+    }
+
     // Fork process
     pid_t pid = fork();
     if (pid < 0) {
@@ -416,21 +431,26 @@ int mcp_connect_server(MCPServer *server) {
         close(stdin_pipe[1]);
         close(stdout_pipe[0]);
         close(stdout_pipe[1]);
+        close(stderr_pipe[0]);
+        close(stderr_pipe[1]);
         return -1;
     }
 
     if (pid == 0) {
         // Child process
 
-        // Redirect stdin/stdout
+        // Redirect stdin/stdout/stderr
         dup2(stdin_pipe[0], STDIN_FILENO);
         dup2(stdout_pipe[1], STDOUT_FILENO);
+        dup2(stderr_pipe[1], STDERR_FILENO);
 
         // Close unused pipe ends
         close(stdin_pipe[0]);
         close(stdin_pipe[1]);
         close(stdout_pipe[0]);
         close(stdout_pipe[1]);
+        close(stderr_pipe[0]);
+        close(stderr_pipe[1]);
 
         // Build argv
         char **argv = calloc((size_t)(server->args_count + 2), sizeof(char*));
@@ -462,16 +482,38 @@ int mcp_connect_server(MCPServer *server) {
     // Parent process
     close(stdin_pipe[0]);   // Close read end of stdin pipe
     close(stdout_pipe[1]);  // Close write end of stdout pipe
+    close(stderr_pipe[1]);  // Close write end of stderr pipe
 
     server->pid = pid;
     server->stdin_fd = stdin_pipe[1];
     server->stdout_fd = stdout_pipe[0];
+    server->stderr_fd = stderr_pipe[0];
     server->connected = 1;
 
-    // Set non-blocking mode for stdout
+    // Set non-blocking mode for stdout and stderr
     int flags = fcntl(server->stdout_fd, F_GETFL, 0);
     if (flags >= 0) {
         fcntl(server->stdout_fd, F_SETFL, flags | O_NONBLOCK);
+    }
+    
+    flags = fcntl(server->stderr_fd, F_GETFL, 0);
+    if (flags >= 0) {
+        fcntl(server->stderr_fd, F_SETFL, flags | O_NONBLOCK);
+    }
+
+    // Open log file for stderr output
+    // Use ./.claude-c/mcp/<server-name>.log
+    char log_path[512];
+    snprintf(log_path, sizeof(log_path), ".claude-c/mcp/%s.log", server->name);
+    
+    // Create directory if it doesn't exist
+    system("mkdir -p .claude-c/mcp");
+    
+    server->stderr_log = fopen(log_path, "w");
+    if (server->stderr_log) {
+        LOG_DEBUG("MCP: Logging stderr for '%s' to %s", server->name, log_path);
+    } else {
+        LOG_WARN("MCP: Failed to open stderr log file %s: %s", log_path, strerror(errno));
     }
 
     LOG_INFO("MCP: Connected to server '%s' (pid: %d)", server->name, server->pid);
@@ -511,6 +553,9 @@ int mcp_connect_server(MCPServer *server) {
 
         // Wait for response (with timeout)
         for (int i = 0; i < 50; i++) {  // 5 second timeout
+            // Read any stderr output during initialization
+            mcp_read_stderr(server);
+            
             ssize_t n = read(server->stdout_fd, buffer + total_read, sizeof(buffer) - total_read - 1);
             if (n > 0) {
                 total_read += (size_t)n;
@@ -522,6 +567,9 @@ int mcp_connect_server(MCPServer *server) {
             }
             usleep(100000);  // 100ms
         }
+        
+        // Read any remaining stderr after initialization
+        mcp_read_stderr(server);
 
         if (total_read > 0) {
             buffer[total_read] = '\0';
@@ -550,6 +598,47 @@ int mcp_connect_server(MCPServer *server) {
 }
 
 /*
+ * Read and log stderr output from MCP server (non-blocking)
+ * This helps capture debug logs and errors from the server.
+ * Logs are written both to the main log and to a server-specific file.
+ */
+static void mcp_read_stderr(MCPServer *server) {
+    if (!server || server->stderr_fd < 0) {
+        return;
+    }
+
+    char buffer[4096];
+    ssize_t n;
+    
+    while ((n = read(server->stderr_fd, buffer, sizeof(buffer) - 1)) > 0) {
+        buffer[n] = '\0';
+        
+        // Write raw output to server's log file if open
+        if (server->stderr_log) {
+            fwrite(buffer, 1, (size_t)n, server->stderr_log);
+            fflush(server->stderr_log);
+        }
+        
+        // Also log each line to main debug log for convenience
+        char *line = buffer;
+        char *next_line;
+        
+        while ((next_line = strchr(line, '\n')) != NULL) {
+            *next_line = '\0';
+            if (strlen(line) > 0) {
+                LOG_DEBUG("MCP[%s stderr]: %s", server->name, line);
+            }
+            line = next_line + 1;
+        }
+        
+        // Log any remaining partial line
+        if (strlen(line) > 0) {
+            LOG_DEBUG("MCP[%s stderr]: %s", server->name, line);
+        }
+    }
+}
+
+/*
  * Disconnect from an MCP server
  */
 void mcp_disconnect_server(MCPServer *server) {
@@ -568,6 +657,17 @@ void mcp_disconnect_server(MCPServer *server) {
     if (server->stdout_fd >= 0) {
         close(server->stdout_fd);
         server->stdout_fd = -1;
+    }
+
+    if (server->stderr_fd >= 0) {
+        close(server->stderr_fd);
+        server->stderr_fd = -1;
+    }
+
+    // Close stderr log file
+    if (server->stderr_log) {
+        fclose(server->stderr_log);
+        server->stderr_log = NULL;
     }
 
     // Kill process if still running
@@ -635,6 +735,12 @@ static cJSON* mcp_send_request(MCPServer *server, const char *method, cJSON *par
 
     // Wait for response (with timeout)
     for (int i = 0; i < 50; i++) {  // 5 second timeout
+        // Read any stderr output (for logging/debugging)
+        mcp_read_stderr(server);
+        
+            // Read any stderr output during initialization
+            mcp_read_stderr(server);
+            
         ssize_t n = read(server->stdout_fd, buffer + total_read, sizeof(buffer) - total_read - 1);
         if (n > 0) {
             total_read += (size_t)n;
@@ -646,6 +752,9 @@ static cJSON* mcp_send_request(MCPServer *server, const char *method, cJSON *par
         }
         usleep(100000);  // 100ms
     }
+    
+    // Read any remaining stderr output
+    mcp_read_stderr(server);
 
     if (total_read == 0) {
         LOG_ERROR("MCP: No response from server '%s'", server->name);
