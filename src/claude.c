@@ -5317,6 +5317,9 @@ static int submit_input_callback(const char *input, void *user_data) {
 }
 
 // Execute a single command and exit
+// Forward declaration for recursion
+static int process_single_command_response(ConversationState *state, ApiResponse *response);
+
 static int single_command_mode(ConversationState *state, const char *prompt) {
     LOG_INFO("Executing single command: %s", prompt);
 
@@ -5349,7 +5352,19 @@ static int single_command_mode(ConversationState *state, const char *prompt) {
         return 1;
     }
 
-    // Process response without TUI - just print to stdout
+    // Process response recursively (handles tool calls and follow-up responses)
+    int result = process_single_command_response(state, response);
+    api_response_free(response);
+    return result;
+}
+
+/**
+ * Process a single API response in single command mode
+ * Recursively handles tool calls and follow-up responses
+ * Returns: 0 on success, 1 on error
+ */
+static int process_single_command_response(ConversationState *state, ApiResponse *response) {
+    // Print assistant's text content if present
     if (response->message.text && response->message.text[0] != '\0') {
         // Skip whitespace-only content
         const char *p = response->message.text;
@@ -5357,6 +5372,16 @@ static int single_command_mode(ConversationState *state, const char *prompt) {
 
         if (*p != '\0') {  // Has non-whitespace content
             printf("%s\n", p);
+        }
+    }
+
+    // Add to conversation history
+    cJSON *choices = cJSON_GetObjectItem(response->raw_response, "choices");
+    if (choices && cJSON_IsArray(choices) && cJSON_GetArraySize(choices) > 0) {
+        cJSON *choice = cJSON_GetArrayItem(choices, 0);
+        cJSON *message = cJSON_GetObjectItem(choice, "message");
+        if (message) {
+            add_assistant_message_openai(state, message);
         }
     }
 
@@ -5370,7 +5395,6 @@ static int single_command_mode(ConversationState *state, const char *prompt) {
         InternalContent *results = calloc((size_t)tool_count, sizeof(InternalContent));
         if (!results) {
             LOG_ERROR("Failed to allocate tool result buffer");
-            api_response_free(response);
             return 1;
         }
 
@@ -5408,14 +5432,7 @@ static int single_command_mode(ConversationState *state, const char *prompt) {
                 results[i].tool_output = tool_result;
                 results[i].is_error = tool_result ? cJSON_HasObjectItem(tool_result, "error") : 1;
 
-                // Print tool result
-                if (tool_result) {
-                    char *result_str = cJSON_PrintUnformatted(tool_result);
-                    if (result_str) {
-                        printf("%s\n", result_str);
-                        free(result_str);
-                    }
-                }
+                // Tool result is logged via LOG_DEBUG in execute_tool
 
                 cJSON_Delete(input);
             }
@@ -5424,34 +5441,24 @@ static int single_command_mode(ConversationState *state, const char *prompt) {
             // Note: add_tool_results takes ownership of the results array and its contents
             add_tool_results(state, results, tool_count);
 
-            // Call API again with tool results
+            // Call API again with tool results and process recursively
             ApiResponse *next_response = call_api(state);
             if (next_response) {
-                if (next_response->message.text && next_response->message.text[0] != '\0') {
-                    const char *p = next_response->message.text;
-                    while (*p && isspace((unsigned char)*p)) p++;
-                    if (*p != '\0') {
-                        printf("%s\n", p);
-                    }
-                }
+                // Recursively process the next response (may contain more tool calls)
+                int result = process_single_command_response(state, next_response);
                 api_response_free(next_response);
+                return result;
+            } else {
+                LOG_ERROR("Failed to get response after tool execution");
+                fprintf(stderr, "Error: Failed to get response after tool execution\n");
+                return 1;
             }
 
             // Do NOT free results here - add_tool_results() took ownership
         }
     }
 
-    // Add to conversation history
-    cJSON *choices = cJSON_GetObjectItem(response->raw_response, "choices");
-    if (choices && cJSON_IsArray(choices) && cJSON_GetArraySize(choices) > 0) {
-        cJSON *choice = cJSON_GetArrayItem(choices, 0);
-        cJSON *message = cJSON_GetObjectItem(choice, "message");
-        if (message) {
-            add_assistant_message_openai(state, message);
-        }
-    }
-
-    api_response_free(response);
+    // No tool calls - conversation is complete
     return 0;
 }
 
