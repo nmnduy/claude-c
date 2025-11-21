@@ -2780,15 +2780,16 @@ static cJSON* tool_call_mcp_tool(cJSON *params, ConversationState *state) {
     MCPToolResult *call_result = mcp_call_tool(target, tool_name, args_object);
     cJSON *result = cJSON_CreateObject();
     if (!call_result) {
-        LOG_ERROR("tool_call_mcp_tool: MCP tool call failed for tool '%s' on server '%s'",
+        LOG_ERROR("tool_call_mcp_tool: MCP tool call failed for tool '%s' on server '%s' (memory allocation error)",
                  tool_name, server_name);
-        cJSON_AddStringToObject(result, "error", "MCP tool call failed");
+        cJSON_AddStringToObject(result, "error", "MCP tool call failed: memory allocation error");
         return result;
     }
 
     if (call_result->is_error) {
         LOG_ERROR("tool_call_mcp_tool: MCP tool returned error: %s",
                  call_result->result ? call_result->result : "MCP tool error");
+        // Include the detailed error message for the user
         cJSON_AddStringToObject(result, "error", call_result->result ? call_result->result : "MCP tool error");
     } else {
         LOG_DEBUG("tool_call_mcp_tool: MCP tool call succeeded, result length: %zu, blob size: %zu, mime_type: %s",
@@ -3836,6 +3837,8 @@ static ApiResponse* call_api_with_retries(ConversationState *state) {
 
     int attempt_num = 1;
     int backoff_ms = INITIAL_BACKOFF_MS;
+    char *last_error = NULL;
+    long last_http_status = 0;
 
     struct timespec call_start, call_end, retry_start;
     clock_gettime(CLOCK_MONOTONIC, &call_start);
@@ -3849,6 +3852,7 @@ static ApiResponse* call_api_with_retries(ConversationState *state) {
         if (state->interrupt_requested) {
             LOG_INFO("API call interrupted by user request");
             print_error("Operation interrupted by user");
+            free(last_error);
             return NULL;
         }
 
@@ -3861,7 +3865,19 @@ static ApiResponse* call_api_with_retries(ConversationState *state) {
         if (attempt_num > 1 && elapsed_ms >= state->max_retry_duration_ms) {
             LOG_ERROR("Maximum retry duration (%d ms) exceeded after %d attempts",
                      state->max_retry_duration_ms, attempt_num - 1);
-            print_error("Maximum retry duration exceeded");
+            
+            // Include the last error details for user context
+            char error_msg[1024];
+            if (last_error && last_http_status > 0) {
+                snprintf(error_msg, sizeof(error_msg),
+                        "Maximum retry duration exceeded. Last error: %s (HTTP %ld)",
+                        last_error, last_http_status);
+            } else {
+                snprintf(error_msg, sizeof(error_msg),
+                        "Maximum retry duration exceeded");
+            }
+            print_error(error_msg);
+            free(last_error);
             return NULL;
         }
 
@@ -3930,6 +3946,13 @@ static ApiResponse* call_api_with_retries(ConversationState *state) {
             );
         }
 
+        // Save last error details for potential timeout message
+        if (last_error) {
+            free(last_error);
+        }
+        last_error = result.error_message ? strdup(result.error_message) : NULL;
+        last_http_status = result.http_status;
+
         // Check if we should retry
         if (!result.is_retryable) {
             // Non-retryable error
@@ -3946,6 +3969,7 @@ static ApiResponse* call_api_with_retries(ConversationState *state) {
                 error_response->error_message = strdup(result.error_message ? result.error_message : "unknown error");
             }
 
+            free(last_error);
             free(result.raw_response);
             free(result.request_json);
             free(result.error_message);
@@ -3966,7 +3990,20 @@ static ApiResponse* call_api_with_retries(ConversationState *state) {
             delay_ms = (int)remaining_ms;
             if (delay_ms <= 0) {
                 LOG_ERROR("Maximum retry duration (%d ms) exceeded", state->max_retry_duration_ms);
-                print_error("Maximum retry duration exceeded");
+                
+                // Include the error details for user context
+                char error_msg[1024];
+                if (result.error_message && result.http_status > 0) {
+                    snprintf(error_msg, sizeof(error_msg),
+                            "Maximum retry duration exceeded. Last error: %s (HTTP %ld)",
+                            result.error_message, result.http_status);
+                } else {
+                    snprintf(error_msg, sizeof(error_msg),
+                            "Maximum retry duration exceeded");
+                }
+                print_error(error_msg);
+                
+                free(last_error);
                 free(result.raw_response);
                 free(result.request_json);
                 free(result.error_message);

@@ -754,7 +754,13 @@ int mcp_discover_tools(MCPServer *server) {
 MCPToolResult* mcp_call_tool(MCPServer *server, const char *tool_name, cJSON *arguments) {
     if (!server || !server->connected || !tool_name) {
         LOG_ERROR("MCP: Invalid parameters for tool call");
-        return NULL;
+        MCPToolResult *error_result = calloc(1, sizeof(MCPToolResult));
+        if (error_result) {
+            error_result->tool_name = strdup(tool_name ? tool_name : "unknown");
+            error_result->is_error = 1;
+            error_result->result = strdup("MCP: Invalid parameters (server not connected or no tool name)");
+        }
+        return error_result;
     }
 
     LOG_INFO("MCP: Calling tool '%s' on server '%s'", tool_name, server->name);
@@ -771,21 +777,39 @@ MCPToolResult* mcp_call_tool(MCPServer *server, const char *tool_name, cJSON *ar
     cJSON_Delete(params);
 
     if (!response) {
-        return NULL;
+        MCPToolResult *error_result = calloc(1, sizeof(MCPToolResult));
+        if (error_result) {
+            error_result->tool_name = strdup(tool_name);
+            error_result->is_error = 1;
+            error_result->result = strdup("MCP: No response from server (timeout or connection error)");
+        }
+        return error_result;
     }
 
     // Extract result
     cJSON *result_obj = cJSON_GetObjectItem(response, "result");
     if (!result_obj) {
         LOG_ERROR("MCP: No result in tools/call response");
+        MCPToolResult *error_result = calloc(1, sizeof(MCPToolResult));
+        if (error_result) {
+            error_result->tool_name = strdup(tool_name);
+            error_result->is_error = 1;
+            error_result->result = strdup("MCP: Invalid response from server (no result field)");
+        }
         cJSON_Delete(response);
-        return NULL;
+        return error_result;
     }
 
     MCPToolResult *result = calloc(1, sizeof(MCPToolResult));
     if (!result) {
         cJSON_Delete(response);
-        return NULL;
+        MCPToolResult *error_result = calloc(1, sizeof(MCPToolResult));
+        if (error_result) {
+            error_result->tool_name = strdup(tool_name);
+            error_result->is_error = 1;
+            error_result->result = strdup("MCP: Memory allocation failed");
+        }
+        return error_result;
     }
 
     result->tool_name = strdup(tool_name);
