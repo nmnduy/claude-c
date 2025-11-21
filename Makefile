@@ -495,34 +495,42 @@ sanitize-ub: check-deps
 sanitize-all: check-deps
 	@mkdir -p $(BUILD_DIR)
 	@echo "Building with Address + Undefined Behavior Sanitizers (recommended for testing)..."
-	$(CC) $(CFLAGS) -Wno-format-truncation -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/logger_all.o $(LOGGER_SRC)
-	$(CC) $(CFLAGS) -Wno-format-truncation -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/migrations_all.o $(MIGRATIONS_SRC)
-	$(CC) $(CFLAGS) -Wno-format-truncation -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/persistence_all.o $(PERSISTENCE_SRC)
-	$(CC) $(CFLAGS) -Wno-format-truncation -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/commands_all.o $(COMMANDS_SRC)
-	$(CC) $(CFLAGS) -Wno-format-truncation -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/completion_all.o $(COMPLETION_SRC)
-	$(CC) $(CFLAGS) -Wno-format-truncation -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/tui_all.o $(TUI_SRC)
-	$(CC) $(CFLAGS) -Wno-format-truncation -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/todo_all.o $(TODO_SRC)
-	$(CC) $(CFLAGS) -Wno-format-truncation -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/aws_bedrock_all.o $(AWS_BEDROCK_SRC)
-	$(CC) $(CFLAGS) -Wno-format-truncation -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/provider_all.o $(PROVIDER_SRC)
-	$(CC) $(CFLAGS) -Wno-format-truncation -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/openai_provider_all.o $(OPENAI_PROVIDER_SRC)
-	$(CC) $(CFLAGS) -Wno-format-truncation -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/openai_messages_all.o $(OPENAI_MESSAGES_SRC)
-	$(CC) $(CFLAGS) -Wno-format-truncation -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/bedrock_provider_all.o $(BEDROCK_PROVIDER_SRC)
-	$(CC) $(CFLAGS) -Wno-format-truncation -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/builtin_themes_all.o $(BUILTIN_THEMES_SRC)
-	$(CC) $(CFLAGS) -Wno-format-truncation -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/patch_parser_all.o $(PATCH_PARSER_SRC)
-	$(CC) $(CFLAGS) -Wno-format-truncation -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/message_queue_all.o $(MESSAGE_QUEUE_SRC)
-	$(CC) $(CFLAGS) -Wno-format-truncation -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/ai_worker_all.o $(AI_WORKER_SRC)
-	$(CC) $(CFLAGS) -Wno-format-truncation -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/voice_input_all.o $(VOICE_INPUT_SRC)
-	$(CC) $(CFLAGS) -Wno-format-truncation -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/mcp_all.o $(MCP_SRC)
-	$(CC) $(CFLAGS) -Wno-format-truncation -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/window_manager_all.o $(WINDOW_MANAGER_SRC)
-	$(CC) $(CFLAGS) -Wno-format-truncation -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/tool_utils_all.o $(TOOL_UTILS_SRC)
-	$(CC) $(CFLAGS) -Wno-format-truncation -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/history_file_all.o $(HISTORY_FILE_SRC)
-	$(CC) $(CFLAGS) -Wno-format-truncation -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -o $(BUILD_DIR)/claude-c-allsan $(SRC) \
+	@# Detect compiler to conditionally add GCC-specific flags
+	@COMPILER_TYPE=$$($(CC) --version 2>&1 | grep -q "clang" && echo "clang" || echo "gcc"); \
+	if [ "$$COMPILER_TYPE" = "gcc" ]; then \
+		EXTRA_FLAGS="-Wno-format-truncation"; \
+	else \
+		EXTRA_FLAGS=""; \
+	fi; \
+	$(CC) $(CFLAGS) $$EXTRA_FLAGS -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/logger_all.o $(LOGGER_SRC); \
+	$(CC) $(CFLAGS) $$EXTRA_FLAGS -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/migrations_all.o $(MIGRATIONS_SRC); \
+	$(CC) $(CFLAGS) $$EXTRA_FLAGS -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/persistence_all.o $(PERSISTENCE_SRC); \
+	$(CC) $(CFLAGS) $$EXTRA_FLAGS -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/commands_all.o $(COMMANDS_SRC); \
+	$(CC) $(CFLAGS) $$EXTRA_FLAGS -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/completion_all.o $(COMPLETION_SRC); \
+	$(CC) $(CFLAGS) $$EXTRA_FLAGS -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/tui_all.o $(TUI_SRC); \
+	$(CC) $(CFLAGS) $$EXTRA_FLAGS -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/todo_all.o $(TODO_SRC); \
+	$(CC) $(CFLAGS) $$EXTRA_FLAGS -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/aws_bedrock_all.o $(AWS_BEDROCK_SRC); \
+	$(CC) $(CFLAGS) $$EXTRA_FLAGS -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/provider_all.o $(PROVIDER_SRC); \
+	$(CC) $(CFLAGS) $$EXTRA_FLAGS -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/openai_provider_all.o $(OPENAI_PROVIDER_SRC); \
+	$(CC) $(CFLAGS) $$EXTRA_FLAGS -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/openai_messages_all.o $(OPENAI_MESSAGES_SRC); \
+	$(CC) $(CFLAGS) $$EXTRA_FLAGS -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/bedrock_provider_all.o $(BEDROCK_PROVIDER_SRC); \
+	$(CC) $(CFLAGS) $$EXTRA_FLAGS -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/builtin_themes_all.o $(BUILTIN_THEMES_SRC); \
+	$(CC) $(CFLAGS) $$EXTRA_FLAGS -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/patch_parser_all.o $(PATCH_PARSER_SRC); \
+	$(CC) $(CFLAGS) $$EXTRA_FLAGS -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/message_queue_all.o $(MESSAGE_QUEUE_SRC); \
+	$(CC) $(CFLAGS) $$EXTRA_FLAGS -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/ai_worker_all.o $(AI_WORKER_SRC); \
+	$(CC) $(CFLAGS) $$EXTRA_FLAGS -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/voice_input_all.o $(VOICE_INPUT_SRC); \
+	$(CC) $(CFLAGS) $$EXTRA_FLAGS -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/mcp_all.o $(MCP_SRC); \
+	$(CC) $(CFLAGS) $$EXTRA_FLAGS -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/window_manager_all.o $(WINDOW_MANAGER_SRC); \
+	$(CC) $(CFLAGS) $$EXTRA_FLAGS -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/tool_utils_all.o $(TOOL_UTILS_SRC); \
+	$(CC) $(CFLAGS) $$EXTRA_FLAGS -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/history_file_all.o $(HISTORY_FILE_SRC); \
+	$(CC) $(CFLAGS) $$EXTRA_FLAGS -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/base64_all.o $(BASE64_SRC); \
+	$(CC) $(CFLAGS) $$EXTRA_FLAGS -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -o $(BUILD_DIR)/claude-c-allsan $(SRC) \
 		$(BUILD_DIR)/logger_all.o $(BUILD_DIR)/persistence_all.o $(BUILD_DIR)/migrations_all.o $(BUILD_DIR)/commands_all.o \
 		$(BUILD_DIR)/completion_all.o $(BUILD_DIR)/tui_all.o $(BUILD_DIR)/todo_all.o $(BUILD_DIR)/aws_bedrock_all.o \
 		$(BUILD_DIR)/provider_all.o $(BUILD_DIR)/openai_provider_all.o $(BUILD_DIR)/openai_messages_all.o \
 		$(BUILD_DIR)/bedrock_provider_all.o $(BUILD_DIR)/builtin_themes_all.o $(BUILD_DIR)/patch_parser_all.o \
 		$(BUILD_DIR)/message_queue_all.o $(BUILD_DIR)/ai_worker_all.o $(BUILD_DIR)/voice_input_all.o $(BUILD_DIR)/mcp_all.o \
-		$(BUILD_DIR)/window_manager_all.o $(BUILD_DIR)/tool_utils_all.o $(BUILD_DIR)/history_file_all.o \
+		$(BUILD_DIR)/window_manager_all.o $(BUILD_DIR)/tool_utils_all.o $(BUILD_DIR)/history_file_all.o $(BUILD_DIR)/base64_all.o \
 		$(LDFLAGS) -fsanitize=address,undefined
 	@echo ""
 	@echo "✓ Build successful with combined sanitizers!"
