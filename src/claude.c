@@ -5462,6 +5462,55 @@ static int process_single_command_response(ConversationState *state, ApiResponse
                 // Execute tool synchronously
                 cJSON *tool_result = execute_tool(tool->name, input, state);
 
+                // Print tool result in single command mode
+                if (tool_result) {
+                    // Check if it's an error
+                    cJSON *error = cJSON_GetObjectItem(tool_result, "error");
+                    if (error && cJSON_IsString(error)) {
+                        printf("Error: %s\n", error->valuestring);
+                    } else {
+                        // Print key fields based on tool type
+                        cJSON *output = cJSON_GetObjectItem(tool_result, "output");
+                        cJSON *content = cJSON_GetObjectItem(tool_result, "content");
+                        cJSON *status = cJSON_GetObjectItem(tool_result, "status");
+                        cJSON *exit_code = cJSON_GetObjectItem(tool_result, "exit_code");
+                        cJSON *message = cJSON_GetObjectItem(tool_result, "message");
+                        
+                        // Print output field (e.g., Bash command output)
+                        if (output && cJSON_IsString(output) && strlen(output->valuestring) > 0) {
+                            printf("%s", output->valuestring);
+                            // Add newline if output doesn't end with one
+                            if (output->valuestring[strlen(output->valuestring) - 1] != '\n') {
+                                printf("\n");
+                            }
+                        }
+                        // Print content field (e.g., file content from Read)
+                        else if (content && cJSON_IsString(content) && strlen(content->valuestring) > 0) {
+                            printf("%s", content->valuestring);
+                            if (content->valuestring[strlen(content->valuestring) - 1] != '\n') {
+                                printf("\n");
+                            }
+                        }
+                        // For status-only results, only print if there's a meaningful message
+                        // (skip printing just "success" as many tools already show their output via tool_emit_line)
+                        else if (message && cJSON_IsString(message) && strlen(message->valuestring) > 0) {
+                            printf("%s\n", message->valuestring);
+                        }
+                        else if (status && cJSON_IsString(status) && strcmp(status->valuestring, "success") != 0) {
+                            // Only print non-success status (errors should be caught above)
+                            printf("Status: %s\n", status->valuestring);
+                        }
+                        
+                        // Print exit code for Bash commands (if non-zero and no output was printed)
+                        if (exit_code && cJSON_IsNumber(exit_code)) {
+                            int code = exit_code->valueint;
+                            if (code != 0 && (!output || strlen(output->valuestring) == 0)) {
+                                printf("Exit code: %d\n", code);
+                            }
+                        }
+                    }
+                }
+
                 // Convert result to InternalContent
                 results[i].type = INTERNAL_TOOL_RESPONSE;
                 results[i].tool_id = strdup(tool->id);
