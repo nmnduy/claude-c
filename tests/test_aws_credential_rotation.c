@@ -1,9 +1,10 @@
 /*
- * Test AWS credential rotation with polling behavior
+ * Test AWS credential rotation - updated for new flow
  *
- * Tests the new polling mechanism that waits for credentials to actually
- * change after authentication, rather than immediately attempting to use
- * potentially stale credentials.
+ * Tests the new authentication flow where:
+ * 1. bedrock_load_credentials() returns cached credentials or NULL
+ * 2. bedrock_authenticate() triggers SSO login or custom auth
+ * 3. Credentials are loaded after authentication
  */
 
 #include <stdio.h>
@@ -58,7 +59,6 @@ static int tests_passed = 0;
 static int mock_auth_calls = 0;
 static int mock_exec_calls = 0;
 static int mock_credential_version = 0;  // Incremented to simulate credential changes
-static int mock_poll_attempts = 0;       // Track how many times credentials were polled
 
 // ============================================================================
 // Mock Functions
@@ -88,8 +88,6 @@ static char* mock_exec_command(const char *cmd) {
 
     // aws configure export-credentials
     if (strstr(cmd, "export-credentials")) {
-        mock_poll_attempts++;
-
         // Return credentials based on current version
         if (mock_credential_version > 0) {
             char buffer[512];
@@ -115,24 +113,11 @@ static char* mock_exec_command(const char *cmd) {
 static int mock_system(const char *cmd) {
     if (strstr(cmd, "aws sso login") || strstr(cmd, "custom-auth")) {
         mock_auth_calls++;
-        // Simulate delayed credential update
-        // Credentials will update after this call, but not immediately
+        // Simulate credential update after auth
         mock_credential_version++;
         return 0;  // Success
     }
     return 1;  // Failure
-}
-
-/**
- * Mock system with immediate credential update
- */
-static int mock_system_immediate(const char *cmd) {
-    if (strstr(cmd, "aws sso login") || strstr(cmd, "custom-auth")) {
-        mock_auth_calls++;
-        mock_credential_version++;
-        return 0;
-    }
-    return 1;
 }
 
 /**
@@ -152,7 +137,6 @@ static void reset_mocks(void) {
     mock_auth_calls = 0;
     mock_exec_calls = 0;
     mock_credential_version = 0;
-    mock_poll_attempts = 0;
 }
 
 static void setup_test_env(void) {
@@ -175,120 +159,134 @@ static void cleanup_test_env(void) {
 // ============================================================================
 
 /**
- * Test 1: Credentials are available immediately after authentication
+ * Test 1: No cached credentials returns NULL
  */
-static void test_immediate_credential_availability(void) {
-    printf("\n[Test 1] Immediate credential availability\n");
+static void test_no_cached_credentials_returns_null(void) {
+    printf("\n[Test 1] No cached credentials returns NULL\n");
     reset_mocks();
     setup_test_env();
 
     aws_bedrock_set_exec_command_fn(mock_exec_command);
-    aws_bedrock_set_system_fn(mock_system_immediate);
+    aws_bedrock_set_system_fn(mock_system);
 
-    // Load credentials (should trigger auth)
+    // No cached credentials
+    mock_credential_version = 0;
+
+    // Load credentials (should return NULL - no auth triggered)
     AWSCredentials *creds = bedrock_load_credentials("test-profile", "us-west-2");
 
-    ASSERT_TRUE(creds != NULL, "Credentials loaded successfully");
-    ASSERT_EQ(1, mock_auth_calls, "Authentication called once");
-    ASSERT_TRUE(mock_poll_attempts > 0, "Credentials were polled at least once");
+    ASSERT_TRUE(creds == NULL, "NULL returned when no cached credentials");
+    ASSERT_EQ(0, mock_auth_calls, "No authentication triggered");
+
+    cleanup_test_env();
+}
+
+/**
+ * Test 2: Cached credentials are returned without validation
+ */
+static void test_cached_credentials_returned(void) {
+    printf("\n[Test 2] Cached credentials returned without validation\n");
+    reset_mocks();
+    setup_test_env();
+
+    aws_bedrock_set_exec_command_fn(mock_exec_command);
+    aws_bedrock_set_system_fn(mock_system);
+
+    // Set up cached credentials
+    mock_credential_version = 1;
+
+    // Load credentials (should return cached creds without validation)
+    AWSCredentials *creds = bedrock_load_credentials("test-profile", "us-west-2");
+
+    ASSERT_TRUE(creds != NULL, "Credentials returned from cache");
+    ASSERT_EQ(0, mock_auth_calls, "No authentication triggered");
     ASSERT_TRUE(creds->access_key_id != NULL, "Access key is present");
-    ASSERT_TRUE(strstr(creds->access_key_id, "VERSION_1") != NULL, "Access key has version 1");
+    ASSERT_TRUE(strstr(creds->access_key_id, "VERSION_1") != NULL, "Access key is version 1");
 
     bedrock_creds_free(creds);
     cleanup_test_env();
 }
 
 /**
- * Test 2: Credentials change after authentication (polling required)
+ * Test 3: bedrock_authenticate triggers SSO login
  */
-static void test_credential_polling_detects_change(void) {
-    printf("\n[Test 2] Credential polling detects change\n");
+static void test_authenticate_triggers_sso(void) {
+    printf("\n[Test 3] bedrock_authenticate triggers SSO login\n");
     reset_mocks();
     setup_test_env();
 
     aws_bedrock_set_exec_command_fn(mock_exec_command);
     aws_bedrock_set_system_fn(mock_system);
 
-    // Start with no credentials, forcing authentication
     mock_credential_version = 0;
 
-    // Load credentials (should trigger authentication and polling)
-    AWSCredentials *creds = bedrock_load_credentials("test-profile", "us-west-2");
+    // Authenticate
+    int result = bedrock_authenticate("test-profile");
 
-    ASSERT_TRUE(creds != NULL, "Credentials loaded after rotation");
-    ASSERT_EQ(1, mock_auth_calls, "Authentication called once");
-    ASSERT_TRUE(mock_poll_attempts >= 1, "Credentials polled at least once");
-    ASSERT_TRUE(creds->access_key_id != NULL, "New access key is present");
-    ASSERT_TRUE(strstr(creds->access_key_id, "VERSION_1") != NULL, "Access key rotated to version 1");
-    ASSERT_EQ(1, mock_credential_version, "Credential version is 1 after authentication");
+    ASSERT_EQ(0, result, "Authentication succeeded");
+    ASSERT_EQ(1, mock_auth_calls, "SSO login was called");
+    ASSERT_EQ(1, mock_credential_version, "Credential version incremented");
 
-    bedrock_creds_free(creds);
     cleanup_test_env();
 }
 
 /**
- * Test 3: Multiple rotation attempts (simulates delayed credential cache update)
+ * Test 4: Credentials available after authentication
  */
-static void test_delayed_credential_update(void) {
-    printf("\n[Test 3] Delayed credential cache update\n");
+static void test_credentials_after_auth(void) {
+    printf("\n[Test 4] Credentials available after authentication\n");
     reset_mocks();
     setup_test_env();
 
-    // Start with version 0 (expired)
+    aws_bedrock_set_exec_command_fn(mock_exec_command);
+    aws_bedrock_set_system_fn(mock_system);
+
+    // No cached credentials initially
     mock_credential_version = 0;
-
-    aws_bedrock_set_exec_command_fn(mock_exec_command);
-    aws_bedrock_set_system_fn(mock_system);
-
-    // Load credentials
-    AWSCredentials *creds = bedrock_load_credentials("test-profile", "us-west-2");
-
-    ASSERT_TRUE(creds != NULL, "Credentials eventually loaded");
-    ASSERT_EQ(1, mock_auth_calls, "Authentication called once");
-    ASSERT_TRUE(mock_credential_version > 0, "Credential version incremented");
-
-    bedrock_creds_free(creds);
-    cleanup_test_env();
-}
-
-/**
- * Test 4: Credential validation after rotation
- */
-static void test_credential_validation_after_rotation(void) {
-    printf("\n[Test 4] Credential validation after rotation\n");
-    reset_mocks();
-    setup_test_env();
-
-    aws_bedrock_set_exec_command_fn(mock_exec_command);
-    aws_bedrock_set_system_fn(mock_system);
-
-    // First load - triggers auth
     AWSCredentials *creds1 = bedrock_load_credentials("test-profile", "us-west-2");
-    ASSERT_TRUE(creds1 != NULL, "First credential load successful");
+    ASSERT_TRUE(creds1 == NULL, "No credentials before auth");
 
-    const char *key1 = creds1->access_key_id;
-    ASSERT_TRUE(key1 != NULL, "First access key is present");
-
-    // Validate first credentials
-    int valid1 = bedrock_validate_credentials(creds1, "test-profile");
-    ASSERT_EQ(1, valid1, "First credentials are valid");
-
-    // Trigger rotation
-    int saved_version = mock_credential_version;
+    // Authenticate
     int auth_result = bedrock_authenticate("test-profile");
     ASSERT_EQ(0, auth_result, "Authentication succeeded");
-    ASSERT_TRUE(mock_credential_version > saved_version, "Credential version incremented");
 
-    // Load again - should get new credentials
+    // Load credentials after auth
     AWSCredentials *creds2 = bedrock_load_credentials("test-profile", "us-west-2");
-    ASSERT_TRUE(creds2 != NULL, "Second credential load successful");
-    ASSERT_TRUE(creds2->access_key_id != NULL, "Second access key is present");
-    ASSERT_TRUE(strcmp(creds1->access_key_id, creds2->access_key_id) != 0,
-                "Access keys are different after rotation");
+    ASSERT_TRUE(creds2 != NULL, "Credentials available after auth");
+    ASSERT_TRUE(creds2->access_key_id != NULL, "Access key is present");
+    ASSERT_TRUE(strstr(creds2->access_key_id, "VERSION_1") != NULL, "Got version 1 credentials");
 
-    // Validate new credentials
-    int valid2 = bedrock_validate_credentials(creds2, "test-profile");
-    ASSERT_EQ(1, valid2, "Second credentials are valid");
+    bedrock_creds_free(creds2);
+    cleanup_test_env();
+}
+
+/**
+ * Test 5: Credential rotation changes access keys
+ */
+static void test_credential_rotation(void) {
+    printf("\n[Test 5] Credential rotation changes access keys\n");
+    reset_mocks();
+    setup_test_env();
+
+    aws_bedrock_set_exec_command_fn(mock_exec_command);
+    aws_bedrock_set_system_fn(mock_system);
+
+    // Set up initial credentials
+    mock_credential_version = 1;
+    AWSCredentials *creds1 = bedrock_load_credentials("test-profile", "us-west-2");
+    ASSERT_TRUE(creds1 != NULL, "First credentials loaded");
+    const char *key1 = creds1->access_key_id;
+
+    // Trigger rotation
+    int auth_result = bedrock_authenticate("test-profile");
+    ASSERT_EQ(0, auth_result, "Authentication succeeded");
+    ASSERT_EQ(2, mock_credential_version, "Credential version incremented to 2");
+
+    // Load new credentials
+    AWSCredentials *creds2 = bedrock_load_credentials("test-profile", "us-west-2");
+    ASSERT_TRUE(creds2 != NULL, "Second credentials loaded");
+    ASSERT_TRUE(strcmp(key1, creds2->access_key_id) != 0, "Access keys are different after rotation");
+    ASSERT_TRUE(strstr(creds2->access_key_id, "VERSION_2") != NULL, "Got version 2 credentials");
 
     bedrock_creds_free(creds1);
     bedrock_creds_free(creds2);
@@ -296,10 +294,34 @@ static void test_credential_validation_after_rotation(void) {
 }
 
 /**
- * Test 5: Custom authentication command
+ * Test 6: Credential validation function works independently
+ */
+static void test_credential_validation(void) {
+    printf("\n[Test 6] Credential validation works independently\n");
+    reset_mocks();
+    setup_test_env();
+
+    aws_bedrock_set_exec_command_fn(mock_exec_command);
+    aws_bedrock_set_system_fn(mock_system);
+
+    // Set up valid credentials
+    mock_credential_version = 1;
+    AWSCredentials *creds = bedrock_load_credentials("test-profile", "us-west-2");
+    ASSERT_TRUE(creds != NULL, "Credentials loaded");
+
+    // Validate credentials
+    int valid = bedrock_validate_credentials(creds, "test-profile");
+    ASSERT_EQ(1, valid, "Credentials are valid");
+
+    bedrock_creds_free(creds);
+    cleanup_test_env();
+}
+
+/**
+ * Test 7: Custom authentication command
  */
 static void test_custom_auth_command(void) {
-    printf("\n[Test 5] Custom authentication command\n");
+    printf("\n[Test 7] Custom authentication command\n");
     reset_mocks();
     setup_test_env();
 
@@ -308,22 +330,21 @@ static void test_custom_auth_command(void) {
     aws_bedrock_set_exec_command_fn(mock_exec_command);
     aws_bedrock_set_system_fn(mock_system);
 
-    // Load credentials (should use custom auth)
-    AWSCredentials *creds = bedrock_load_credentials("test-profile", "us-west-2");
+    // Authenticate using custom command
+    int result = bedrock_authenticate("test-profile");
 
-    ASSERT_TRUE(creds != NULL, "Credentials loaded with custom auth");
-    ASSERT_EQ(1, mock_auth_calls, "Custom auth command called once");
-    ASSERT_TRUE(creds->access_key_id != NULL, "Access key is present");
+    ASSERT_EQ(0, result, "Custom authentication succeeded");
+    ASSERT_EQ(1, mock_auth_calls, "Custom auth command called");
+    ASSERT_EQ(1, mock_credential_version, "Credential version incremented");
 
-    bedrock_creds_free(creds);
     cleanup_test_env();
 }
 
 /**
- * Test 6: Authentication failure handling
+ * Test 8: Authentication failure handling
  */
 static void test_authentication_failure(void) {
-    printf("\n[Test 6] Authentication failure handling\n");
+    printf("\n[Test 8] Authentication failure handling\n");
     reset_mocks();
     setup_test_env();
 
@@ -340,10 +361,10 @@ static void test_authentication_failure(void) {
 }
 
 /**
- * Test 7: Credential version tracking across multiple rotations
+ * Test 9: Multiple rotation cycles
  */
 static void test_multiple_rotation_cycles(void) {
-    printf("\n[Test 7] Multiple rotation cycles\n");
+    printf("\n[Test 9] Multiple rotation cycles\n");
     reset_mocks();
     setup_test_env();
 
@@ -354,11 +375,9 @@ static void test_multiple_rotation_cycles(void) {
 
     // Perform 3 rotation cycles
     for (int i = 0; i < 3; i++) {
-        if (i > 0) {
-            // Trigger rotation
-            int auth_result = bedrock_authenticate("test-profile");
-            ASSERT_EQ(0, auth_result, "Authentication succeeded in cycle");
-        }
+        // Authenticate
+        int auth_result = bedrock_authenticate("test-profile");
+        ASSERT_EQ(0, auth_result, "Authentication succeeded in cycle");
 
         // Load credentials
         AWSCredentials *creds = bedrock_load_credentials("test-profile", "us-west-2");
@@ -393,17 +412,19 @@ static void test_multiple_rotation_cycles(void) {
 // ============================================================================
 
 int main(void) {
-    printf("=== AWS Credential Rotation Tests ===\n");
-    printf("Testing polling behavior and credential change detection\n");
+    printf("=== AWS Credential Rotation Tests (New Flow) ===\n");
+    printf("Testing: load returns cached or NULL, auth must be called explicitly\n");
 
     // Initialize logger
     log_init();
 
     // Run test suite
-    test_immediate_credential_availability();
-    test_credential_polling_detects_change();
-    test_delayed_credential_update();
-    test_credential_validation_after_rotation();
+    test_no_cached_credentials_returns_null();
+    test_cached_credentials_returned();
+    test_authenticate_triggers_sso();
+    test_credentials_after_auth();
+    test_credential_rotation();
+    test_credential_validation();
     test_custom_auth_command();
     test_authentication_failure();
     test_multiple_rotation_cycles();
