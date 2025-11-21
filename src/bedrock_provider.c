@@ -307,20 +307,67 @@ static ApiCallResult bedrock_call_api(Provider *self, ConversationState *state) 
     ApiCallResult result = {0};
     BedrockConfig *config = (BedrockConfig*)self->config;
 
-    if (!config || !config->creds) {
-        result.error_message = strdup("Bedrock config or credentials not initialized");
+    if (!config) {
+        result.error_message = strdup("Bedrock config not initialized");
         result.is_retryable = 0;
         return result;
     }
 
+    const char *profile = getenv(ENV_AWS_PROFILE);
+    if (!profile) profile = "default";
+
+    // === STEP 0: If no credentials, authenticate first ===
+    if (!config->creds) {
+        LOG_INFO("No credentials available on startup, authenticating...");
+        printf("\nAWS credentials not found. Starting authentication...\n");
+
+        if (bedrock_authenticate(profile) == 0) {
+            LOG_INFO("Authentication successful, loading credentials...");
+            
+            // Poll for credentials after authentication
+            AWSCredentials *new_creds = NULL;
+            int max_attempts = 10;
+            int attempt = 0;
+
+            for (attempt = 0; attempt < max_attempts; attempt++) {
+                if (attempt > 0) {
+                    usleep(200000);  // 200ms between attempts
+                }
+
+                LOG_DEBUG("Polling for credentials after auth (attempt %d/%d)...", attempt + 1, max_attempts);
+                AWSCredentials *polled_creds = bedrock_load_credentials(profile, config->region);
+
+                if (polled_creds && polled_creds->access_key_id) {
+                    LOG_INFO("✓ Credentials loaded successfully (attempt %d)", attempt + 1);
+                    new_creds = polled_creds;
+                    break;
+                } else {
+                    LOG_DEBUG("✗ No credentials yet (attempt %d)", attempt + 1);
+                    if (polled_creds) bedrock_creds_free(polled_creds);
+                }
+            }
+
+            if (new_creds) {
+                config->creds = new_creds;
+                LOG_INFO("Credentials loaded, proceeding with API call");
+            } else {
+                result.error_message = strdup("Failed to load credentials after authentication");
+                result.is_retryable = 0;
+                return result;
+            }
+        } else {
+            result.error_message = strdup("Authentication failed");
+            result.is_retryable = 0;
+            return result;
+        }
+    }
+
     // === STEP 1: Save initial token state (for external rotation detection) ===
     char *saved_access_key = NULL;
-    if (config->creds->access_key_id) {
+    if (config->creds && config->creds->access_key_id) {
         saved_access_key = strdup(config->creds->access_key_id);
         LOG_DEBUG("Saved current access key ID for rotation detection: %.10s...", saved_access_key);
     }
-
-    const char *profile = config->creds->profile ? config->creds->profile : "default";
 
     // === Build request (do this once, reuse for retries) ===
     char *openai_json = build_request_json_from_state(state);
@@ -339,6 +386,11 @@ static ApiCallResult bedrock_call_api(Provider *self, ConversationState *state) 
         result.is_retryable = 0;
         free(saved_access_key);
         return result;
+    }
+
+    // Update profile from config if available
+    if (config->creds && config->creds->profile) {
+        profile = config->creds->profile;
     }
 
     // === STEP 2: First API call attempt ===
