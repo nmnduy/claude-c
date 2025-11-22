@@ -5467,9 +5467,9 @@ static int process_single_command_response(ConversationState *state, ApiResponse
                 // Print tool name header in single command mode (no colors available)
                 char *tool_details = get_tool_details(tool->name, input);
                 if (tool_details && strlen(tool_details) > 0) {
-                    printf(">>> [Tool: %s] %s <<<\n", tool->name, tool_details);
+                    printf(">>> %s: %s <<<\n", tool->name, tool_details);
                 } else {
-                    printf(">>> [Tool: %s] <<<\n", tool->name);
+                    printf(">>> %s <<<\n", tool->name);
                 }
                 fflush(stdout);
 
