@@ -3804,6 +3804,77 @@ void api_response_free(ApiResponse *response) {
 // ============================================================================
 
 /**
+ * Extract and accumulate token usage from API response
+ * Updates the token counters in ConversationState
+ */
+void accumulate_token_usage(ConversationState *state, const char *raw_response) {
+    if (!state || !raw_response) {
+        return;
+    }
+
+    cJSON *json = cJSON_Parse(raw_response);
+    if (!json) {
+        LOG_DEBUG("accumulate_token_usage: failed to parse JSON response");
+        return;
+    }
+
+    // Extract usage object
+    cJSON *usage = cJSON_GetObjectItem(json, "usage");
+    if (!usage) {
+        LOG_DEBUG("accumulate_token_usage: no 'usage' object found in response");
+        cJSON_Delete(json);
+        return;
+    }
+
+    // Extract token counts
+    cJSON *prompt_tokens_json = cJSON_GetObjectItem(usage, "prompt_tokens");
+    cJSON *completion_tokens_json = cJSON_GetObjectItem(usage, "completion_tokens");
+
+    int prompt_tokens = 0;
+    int completion_tokens = 0;
+    int cached_tokens = 0;
+
+    if (prompt_tokens_json && cJSON_IsNumber(prompt_tokens_json)) {
+        prompt_tokens = prompt_tokens_json->valueint;
+    }
+
+    if (completion_tokens_json && cJSON_IsNumber(completion_tokens_json)) {
+        completion_tokens = completion_tokens_json->valueint;
+    }
+
+    // Try to extract cached tokens from prompt_tokens_details
+    cJSON *prompt_tokens_details = cJSON_GetObjectItem(usage, "prompt_tokens_details");
+    if (prompt_tokens_details) {
+        cJSON *cached_tokens_json = cJSON_GetObjectItem(prompt_tokens_details, "cached_tokens");
+        if (cached_tokens_json && cJSON_IsNumber(cached_tokens_json)) {
+            cached_tokens = cached_tokens_json->valueint;
+        }
+    }
+
+    // Also check for direct cache metrics (some providers use this format)
+    if (cached_tokens == 0) {
+        cJSON *cache_hit_tokens = cJSON_GetObjectItem(usage, "prompt_cache_hit_tokens");
+        if (cache_hit_tokens && cJSON_IsNumber(cache_hit_tokens)) {
+            cached_tokens = cache_hit_tokens->valueint;
+        }
+    }
+
+    cJSON_Delete(json);
+
+    // Accumulate tokens in state (thread-safe)
+    if (conversation_state_lock(state) == 0) {
+        state->total_prompt_tokens += prompt_tokens;
+        state->total_completion_tokens += completion_tokens;
+        state->total_cached_tokens += cached_tokens;
+        conversation_state_unlock(state);
+
+        LOG_DEBUG("Token usage accumulated: +%d prompt, +%d completion, +%d cached (totals: %d/%d/%d)",
+                 prompt_tokens, completion_tokens, cached_tokens,
+                 state->total_prompt_tokens, state->total_completion_tokens, state->total_cached_tokens);
+    }
+}
+
+/**
  * Call API with retry logic (generic wrapper around provider->call_api)
  * Handles exponential backoff for retryable errors
  * Returns: ApiResponse or NULL on error
@@ -3899,6 +3970,11 @@ static ApiResponse* call_api_with_retries(ConversationState *state) {
             LOG_INFO("API call succeeded (duration: %ld ms, provider duration: %ld ms, attempts: %d, auth_refreshed: %s)",
                      total_ms, result.duration_ms, attempt_num,
                      result.auth_refreshed ? "yes" : "no");
+
+            // Accumulate token usage from this API call
+            if (result.raw_response) {
+                accumulate_token_usage(state, result.raw_response);
+            }
 
             // Log success to persistence
             if (state->persistence_db && result.raw_response) {
@@ -5122,6 +5198,15 @@ static void ai_worker_handle_instruction(AIWorkerContext *ctx, const AIInstructi
         ui_show_error(NULL, ctx->tui_queue, error_msg);
         api_response_free(response);
         return;
+    }
+
+    // Post token usage update to TUI (token counts were accumulated in call_api)
+    if (conversation_state_lock(ctx->state) == 0) {
+        post_token_update(ctx->tui_queue,
+                         ctx->state->total_prompt_tokens,
+                         ctx->state->total_completion_tokens,
+                         ctx->state->total_cached_tokens);
+        conversation_state_unlock(ctx->state);
     }
 
     process_response(ctx->state, response, NULL, ctx->tui_queue, ctx);

@@ -149,6 +149,24 @@ static void render_status_window(TUIState *tui) {
     if (mode_col < 0) mode_col = 0;
     */
 
+    // Render token usage on the right side (only in NORMAL mode, if any tokens used)
+    char token_str[64] = {0};
+    int token_str_len = 0;
+    if (tui->mode == TUI_MODE_NORMAL &&
+        (tui->total_prompt_tokens > 0 || tui->total_completion_tokens > 0)) {
+        int total_tokens = tui->total_prompt_tokens + tui->total_completion_tokens;
+        if (tui->total_cached_tokens > 0) {
+            snprintf(token_str, sizeof(token_str), "Tokens: %d (%d cached) ",
+                    total_tokens, tui->total_cached_tokens);
+        } else {
+            snprintf(token_str, sizeof(token_str), "Tokens: %d ", total_tokens);
+        }
+        token_str_len = (int)strlen(token_str);
+    }
+
+    // Calculate how much space we have for the status message
+    int max_status_len = width - token_str_len - 1;
+
     // Render status message on the left (if visible)
     if (tui->status_visible && tui->status_message && tui->status_message[0] != '\0') {
         if (has_colors()) {
@@ -176,11 +194,10 @@ static void render_status_window(TUIState *tui) {
             }
         }
 
-        // Render status message (no mode indicator overlap now)
+        // Render status message (leave space for token counter)
         int msg_len = (int)strlen(tui->status_message);
-        int max_status_len = width - col - 1;
-        if (msg_len > max_status_len) {
-            msg_len = max_status_len;
+        if (msg_len > max_status_len - col) {
+            msg_len = max_status_len - col;
         }
         if (msg_len > 0 && col < width) {
             mvwaddnstr(tui->wm.status_win, 0, col, tui->status_message, msg_len);
@@ -190,6 +207,20 @@ static void render_status_window(TUIState *tui) {
             wattroff(tui->wm.status_win, COLOR_PAIR(NCURSES_PAIR_STATUS) | A_BOLD);
         } else {
             wattroff(tui->wm.status_win, A_BOLD);
+        }
+    }
+
+    // Render token usage on the right
+    if (token_str_len > 0 && token_str_len < width) {
+        int token_col = width - token_str_len;
+        if (token_col < 0) token_col = 0;
+
+        if (has_colors()) {
+            wattron(tui->wm.status_win, COLOR_PAIR(NCURSES_PAIR_ASSISTANT));
+        }
+        mvwaddnstr(tui->wm.status_win, 0, token_col, token_str, token_str_len);
+        if (has_colors()) {
+            wattroff(tui->wm.status_win, COLOR_PAIR(NCURSES_PAIR_ASSISTANT));
         }
     }
 
@@ -1431,6 +1462,19 @@ void tui_update_status(TUIState *tui, const char *status_text) {
     }
 }
 
+void tui_update_token_usage(TUIState *tui, int prompt_tokens, int completion_tokens, int cached_tokens) {
+    if (!tui || !tui->is_initialized) return;
+
+    // Update token counts
+    tui->total_prompt_tokens = prompt_tokens;
+    tui->total_completion_tokens = completion_tokens;
+    tui->total_cached_tokens = cached_tokens;
+
+    // Refresh status bar to show updated token counts
+    if (tui->wm.status_height > 0) {
+        render_status_window(tui);
+    }
+}
 
 void tui_refresh(TUIState *tui) {
     if (!tui || !tui->is_initialized) return;
@@ -1598,7 +1642,8 @@ void tui_show_startup_banner(TUIState *tui, const char *version, const char *mod
         "Disable prompt caching with DISABLE_PROMPT_CACHING=1 if needed.",
         "MCP is disabled by default; enable with CLAUDE_MCP_ENABLED=1 and configure servers in ~/.config/claude-c/.",
         "Use /clear to clear conversation; /quit or /exit to leave.",
-        "Use /help to see all available commands."
+        "Use /help to see all available commands.",
+        "Token usage stats shown in status bar when in Normal mode (Esc)."
     };
     size_t tips_count = sizeof(tips) / sizeof(tips[0]);
 
@@ -2521,6 +2566,11 @@ static void dispatch_tui_message(TUIState *tui, TUIMessage *msg) {
         case TUI_MSG_TODO_UPDATE:
             // Placeholder for future TODO list integration
             break;
+
+        case TUI_MSG_TOKEN_UPDATE:
+            tui_update_token_usage(tui, msg->prompt_tokens, msg->completion_tokens, msg->cached_tokens);
+            break;
+
         default:
             /* Unknown message type; ignore */
             break;

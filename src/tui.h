@@ -70,6 +70,11 @@ typedef struct {
     int status_spinner_frame;         // Current spinner frame index
     uint64_t status_spinner_last_update_ns; // Last spinner frame update timestamp
 
+    // Token usage tracking (displayed in status bar)
+    int total_prompt_tokens;      // Total input tokens used
+    int total_completion_tokens;  // Total output tokens used
+    int total_cached_tokens;      // Total cached tokens
+
     // Modes
     TUIMode mode;            // Current input mode (NORMAL, INSERT, or COMMAND)
     int normal_mode_last_key; // Previous key in normal mode (for gg, G combos)
@@ -194,5 +199,11 @@ void tui_drain_message_queue(TUIState *tui, const char *prompt, void *msg_queue)
 // list: TodoList to render
 // Each item will be rendered with its status-specific color
 void tui_render_todo_list(TUIState *tui, const TodoList *list);
+
+// Update token usage counts displayed in status bar
+// prompt_tokens: Total input tokens used
+// completion_tokens: Total output tokens used
+// cached_tokens: Total cached tokens
+void tui_update_token_usage(TUIState *tui, int prompt_tokens, int completion_tokens, int cached_tokens);
 
 #endif // TUI_H
