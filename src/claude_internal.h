@@ -193,6 +193,11 @@ typedef struct ConversationState {
     int conv_mutex_initialized;     // Tracks mutex initialization
     volatile sig_atomic_t interrupt_requested;  // Flag to interrupt ongoing API calls
     struct MCPConfig *mcp_config;   // MCP server configuration (NULL if not enabled)
+
+    // Token usage tracking (cumulative for the session)
+    int total_prompt_tokens;        // Total input tokens used
+    int total_completion_tokens;    // Total output tokens used
+    int total_cached_tokens;        // Total cached tokens
 } ConversationState;
 
 // ============================================================================
@@ -276,5 +281,15 @@ void add_cache_control(cJSON *obj);
 
 // Get tool definitions for the API request
 cJSON* get_tool_definitions(ConversationState *state, int enable_caching);
+
+/**
+ * Extract and accumulate token usage from API response
+ * Updates the token counters in ConversationState
+ *
+ * Parameters:
+ *   state: Conversation state to update
+ *   raw_response: Raw JSON response string from API
+ */
+void accumulate_token_usage(ConversationState *state, const char *raw_response);
 
 #endif // CLAUDE_INTERNAL_H
