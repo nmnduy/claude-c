@@ -53,6 +53,7 @@ typedef struct MCPServer {
     pid_t pid;                   // Process ID (if running)
     int stdin_fd;                // Write to server's stdin
     int stdout_fd;               // Read from server's stdout
+    int stderr_fd;               // Read from server's stderr (for logging)
 
     // For SSE transport
     char *url;                   // Server URL
@@ -65,6 +66,7 @@ typedef struct MCPServer {
     // State
     int connected;               // Connection status
     int message_id;              // Message ID counter for JSON-RPC
+    FILE *stderr_log;            // File handle for logging stderr output
 } MCPServer;
 
 /*
@@ -80,7 +82,10 @@ typedef struct MCPConfig {
  */
 typedef struct MCPToolResult {
     char *tool_name;             // Name of the tool that was called
-    char *result;                // Result content (may contain multiple items)
+    char *result;                // Text result content (for text-based responses)
+    void *blob;                  // Binary content (for image/binary responses)
+    size_t blob_size;            // Size of binary content
+    char *mime_type;             // MIME type of the response
     int is_error;                // 1 if error, 0 if success
 } MCPToolResult;
 

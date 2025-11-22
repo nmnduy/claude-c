@@ -24,7 +24,8 @@ typedef enum {
     TUI_MSG_STATUS,         /* Update status line */
     TUI_MSG_CLEAR,          /* Clear conversation display */
     TUI_MSG_ERROR,          /* Display error message */
-    TUI_MSG_TODO_UPDATE     /* Update TODO list */
+    TUI_MSG_TODO_UPDATE,    /* Update TODO list */
+    TUI_MSG_TOKEN_UPDATE    /* Update token usage counts */
 } TUIMessageType;
 
 /**
@@ -35,6 +36,11 @@ typedef struct {
     TUIMessageType type;
     char *text;             /* Owned by queue, freed after processing */
     int priority;           /* Higher = more urgent (reserved for future) */
+
+    /* Token usage fields (for TUI_MSG_TOKEN_UPDATE) */
+    int prompt_tokens;
+    int completion_tokens;
+    int cached_tokens;
 } TUIMessage;
 
 /**
@@ -73,6 +79,18 @@ int tui_msg_queue_init(TUIMessageQueue *queue, size_t capacity);
  * @return 0 on success, -1 on error
  */
 int post_tui_message(TUIMessageQueue *queue, TUIMessageType type, const char *text);
+
+/**
+ * Post a token usage update to the TUI queue
+ * Non-blocking. If queue is full, drops oldest message.
+ *
+ * @param queue Queue to post to
+ * @param prompt_tokens Total input tokens
+ * @param completion_tokens Total output tokens
+ * @param cached_tokens Total cached tokens
+ * @return 0 on success, -1 on error
+ */
+int post_token_update(TUIMessageQueue *queue, int prompt_tokens, int completion_tokens, int cached_tokens);
 
 /**
  * Poll for a message from the TUI queue (non-blocking)

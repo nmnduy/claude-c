@@ -27,9 +27,6 @@ VERSION := $(shell cat $(VERSION_FILE) 2>/dev/null || echo "unknown")
 BUILD_DATE := $(shell date +%Y-%m-%d)
 VERSION_H := src/version.h
 
-# Detect OS for library linking
-UNAME_S := $(shell uname -s)
-
 ifeq ($(UNAME_S),Darwin)
     # macOS - check for Homebrew installation
     HOMEBREW_PREFIX := $(shell brew --prefix 2>/dev/null)
@@ -98,6 +95,7 @@ TEST_TEXT_WRAP_TARGET = $(BUILD_DIR)/test_text_wrap
 TEST_JSON_PARSING_TARGET = $(BUILD_DIR)/test_json_parsing
 TEST_MCP_TARGET = $(BUILD_DIR)/test_mcp
 TEST_WM_TARGET = $(BUILD_DIR)/test_window_manager
+TEST_TOOL_RESULTS_REGRESSION_TARGET = $(BUILD_DIR)/test_tool_results_regression
 QUERY_TOOL = $(BUILD_DIR)/query_logs
 SRC = src/claude.c
 LOGGER_SRC = src/logger.c
@@ -142,6 +140,8 @@ WINDOW_MANAGER_SRC = src/window_manager.c
 WINDOW_MANAGER_OBJ = $(BUILD_DIR)/window_manager.o
 TOOL_UTILS_SRC = src/tool_utils.c
 TOOL_UTILS_OBJ = $(BUILD_DIR)/tool_utils.o
+BASE64_SRC = src/base64.c
+BASE64_OBJ = $(BUILD_DIR)/base64.o
 TEST_EDIT_SRC = tests/test_edit.c
 TEST_READ_SRC = tests/test_read.c
 TEST_TODO_SRC = tests/test_todo.c
@@ -159,14 +159,29 @@ TEST_EVENT_LOOP_SRC = tests/test_event_loop.c
 TEST_JSON_PARSING_SRC = tests/test_json_parsing.c
 TEST_STUBS_SRC = tests/test_stubs.c
 TEST_MCP_SRC = tests/test_mcp.c
+TEST_MCP_IMAGE_SRC = tests/test_mcp_image.c
+TEST_MCP_IMAGE_TARGET = $(BUILD_DIR)/test_mcp_image
 TEST_WM_SRC = tests/test_window_manager.c
+TEST_TOOL_RESULTS_REGRESSION_SRC = tests/test_tool_results_regression.c
+TEST_BASE64_SRC = tests/test_base64.c
+TEST_BASE64_TARGET = $(BUILD_DIR)/test_base64
 TEST_CANCEL_FLOW_TARGET = $(BUILD_DIR)/test_cancel_flow
 TEST_BASH_SUMMARY_TARGET = $(BUILD_DIR)/test_bash_summary
 TEST_BASH_SUMMARY_SRC = tests/test_bash_summary.c
 TEST_BASH_TIMEOUT_TARGET = $(BUILD_DIR)/test_bash_timeout
+TEST_BASH_STDERR_TARGET = $(BUILD_DIR)/test_bash_stderr
+TEST_BASH_TRUNCATION_TARGET = $(BUILD_DIR)/test_bash_truncation
+TEST_HISTORY_FILE_TARGET = $(BUILD_DIR)/test_history_file
+TEST_TUI_INPUT_BUFFER_TARGET = $(BUILD_DIR)/test_tui_input_buffer
+TEST_TOOL_DETAILS_TARGET = $(BUILD_DIR)/test_tool_details_simple
 TEST_BASH_TIMEOUT_SRC = tests/test_bash_timeout.c
+TEST_BASH_STDERR_SRC = tests/test_bash_stderr.c
+TEST_BASH_TRUNCATION_SRC = tests/test_bash_truncation.c
+TEST_HISTORY_FILE_SRC = tests/test_history_file.c
+TEST_TUI_INPUT_BUFFER_SRC = tests/test_tui_input_buffer.c
+TEST_TOOL_DETAILS_SRC = tests/test_tool_details_simple.c
 
-.PHONY: all clean check-deps install test test-edit test-read test-todo test-todo-write test-paste test-retry-jitter test-openai-format test-write-diff-integration test-rotation test-patch-parser test-thread-cancel test-aws-cred-rotation test-message-queue test-event-loop test-wrap test-mcp test-bash-summary test-bash-timeout query-tool debug analyze sanitize-ub sanitize-all sanitize-leak valgrind memscan comprehensive-scan clang-tidy cppcheck flawfinder version show-version update-version bump-version bump-patch build clang ci-test ci-gcc ci-clang ci-gcc-sanitize ci-clang-sanitize ci-all fmt-whitespace
+.PHONY: all clean check-deps install test test-edit test-read test-todo test-todo-write test-paste test-retry-jitter test-openai-format test-write-diff-integration test-rotation test-patch-parser test-thread-cancel test-aws-cred-rotation test-message-queue test-event-loop test-wrap test-mcp test-mcp-image test-bash-summary test-bash-timeout test-bash-stderr test-bash-truncation test-tool-results-regression test-tool-details query-tool debug analyze sanitize-ub sanitize-all sanitize-leak valgrind memscan comprehensive-scan clang-tidy cppcheck flawfinder version show-version update-version bump-version bump-patch build clang ci-test ci-gcc ci-clang ci-gcc-sanitize ci-clang-sanitize ci-all fmt-whitespace
 
 all: check-deps $(TARGET)
 
@@ -178,7 +193,7 @@ debug: check-deps $(BUILD_DIR)/claude-c-debug
 
 query-tool: check-deps $(QUERY_TOOL)
 
-test: test-edit test-read test-todo test-paste test-json-parsing test-timing test-openai-format test-write-diff-integration test-rotation test-patch-parser test-thread-cancel test-aws-cred-rotation test-message-queue test-wrap test-mcp test-wm test-bash-summary test-bash-timeout test-cancel-flow
+test: test-edit test-read test-todo test-paste test-json-parsing test-timing test-openai-format test-write-diff-integration test-rotation test-patch-parser test-thread-cancel test-aws-cred-rotation test-message-queue test-wrap test-mcp test-mcp-image test-wm test-bash-summary test-bash-timeout test-bash-stderr test-bash-truncation test-cancel-flow test-tool-results-regression test-base64 test-history-file test-tui-input-buffer test-tool-details
 
 test-edit: check-deps $(TEST_EDIT_TARGET)
 	@echo ""
@@ -203,6 +218,12 @@ test-todo-write: check-deps $(TEST_TODO_WRITE_TARGET)
 	@echo "Running TodoWrite tool tests..."
 	@echo ""
 	@./$(TEST_TODO_WRITE_TARGET)
+
+test-tool-results-regression: check-deps $(TEST_TOOL_RESULTS_REGRESSION_TARGET)
+	@echo ""
+	@echo "Running tool results regression tests..."
+	@echo ""
+	@./$(TEST_TOOL_RESULTS_REGRESSION_TARGET)
 
 test-paste: check-deps $(TEST_PASTE_TARGET)
 	@echo ""
@@ -289,6 +310,12 @@ test-mcp: check-deps $(TEST_MCP_TARGET)
 	@echo ""
 	@./$(TEST_MCP_TARGET)
 
+test-mcp-image: check-deps $(TEST_MCP_IMAGE_TARGET)
+	@echo ""
+	@echo "Running MCP image content handling tests..."
+	@echo ""
+	@./$(TEST_MCP_IMAGE_TARGET)
+
 test-wm: check-deps $(TEST_WM_TARGET)
 	@echo ""
 	@echo "Running Window Manager tests..."
@@ -301,9 +328,45 @@ test-bash-timeout: check-deps $(TEST_BASH_TIMEOUT_TARGET)
 	@echo ""
 	@./$(TEST_BASH_TIMEOUT_TARGET)
 
-$(TARGET): $(SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(COMMANDS_OBJ) $(COMPLETION_OBJ) $(TUI_OBJ) $(WINDOW_MANAGER_OBJ) $(TODO_OBJ) $(AWS_BEDROCK_OBJ) $(PROVIDER_OBJ) $(OPENAI_PROVIDER_OBJ) $(OPENAI_MESSAGES_OBJ) $(BEDROCK_PROVIDER_OBJ) $(BUILTIN_THEMES_OBJ) $(PATCH_PARSER_OBJ) $(MESSAGE_QUEUE_OBJ) $(AI_WORKER_OBJ) $(VOICE_INPUT_OBJ) $(MCP_OBJ) $(TOOL_UTILS_OBJ) $(HISTORY_FILE_OBJ) $(VERSION_H)
+test-bash-stderr: check-deps $(TEST_BASH_STDERR_TARGET)
+	@echo ""
+	@echo "Running Bash Stderr Output Fix tests..."
+	@echo ""
+	@./$(TEST_BASH_STDERR_TARGET)
+
+test-bash-truncation: check-deps $(TEST_BASH_TRUNCATION_TARGET)
+	@echo ""
+	@echo "Running Bash Output Truncation tests..."
+	@echo ""
+	@./$(TEST_BASH_TRUNCATION_TARGET)
+
+test-base64: check-deps $(TEST_BASE64_TARGET)
+	@echo ""
+	@echo "Running Base64 encoding/decoding tests..."
+	@echo ""
+	@./$(TEST_BASE64_TARGET)
+
+test-history-file: check-deps $(TEST_HISTORY_FILE_TARGET)
+	@echo ""
+	@echo "Running History File tests..."
+	@echo ""
+	@./$(TEST_HISTORY_FILE_TARGET)
+
+test-tui-input-buffer: check-deps $(TEST_TUI_INPUT_BUFFER_TARGET)
+	@echo ""
+	@echo "Running TUI Input Buffer tests..."
+	@echo ""
+	@./$(TEST_TUI_INPUT_BUFFER_TARGET)
+
+test-tool-details: check-deps $(TEST_TOOL_DETAILS_TARGET)
+	@echo ""
+	@echo "Running Tool Details Display tests..."
+	@echo ""
+	@./$(TEST_TOOL_DETAILS_TARGET)
+
+$(TARGET): $(SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(COMMANDS_OBJ) $(COMPLETION_OBJ) $(TUI_OBJ) $(WINDOW_MANAGER_OBJ) $(TODO_OBJ) $(AWS_BEDROCK_OBJ) $(PROVIDER_OBJ) $(OPENAI_PROVIDER_OBJ) $(OPENAI_MESSAGES_OBJ) $(BEDROCK_PROVIDER_OBJ) $(BUILTIN_THEMES_OBJ) $(PATCH_PARSER_OBJ) $(MESSAGE_QUEUE_OBJ) $(AI_WORKER_OBJ) $(VOICE_INPUT_OBJ) $(MCP_OBJ) $(TOOL_UTILS_OBJ) $(BASE64_OBJ) $(HISTORY_FILE_OBJ) $(VERSION_H)
 	@mkdir -p $(BUILD_DIR)
-	$(CC) $(CFLAGS) -o $(TARGET) $(SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(COMMANDS_OBJ) $(COMPLETION_OBJ) $(TUI_OBJ) $(WINDOW_MANAGER_OBJ) $(TODO_OBJ) $(AWS_BEDROCK_OBJ) $(PROVIDER_OBJ) $(OPENAI_PROVIDER_OBJ) $(OPENAI_MESSAGES_OBJ) $(BEDROCK_PROVIDER_OBJ) $(BUILTIN_THEMES_OBJ) $(PATCH_PARSER_OBJ) $(MESSAGE_QUEUE_OBJ) $(AI_WORKER_OBJ) $(VOICE_INPUT_OBJ) $(MCP_OBJ) $(TOOL_UTILS_OBJ) $(HISTORY_FILE_OBJ) $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $(TARGET) $(SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(COMMANDS_OBJ) $(COMPLETION_OBJ) $(TUI_OBJ) $(WINDOW_MANAGER_OBJ) $(TODO_OBJ) $(AWS_BEDROCK_OBJ) $(PROVIDER_OBJ) $(OPENAI_PROVIDER_OBJ) $(OPENAI_MESSAGES_OBJ) $(BEDROCK_PROVIDER_OBJ) $(BUILTIN_THEMES_OBJ) $(PATCH_PARSER_OBJ) $(MESSAGE_QUEUE_OBJ) $(AI_WORKER_OBJ) $(VOICE_INPUT_OBJ) $(MCP_OBJ) $(TOOL_UTILS_OBJ) $(BASE64_OBJ) $(HISTORY_FILE_OBJ) $(LDFLAGS)
 	@echo ""
 	@echo "✓ Build successful!"
 	@echo "Version: $(VERSION)"
@@ -432,34 +495,42 @@ sanitize-ub: check-deps
 sanitize-all: check-deps
 	@mkdir -p $(BUILD_DIR)
 	@echo "Building with Address + Undefined Behavior Sanitizers (recommended for testing)..."
-	$(CC) $(CFLAGS) -Wno-format-truncation -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/logger_all.o $(LOGGER_SRC)
-	$(CC) $(CFLAGS) -Wno-format-truncation -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/migrations_all.o $(MIGRATIONS_SRC)
-	$(CC) $(CFLAGS) -Wno-format-truncation -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/persistence_all.o $(PERSISTENCE_SRC)
-	$(CC) $(CFLAGS) -Wno-format-truncation -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/commands_all.o $(COMMANDS_SRC)
-	$(CC) $(CFLAGS) -Wno-format-truncation -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/completion_all.o $(COMPLETION_SRC)
-	$(CC) $(CFLAGS) -Wno-format-truncation -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/tui_all.o $(TUI_SRC)
-	$(CC) $(CFLAGS) -Wno-format-truncation -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/todo_all.o $(TODO_SRC)
-	$(CC) $(CFLAGS) -Wno-format-truncation -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/aws_bedrock_all.o $(AWS_BEDROCK_SRC)
-	$(CC) $(CFLAGS) -Wno-format-truncation -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/provider_all.o $(PROVIDER_SRC)
-	$(CC) $(CFLAGS) -Wno-format-truncation -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/openai_provider_all.o $(OPENAI_PROVIDER_SRC)
-	$(CC) $(CFLAGS) -Wno-format-truncation -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/openai_messages_all.o $(OPENAI_MESSAGES_SRC)
-	$(CC) $(CFLAGS) -Wno-format-truncation -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/bedrock_provider_all.o $(BEDROCK_PROVIDER_SRC)
-	$(CC) $(CFLAGS) -Wno-format-truncation -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/builtin_themes_all.o $(BUILTIN_THEMES_SRC)
-	$(CC) $(CFLAGS) -Wno-format-truncation -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/patch_parser_all.o $(PATCH_PARSER_SRC)
-	$(CC) $(CFLAGS) -Wno-format-truncation -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/message_queue_all.o $(MESSAGE_QUEUE_SRC)
-	$(CC) $(CFLAGS) -Wno-format-truncation -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/ai_worker_all.o $(AI_WORKER_SRC)
-	$(CC) $(CFLAGS) -Wno-format-truncation -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/voice_input_all.o $(VOICE_INPUT_SRC)
-	$(CC) $(CFLAGS) -Wno-format-truncation -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/mcp_all.o $(MCP_SRC)
-	$(CC) $(CFLAGS) -Wno-format-truncation -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/window_manager_all.o $(WINDOW_MANAGER_SRC)
-	$(CC) $(CFLAGS) -Wno-format-truncation -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/tool_utils_all.o $(TOOL_UTILS_SRC)
-	$(CC) $(CFLAGS) -Wno-format-truncation -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/history_file_all.o $(HISTORY_FILE_SRC)
-	$(CC) $(CFLAGS) -Wno-format-truncation -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -o $(BUILD_DIR)/claude-c-allsan $(SRC) \
+	@# Detect compiler to conditionally add GCC-specific flags
+	@COMPILER_TYPE=$$($(CC) --version 2>&1 | grep -q "clang" && echo "clang" || echo "gcc"); \
+	if [ "$$COMPILER_TYPE" = "gcc" ]; then \
+		EXTRA_FLAGS="-Wno-format-truncation"; \
+	else \
+		EXTRA_FLAGS=""; \
+	fi; \
+	$(CC) $(CFLAGS) $$EXTRA_FLAGS -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/logger_all.o $(LOGGER_SRC); \
+	$(CC) $(CFLAGS) $$EXTRA_FLAGS -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/migrations_all.o $(MIGRATIONS_SRC); \
+	$(CC) $(CFLAGS) $$EXTRA_FLAGS -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/persistence_all.o $(PERSISTENCE_SRC); \
+	$(CC) $(CFLAGS) $$EXTRA_FLAGS -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/commands_all.o $(COMMANDS_SRC); \
+	$(CC) $(CFLAGS) $$EXTRA_FLAGS -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/completion_all.o $(COMPLETION_SRC); \
+	$(CC) $(CFLAGS) $$EXTRA_FLAGS -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/tui_all.o $(TUI_SRC); \
+	$(CC) $(CFLAGS) $$EXTRA_FLAGS -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/todo_all.o $(TODO_SRC); \
+	$(CC) $(CFLAGS) $$EXTRA_FLAGS -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/aws_bedrock_all.o $(AWS_BEDROCK_SRC); \
+	$(CC) $(CFLAGS) $$EXTRA_FLAGS -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/provider_all.o $(PROVIDER_SRC); \
+	$(CC) $(CFLAGS) $$EXTRA_FLAGS -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/openai_provider_all.o $(OPENAI_PROVIDER_SRC); \
+	$(CC) $(CFLAGS) $$EXTRA_FLAGS -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/openai_messages_all.o $(OPENAI_MESSAGES_SRC); \
+	$(CC) $(CFLAGS) $$EXTRA_FLAGS -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/bedrock_provider_all.o $(BEDROCK_PROVIDER_SRC); \
+	$(CC) $(CFLAGS) $$EXTRA_FLAGS -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/builtin_themes_all.o $(BUILTIN_THEMES_SRC); \
+	$(CC) $(CFLAGS) $$EXTRA_FLAGS -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/patch_parser_all.o $(PATCH_PARSER_SRC); \
+	$(CC) $(CFLAGS) $$EXTRA_FLAGS -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/message_queue_all.o $(MESSAGE_QUEUE_SRC); \
+	$(CC) $(CFLAGS) $$EXTRA_FLAGS -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/ai_worker_all.o $(AI_WORKER_SRC); \
+	$(CC) $(CFLAGS) $$EXTRA_FLAGS -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/voice_input_all.o $(VOICE_INPUT_SRC); \
+	$(CC) $(CFLAGS) $$EXTRA_FLAGS -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/mcp_all.o $(MCP_SRC); \
+	$(CC) $(CFLAGS) $$EXTRA_FLAGS -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/window_manager_all.o $(WINDOW_MANAGER_SRC); \
+	$(CC) $(CFLAGS) $$EXTRA_FLAGS -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/tool_utils_all.o $(TOOL_UTILS_SRC); \
+	$(CC) $(CFLAGS) $$EXTRA_FLAGS -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/history_file_all.o $(HISTORY_FILE_SRC); \
+	$(CC) $(CFLAGS) $$EXTRA_FLAGS -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -c -o $(BUILD_DIR)/base64_all.o $(BASE64_SRC); \
+	$(CC) $(CFLAGS) $$EXTRA_FLAGS -g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -o $(BUILD_DIR)/claude-c-allsan $(SRC) \
 		$(BUILD_DIR)/logger_all.o $(BUILD_DIR)/persistence_all.o $(BUILD_DIR)/migrations_all.o $(BUILD_DIR)/commands_all.o \
 		$(BUILD_DIR)/completion_all.o $(BUILD_DIR)/tui_all.o $(BUILD_DIR)/todo_all.o $(BUILD_DIR)/aws_bedrock_all.o \
 		$(BUILD_DIR)/provider_all.o $(BUILD_DIR)/openai_provider_all.o $(BUILD_DIR)/openai_messages_all.o \
 		$(BUILD_DIR)/bedrock_provider_all.o $(BUILD_DIR)/builtin_themes_all.o $(BUILD_DIR)/patch_parser_all.o \
 		$(BUILD_DIR)/message_queue_all.o $(BUILD_DIR)/ai_worker_all.o $(BUILD_DIR)/voice_input_all.o $(BUILD_DIR)/mcp_all.o \
-		$(BUILD_DIR)/window_manager_all.o $(BUILD_DIR)/tool_utils_all.o $(BUILD_DIR)/history_file_all.o \
+		$(BUILD_DIR)/window_manager_all.o $(BUILD_DIR)/tool_utils_all.o $(BUILD_DIR)/history_file_all.o $(BUILD_DIR)/base64_all.o \
 		$(LDFLAGS) -fsanitize=address,undefined
 	@echo ""
 	@echo "✓ Build successful with combined sanitizers!"
@@ -654,6 +725,10 @@ $(TOOL_UTILS_OBJ): $(TOOL_UTILS_SRC) src/tool_utils.h
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c -o $(TOOL_UTILS_OBJ) $(TOOL_UTILS_SRC)
 
+$(BASE64_OBJ): $(BASE64_SRC) src/base64.h
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c -o $(BASE64_OBJ) $(BASE64_SRC)
+
 # Query tool - utility to inspect API call logs
 $(QUERY_TOOL): $(QUERY_TOOL_SRC) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ)
 	@mkdir -p $(BUILD_DIR)
@@ -752,6 +827,32 @@ $(TEST_BASH_TIMEOUT_TARGET): $(SRC) $(TEST_BASH_TIMEOUT_SRC) $(LOGGER_OBJ) $(PER
 	@echo "✓ Bash timeout test build successful!"
 	@echo ""
 
+# Test target for Bash Stderr Output Fix - tests stderr capture and redirection
+$(TEST_BASH_STDERR_TARGET): $(SRC) $(TEST_BASH_STDERR_SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(TODO_OBJ) $(PATCH_PARSER_OBJ) $(MESSAGE_QUEUE_OBJ)
+	@mkdir -p $(BUILD_DIR)
+	@echo "Compiling claude.c for bash stderr testing (renaming main)..."
+	@$(CC) $(CFLAGS) -DTEST_BUILD -c -o $(BUILD_DIR)/claude_bash_stderr_test.o $(SRC)
+	@echo "Compiling Bash stderr test suite..."
+	@$(CC) $(CFLAGS) -c -o $(BUILD_DIR)/test_bash_stderr.o $(TEST_BASH_STDERR_SRC)
+	@echo "Linking test executable..."
+	@$(CC) -o $(TEST_BASH_STDERR_TARGET) $(BUILD_DIR)/claude_bash_stderr_test.o $(BUILD_DIR)/test_bash_stderr.o $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(TODO_OBJ) $(PATCH_PARSER_OBJ) $(MESSAGE_QUEUE_OBJ) $(LDFLAGS)
+	@echo ""
+	@echo "✓ Bash stderr test build successful!"
+	@echo ""
+
+# Test target for Bash Output Truncation - tests output size limiting and truncation
+$(TEST_BASH_TRUNCATION_TARGET): $(SRC) $(TEST_BASH_TRUNCATION_SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(TODO_OBJ) $(PATCH_PARSER_OBJ) $(MESSAGE_QUEUE_OBJ)
+	@mkdir -p $(BUILD_DIR)
+	@echo "Compiling claude.c for bash truncation testing (renaming main)..."
+	@$(CC) $(CFLAGS) -DTEST_BUILD -c -o $(BUILD_DIR)/claude_bash_truncation_test.o $(SRC)
+	@echo "Compiling Bash truncation test suite..."
+	@$(CC) $(CFLAGS) -c -o $(BUILD_DIR)/test_bash_truncation.o $(TEST_BASH_TRUNCATION_SRC)
+	@echo "Linking test executable..."
+	@$(CC) -o $(TEST_BASH_TRUNCATION_TARGET) $(BUILD_DIR)/claude_bash_truncation_test.o $(BUILD_DIR)/test_bash_truncation.o $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(TODO_OBJ) $(PATCH_PARSER_OBJ) $(MESSAGE_QUEUE_OBJ) $(LDFLAGS)
+	@echo ""
+	@echo "✓ Bash truncation test build successful!"
+	@echo ""
+
 # Test target for JSON Parsing - tests JSON parsing error handling patterns
 $(TEST_JSON_PARSING_TARGET): $(TEST_JSON_PARSING_SRC)
 	@mkdir -p $(BUILD_DIR)
@@ -759,6 +860,15 @@ $(TEST_JSON_PARSING_TARGET): $(TEST_JSON_PARSING_SRC)
 	@$(CC) $(CFLAGS) -o $(TEST_JSON_PARSING_TARGET) $(TEST_JSON_PARSING_SRC) $(LDFLAGS)
 	@echo ""
 	@echo "✓ JSON parsing test build successful!"
+	@echo ""
+
+# Test target for Tool Details - tests MCP and built-in tool display
+$(TEST_TOOL_DETAILS_TARGET): $(TEST_TOOL_DETAILS_SRC)
+	@mkdir -p $(BUILD_DIR)
+	@echo "Compiling Tool Details test suite..."
+	@$(CC) $(CFLAGS) -o $(TEST_TOOL_DETAILS_TARGET) $(TEST_TOOL_DETAILS_SRC) $(LDFLAGS)
+	@echo ""
+	@echo "✓ Tool Details test build successful!"
 	@echo ""
 
 # Test target for Retry Jitter - tests exponential backoff with jitter
@@ -777,6 +887,32 @@ $(TEST_TIMING_TARGET): tests/test_tool_timing.c
 	@$(CC) $(CFLAGS) -o $(TEST_TIMING_TARGET) tests/test_tool_timing.c -lpthread
 	@echo ""
 	@echo "✓ Tool timing test build successful!"
+	@echo ""
+
+# Test target for tool results regression - demonstrates bug in commit 414fbe8
+$(TEST_TOOL_RESULTS_REGRESSION_TARGET): $(SRC) $(TEST_TOOL_RESULTS_REGRESSION_SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(TODO_OBJ) $(PATCH_PARSER_OBJ) $(MESSAGE_QUEUE_OBJ)
+	@mkdir -p $(BUILD_DIR)
+	@echo "Compiling claude.c for tool results regression testing (renaming main)..."
+	@$(CC) $(CFLAGS) -DTEST_BUILD -c -o $(BUILD_DIR)/claude_tool_results_test.o $(SRC)
+	@echo "Compiling tool results regression test suite..."
+	@$(CC) $(CFLAGS) -c -o $(BUILD_DIR)/test_tool_results_regression.o $(TEST_TOOL_RESULTS_REGRESSION_SRC)
+	@echo "Linking test executable..."
+	@$(CC) -o $(TEST_TOOL_RESULTS_REGRESSION_TARGET) $(BUILD_DIR)/claude_tool_results_test.o $(BUILD_DIR)/test_tool_results_regression.o $(TODO_OBJ) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(PATCH_PARSER_OBJ) $(MESSAGE_QUEUE_OBJ) $(LDFLAGS)
+	@echo ""
+	@echo "✓ Tool results regression test build successful!"
+	@echo ""
+
+# Test target for Base64 encoding/decoding
+$(TEST_BASE64_TARGET): $(BASE64_SRC) $(TEST_BASE64_SRC)
+	@mkdir -p $(BUILD_DIR)
+	@echo "Compiling Base64 implementation..."
+	@$(CC) $(CFLAGS) -c -o $(BUILD_DIR)/base64_test.o $(BASE64_SRC)
+	@echo "Compiling Base64 test suite..."
+	@$(CC) $(CFLAGS) -c -o $(BUILD_DIR)/test_base64.o $(TEST_BASE64_SRC)
+	@echo "Linking test executable..."
+	@$(CC) -o $(TEST_BASE64_TARGET) $(BUILD_DIR)/base64_test.o $(BUILD_DIR)/test_base64.o $(LDFLAGS)
+	@echo ""
+	@echo "✓ Base64 test build successful!"
 	@echo ""
 
 # Test target for OpenAI message format validation
@@ -887,12 +1023,20 @@ $(TEST_TEXT_WRAP_TARGET): tests/test_text_wrap.c
 	@echo "✓ Text Wrapping test build successful!"
 	@echo ""
 
-$(TEST_MCP_TARGET): $(TEST_MCP_SRC) $(MCP_OBJ)
+$(TEST_MCP_TARGET): $(TEST_MCP_SRC) $(MCP_OBJ) $(BASE64_OBJ)
 	@mkdir -p $(BUILD_DIR)
 	@echo "Compiling MCP integration tests..."
-	@$(CC) $(CFLAGS) -o $(TEST_MCP_TARGET) $(TEST_MCP_SRC) $(MCP_OBJ) $(LDFLAGS)
+	@$(CC) $(CFLAGS) -o $(TEST_MCP_TARGET) $(TEST_MCP_SRC) $(MCP_OBJ) $(BASE64_OBJ) $(LDFLAGS)
 	@echo ""
 	@echo "✓ MCP test build successful!"
+	@echo ""
+
+$(TEST_MCP_IMAGE_TARGET): $(TEST_MCP_IMAGE_SRC) $(BASE64_OBJ)
+	@mkdir -p $(BUILD_DIR)
+	@echo "Compiling MCP image content handling tests..."
+	@$(CC) $(CFLAGS) -o $(TEST_MCP_IMAGE_TARGET) $(TEST_MCP_IMAGE_SRC) $(BASE64_OBJ) $(LDFLAGS)
+	@echo ""
+	@echo "✓ MCP image test build successful!"
 	@echo ""
 
 install: $(TARGET)
@@ -916,7 +1060,11 @@ clean:
 # Format: Remove trailing whitespaces from source files
 fmt-whitespace:
 	@echo "Removing trailing whitespaces from source files..."
+ifeq ($(UNAME_S),Darwin)
+	@find src tests tools -type f \( -name "*.c" -o -name "*.h" \) -exec sed -i '' 's/[[:space:]]*$$//' {} +
+else
 	@find src tests tools -type f \( -name "*.c" -o -name "*.h" \) -exec sed -i 's/[[:space:]]*$$//' {} +
+endif
 	@echo "✓ Trailing whitespaces removed"
 
 check-deps:
@@ -1157,5 +1305,29 @@ ci-test: ci-gcc ci-clang-sanitize
 	@echo ""
 	@echo "For full CI coverage, run: make ci-all"
 	@echo ""
+
+# Test target for History File functionality
+$(TEST_HISTORY_FILE_TARGET): $(HISTORY_FILE_SRC) $(TEST_HISTORY_FILE_SRC) $(LOGGER_OBJ)
+	@mkdir -p $(BUILD_DIR)
+	@echo "Compiling History File test suite..."
+	@$(CC) $(CFLAGS) -DTEST_BUILD -c -o $(BUILD_DIR)/history_file_test.o $(HISTORY_FILE_SRC)
+	@$(CC) $(CFLAGS) -c -o $(BUILD_DIR)/test_history_file.o $(TEST_HISTORY_FILE_SRC)
+	@echo "Linking test executable..."
+	@$(CC) -o $(TEST_HISTORY_FILE_TARGET) $(BUILD_DIR)/history_file_test.o $(BUILD_DIR)/test_history_file.o $(LOGGER_OBJ) $(LDFLAGS)
+	@echo ""
+	@echo "✓ History File test build successful!"
+	@echo ""
+
+# Test target for TUI Input Buffer dynamic resizing (simplified standalone test)
+$(TEST_TUI_INPUT_BUFFER_TARGET): $(TEST_TUI_INPUT_BUFFER_SRC)
+	@mkdir -p $(BUILD_DIR)
+	@echo "Compiling TUI Input Buffer test suite..."
+	@$(CC) $(CFLAGS) -c -o $(BUILD_DIR)/test_tui_input_buffer.o $(TEST_TUI_INPUT_BUFFER_SRC)
+	@echo "Linking test executable..."
+	@$(CC) -o $(TEST_TUI_INPUT_BUFFER_TARGET) $(BUILD_DIR)/test_tui_input_buffer.o $(LDFLAGS)
+	@echo ""
+	@echo "✓ TUI Input Buffer test build successful!"
+	@echo ""
+
 # Test target for Bash command summarization
 # Note: test_bash_summary.c file does not exist, so test-bash-summary target is removed

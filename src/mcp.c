@@ -23,6 +23,7 @@
 #include <fcntl.h>
 #include <cjson/cJSON.h>
 #include "mcp.h"
+#include "base64.h"
 
 #ifndef TEST_BUILD
 #include "logger.h"
@@ -46,14 +47,14 @@ int mcp_init(void) {
         return 0;
     }
 
-    // Enable by default; allow opt-out via CLAUDE_MCP_ENABLED=0/false/off
+    // Disabled by default; allow opt-in via CLAUDE_MCP_ENABLED=1/true/on
     const char *enabled = getenv("CLAUDE_MCP_ENABLED");
-    if (enabled && (strcmp(enabled, "0") == 0 || strcasecmp(enabled, "false") == 0 || strcasecmp(enabled, "off") == 0)) {
-        mcp_enabled = 0;
-        LOG_DEBUG("MCP subsystem initialized but disabled (set CLAUDE_MCP_ENABLED=1 to enable)");
-    } else {
+    if (enabled && (strcmp(enabled, "1") == 0 || strcasecmp(enabled, "true") == 0 || strcasecmp(enabled, "on") == 0)) {
         mcp_enabled = 1;
         LOG_INFO("MCP subsystem initialized and enabled");
+    } else {
+        mcp_enabled = 0;
+        LOG_DEBUG("MCP subsystem initialized but disabled (set CLAUDE_MCP_ENABLED=1 to enable)");
     }
 
     mcp_initialized = 1;
@@ -376,6 +377,11 @@ void mcp_free_config(MCPConfig *config) {
 }
 
 /*
+ * Forward declaration for stderr reading function
+ */
+static void mcp_read_stderr(MCPServer *server);
+
+/*
  * Connect to an MCP server (stdio transport)
  */
 int mcp_connect_server(MCPServer *server) {
@@ -391,9 +397,10 @@ int mcp_connect_server(MCPServer *server) {
 
     LOG_INFO("MCP: Connecting to server '%s'...", server->name);
 
-    // Create pipes for stdin/stdout
+    // Create pipes for stdin/stdout/stderr
     int stdin_pipe[2] = {-1, -1};
     int stdout_pipe[2] = {-1, -1};
+    int stderr_pipe[2] = {-1, -1};
 
     if (pipe(stdin_pipe) < 0) {
         LOG_ERROR("MCP: Failed to create stdin pipe: %s", strerror(errno));
@@ -407,6 +414,15 @@ int mcp_connect_server(MCPServer *server) {
         return -1;
     }
 
+    if (pipe(stderr_pipe) < 0) {
+        LOG_ERROR("MCP: Failed to create stderr pipe: %s", strerror(errno));
+        close(stdin_pipe[0]);
+        close(stdin_pipe[1]);
+        close(stdout_pipe[0]);
+        close(stdout_pipe[1]);
+        return -1;
+    }
+
     // Fork process
     pid_t pid = fork();
     if (pid < 0) {
@@ -415,21 +431,26 @@ int mcp_connect_server(MCPServer *server) {
         close(stdin_pipe[1]);
         close(stdout_pipe[0]);
         close(stdout_pipe[1]);
+        close(stderr_pipe[0]);
+        close(stderr_pipe[1]);
         return -1;
     }
 
     if (pid == 0) {
         // Child process
 
-        // Redirect stdin/stdout
+        // Redirect stdin/stdout/stderr
         dup2(stdin_pipe[0], STDIN_FILENO);
         dup2(stdout_pipe[1], STDOUT_FILENO);
+        dup2(stderr_pipe[1], STDERR_FILENO);
 
         // Close unused pipe ends
         close(stdin_pipe[0]);
         close(stdin_pipe[1]);
         close(stdout_pipe[0]);
         close(stdout_pipe[1]);
+        close(stderr_pipe[0]);
+        close(stderr_pipe[1]);
 
         // Build argv
         char **argv = calloc((size_t)(server->args_count + 2), sizeof(char*));
@@ -461,16 +482,38 @@ int mcp_connect_server(MCPServer *server) {
     // Parent process
     close(stdin_pipe[0]);   // Close read end of stdin pipe
     close(stdout_pipe[1]);  // Close write end of stdout pipe
+    close(stderr_pipe[1]);  // Close write end of stderr pipe
 
     server->pid = pid;
     server->stdin_fd = stdin_pipe[1];
     server->stdout_fd = stdout_pipe[0];
+    server->stderr_fd = stderr_pipe[0];
     server->connected = 1;
 
-    // Set non-blocking mode for stdout
+    // Set non-blocking mode for stdout and stderr
     int flags = fcntl(server->stdout_fd, F_GETFL, 0);
     if (flags >= 0) {
         fcntl(server->stdout_fd, F_SETFL, flags | O_NONBLOCK);
+    }
+
+    flags = fcntl(server->stderr_fd, F_GETFL, 0);
+    if (flags >= 0) {
+        fcntl(server->stderr_fd, F_SETFL, flags | O_NONBLOCK);
+    }
+
+    // Open log file for stderr output
+    // Use ./.claude-c/mcp/<server-name>.log
+    char log_path[512];
+    snprintf(log_path, sizeof(log_path), ".claude-c/mcp/%s.log", server->name);
+
+    // Create directory if it doesn't exist
+    system("mkdir -p .claude-c/mcp");
+
+    server->stderr_log = fopen(log_path, "w");
+    if (server->stderr_log) {
+        LOG_DEBUG("MCP: Logging stderr for '%s' to %s", server->name, log_path);
+    } else {
+        LOG_WARN("MCP: Failed to open stderr log file %s: %s", log_path, strerror(errno));
     }
 
     LOG_INFO("MCP: Connected to server '%s' (pid: %d)", server->name, server->pid);
@@ -510,6 +553,9 @@ int mcp_connect_server(MCPServer *server) {
 
         // Wait for response (with timeout)
         for (int i = 0; i < 50; i++) {  // 5 second timeout
+            // Read any stderr output during initialization
+            mcp_read_stderr(server);
+
             ssize_t n = read(server->stdout_fd, buffer + total_read, sizeof(buffer) - total_read - 1);
             if (n > 0) {
                 total_read += (size_t)n;
@@ -521,6 +567,9 @@ int mcp_connect_server(MCPServer *server) {
             }
             usleep(100000);  // 100ms
         }
+
+        // Read any remaining stderr after initialization
+        mcp_read_stderr(server);
 
         if (total_read > 0) {
             buffer[total_read] = '\0';
@@ -549,6 +598,47 @@ int mcp_connect_server(MCPServer *server) {
 }
 
 /*
+ * Read and log stderr output from MCP server (non-blocking)
+ * This helps capture debug logs and errors from the server.
+ * Logs are written both to the main log and to a server-specific file.
+ */
+static void mcp_read_stderr(MCPServer *server) {
+    if (!server || server->stderr_fd < 0) {
+        return;
+    }
+
+    char buffer[4096];
+    ssize_t n;
+
+    while ((n = read(server->stderr_fd, buffer, sizeof(buffer) - 1)) > 0) {
+        buffer[n] = '\0';
+
+        // Write raw output to server's log file if open
+        if (server->stderr_log) {
+            fwrite(buffer, 1, (size_t)n, server->stderr_log);
+            fflush(server->stderr_log);
+        }
+
+        // Also log each line to main debug log for convenience
+        char *line = buffer;
+        char *next_line;
+
+        while ((next_line = strchr(line, '\n')) != NULL) {
+            *next_line = '\0';
+            if (strlen(line) > 0) {
+                LOG_DEBUG("MCP[%s stderr]: %s", server->name, line);
+            }
+            line = next_line + 1;
+        }
+
+        // Log any remaining partial line
+        if (strlen(line) > 0) {
+            LOG_DEBUG("MCP[%s stderr]: %s", server->name, line);
+        }
+    }
+}
+
+/*
  * Disconnect from an MCP server
  */
 void mcp_disconnect_server(MCPServer *server) {
@@ -567,6 +657,17 @@ void mcp_disconnect_server(MCPServer *server) {
     if (server->stdout_fd >= 0) {
         close(server->stdout_fd);
         server->stdout_fd = -1;
+    }
+
+    if (server->stderr_fd >= 0) {
+        close(server->stderr_fd);
+        server->stderr_fd = -1;
+    }
+
+    // Close stderr log file
+    if (server->stderr_log) {
+        fclose(server->stderr_log);
+        server->stderr_log = NULL;
     }
 
     // Kill process if still running
@@ -634,6 +735,12 @@ static cJSON* mcp_send_request(MCPServer *server, const char *method, cJSON *par
 
     // Wait for response (with timeout)
     for (int i = 0; i < 50; i++) {  // 5 second timeout
+        // Read any stderr output (for logging/debugging)
+        mcp_read_stderr(server);
+
+            // Read any stderr output during initialization
+            mcp_read_stderr(server);
+
         ssize_t n = read(server->stdout_fd, buffer + total_read, sizeof(buffer) - total_read - 1);
         if (n > 0) {
             total_read += (size_t)n;
@@ -646,6 +753,9 @@ static cJSON* mcp_send_request(MCPServer *server, const char *method, cJSON *par
         usleep(100000);  // 100ms
     }
 
+    // Read any remaining stderr output
+    mcp_read_stderr(server);
+
     if (total_read == 0) {
         LOG_ERROR("MCP: No response from server '%s'", server->name);
         return NULL;
@@ -657,7 +767,12 @@ static cJSON* mcp_send_request(MCPServer *server, const char *method, cJSON *par
     // Parse response
     cJSON *response = cJSON_Parse(buffer);
     if (!response) {
-        LOG_ERROR("MCP: Failed to parse response: %s", cJSON_GetErrorPtr());
+        // Show first 200 chars of response for debugging
+        char preview[201];
+        strncpy(preview, buffer, 200);
+        preview[200] = '\0';
+        LOG_ERROR("MCP: Failed to parse JSON response from '%s'. First 200 chars: %s%s",
+                 server->name, preview, total_read > 200 ? "..." : "");
         return NULL;
     }
 
@@ -753,7 +868,13 @@ int mcp_discover_tools(MCPServer *server) {
 MCPToolResult* mcp_call_tool(MCPServer *server, const char *tool_name, cJSON *arguments) {
     if (!server || !server->connected || !tool_name) {
         LOG_ERROR("MCP: Invalid parameters for tool call");
-        return NULL;
+        MCPToolResult *error_result = calloc(1, sizeof(MCPToolResult));
+        if (error_result) {
+            error_result->tool_name = strdup(tool_name ? tool_name : "unknown");
+            error_result->is_error = 1;
+            error_result->result = strdup("MCP: Invalid parameters (server not connected or no tool name)");
+        }
+        return error_result;
     }
 
     LOG_INFO("MCP: Calling tool '%s' on server '%s'", tool_name, server->name);
@@ -770,51 +891,134 @@ MCPToolResult* mcp_call_tool(MCPServer *server, const char *tool_name, cJSON *ar
     cJSON_Delete(params);
 
     if (!response) {
-        return NULL;
+        MCPToolResult *error_result = calloc(1, sizeof(MCPToolResult));
+        if (error_result) {
+            error_result->tool_name = strdup(tool_name);
+            error_result->is_error = 1;
+            error_result->result = strdup("MCP: No response from server (timeout or connection error)");
+        }
+        return error_result;
     }
 
     // Extract result
     cJSON *result_obj = cJSON_GetObjectItem(response, "result");
     if (!result_obj) {
         LOG_ERROR("MCP: No result in tools/call response");
+        MCPToolResult *error_result = calloc(1, sizeof(MCPToolResult));
+        if (error_result) {
+            error_result->tool_name = strdup(tool_name);
+            error_result->is_error = 1;
+            error_result->result = strdup("MCP: Invalid response from server (no result field)");
+        }
         cJSON_Delete(response);
-        return NULL;
+        return error_result;
     }
 
     MCPToolResult *result = calloc(1, sizeof(MCPToolResult));
     if (!result) {
         cJSON_Delete(response);
-        return NULL;
+        MCPToolResult *error_result = calloc(1, sizeof(MCPToolResult));
+        if (error_result) {
+            error_result->tool_name = strdup(tool_name);
+            error_result->is_error = 1;
+            error_result->result = strdup("MCP: Memory allocation failed");
+        }
+        return error_result;
     }
 
     result->tool_name = strdup(tool_name);
     result->is_error = 0;
+    result->blob = NULL;
+    result->blob_size = 0;
+    result->mime_type = NULL;
 
-    // MCP returns content array with text items
+    // MCP returns content array with different content types
     cJSON *content = cJSON_GetObjectItem(result_obj, "content");
     if (content && cJSON_IsArray(content)) {
-        // Concatenate all text items
-        size_t total_len = 0;
+        // Process each content item
         cJSON *item = NULL;
 
-        // Calculate total length
         cJSON_ArrayForEach(item, content) {
+            // Check content type first
+            cJSON *content_type = cJSON_GetObjectItem(item, "type");
+
+            // Handle text content (type: 'text' or legacy 'text' field)
             cJSON *text = cJSON_GetObjectItem(item, "text");
             if (text && cJSON_IsString(text)) {
-                total_len += strlen(text->valuestring) + 1;
-            }
-        }
-
-        if (total_len > 0) {
-            result->result = calloc(total_len + 1, 1);
-            if (result->result) {
-                cJSON_ArrayForEach(item, content) {
-                    cJSON *text = cJSON_GetObjectItem(item, "text");
-                    if (text && cJSON_IsString(text)) {
-                        strcat(result->result, text->valuestring);
+                // Handle text content
+                if (!result->result) {
+                    result->result = strdup(text->valuestring);
+                } else {
+                    // Append to existing text with newline
+                    size_t new_len = strlen(result->result) + strlen(text->valuestring) + 2;
+                    char *new_result = realloc(result->result, new_len);
+                    if (new_result) {
+                        result->result = new_result;
                         strcat(result->result, "\n");
+                        strcat(result->result, text->valuestring);
                     }
                 }
+            }
+
+            // Handle image content (type: 'image' with data field)
+            if (content_type && cJSON_IsString(content_type) &&
+                strcmp(content_type->valuestring, "image") == 0) {
+                cJSON *image_data = cJSON_GetObjectItem(item, "data");
+                if (image_data && cJSON_IsString(image_data)) {
+                    // Handle image content (base64 encoded)
+                    const char *image_str = image_data->valuestring;
+                    size_t image_len = strlen(image_str);
+
+                    // Decode base64
+                    size_t decoded_size = 0;
+                    unsigned char *decoded_data = base64_decode(image_str, image_len, &decoded_size);
+                    if (decoded_data) {
+                        result->blob = decoded_data;
+                        result->blob_size = decoded_size;
+                        LOG_DEBUG("MCP: Image content received and decoded (encoded size: %zu, decoded size: %zu)", image_len, decoded_size);
+                    } else {
+                        LOG_WARN("MCP: Failed to decode base64 image content");
+                        // Fallback: store as-is
+                        result->blob = malloc(image_len);
+                        if (result->blob) {
+                            memcpy(result->blob, image_str, image_len);
+                            result->blob_size = image_len;
+                            LOG_DEBUG("MCP: Image content stored as-is (size: %zu)", image_len);
+                        }
+                    }
+                }
+            }
+
+            // Handle blob (binary) content (legacy format)
+            cJSON *blob = cJSON_GetObjectItem(item, "blob");
+            if (blob && cJSON_IsString(blob) && !result->blob) {
+                // Handle binary content (base64 encoded)
+                const char *blob_str = blob->valuestring;
+                size_t blob_len = strlen(blob_str);
+
+                // Decode base64
+                size_t decoded_size = 0;
+                unsigned char *decoded_data = base64_decode(blob_str, blob_len, &decoded_size);
+                if (decoded_data) {
+                    result->blob = decoded_data;
+                    result->blob_size = decoded_size;
+                    LOG_DEBUG("MCP: Binary blob content received and decoded (encoded size: %zu, decoded size: %zu)", blob_len, decoded_size);
+                } else {
+                    LOG_WARN("MCP: Failed to decode base64 blob content");
+                    // Fallback: store as-is
+                    result->blob = malloc(blob_len);
+                    if (result->blob) {
+                        memcpy(result->blob, blob_str, blob_len);
+                        result->blob_size = blob_len;
+                        LOG_DEBUG("MCP: Binary blob content stored as-is (size: %zu)", blob_len);
+                    }
+                }
+            }
+
+            // Check for MIME type
+            cJSON *mime_type = cJSON_GetObjectItem(item, "mimeType");
+            if (mime_type && cJSON_IsString(mime_type) && !result->mime_type) {
+                result->mime_type = strdup(mime_type->valuestring);
             }
         }
     }
@@ -839,6 +1043,10 @@ void mcp_free_tool_result(MCPToolResult *result) {
 
     free(result->tool_name);
     free(result->result);
+    free(result->mime_type);
+    if (result->blob) {
+        free(result->blob);
+    }
     free(result);
 }
 
@@ -1270,11 +1478,60 @@ MCPResourceContent* mcp_read_resource(MCPConfig *config, const char *server_name
             // NULL is OK for optional fields
         }
 
-        // Get blob content (base64 encoded)
+        // Get image content (type: 'image' with data field)
+        cJSON *content_type = cJSON_GetObjectItem(content_item, "type");
+        if (content_type && cJSON_IsString(content_type) &&
+            strcmp(content_type->valuestring, "image") == 0) {
+            cJSON *image_data = cJSON_GetObjectItem(content_item, "data");
+            if (image_data && cJSON_IsString(image_data)) {
+                // Handle image content (base64 encoded)
+                const char *image_str = image_data->valuestring;
+                size_t image_len = strlen(image_str);
+
+                // Decode base64
+                size_t decoded_size = 0;
+                unsigned char *decoded_data = base64_decode(image_str, image_len, &decoded_size);
+                if (decoded_data) {
+                    result->blob = decoded_data;
+                    result->blob_size = decoded_size;
+                    LOG_DEBUG("MCP: Image content received and decoded (encoded size: %zu, decoded size: %zu)", image_len, decoded_size);
+                } else {
+                    LOG_WARN("MCP: Failed to decode base64 image content");
+                    // Fallback: store as-is
+                    result->blob = malloc(image_len);
+                    if (result->blob) {
+                        memcpy(result->blob, image_str, image_len);
+                        result->blob_size = image_len;
+                        LOG_DEBUG("MCP: Image content stored as-is (size: %zu)", image_len);
+                    }
+                }
+            }
+        }
+
+        // Get blob content (base64 encoded) - legacy format
         cJSON *blob = cJSON_GetObjectItem(content_item, "blob");
-        if (blob && cJSON_IsString(blob)) {
-            // TODO: Decode base64 if needed
-            LOG_DEBUG("MCP: Binary blob content received (not decoded)");
+        if (blob && cJSON_IsString(blob) && !result->blob) {
+            // Handle binary content (base64 encoded)
+            const char *blob_str = blob->valuestring;
+            size_t blob_len = strlen(blob_str);
+
+            // Decode base64
+            size_t decoded_size = 0;
+            unsigned char *decoded_data = base64_decode(blob_str, blob_len, &decoded_size);
+            if (decoded_data) {
+                result->blob = decoded_data;
+                result->blob_size = decoded_size;
+                LOG_DEBUG("MCP: Binary blob content received and decoded (encoded size: %zu, decoded size: %zu)", blob_len, decoded_size);
+            } else {
+                LOG_WARN("MCP: Failed to decode base64 blob content");
+                // Fallback: store as-is
+                result->blob = malloc(blob_len);
+                if (result->blob) {
+                    memcpy(result->blob, blob_str, blob_len);
+                    result->blob_size = blob_len;
+                    LOG_DEBUG("MCP: Binary blob content stored as-is (size: %zu)", blob_len);
+                }
+            }
         }
     }
 

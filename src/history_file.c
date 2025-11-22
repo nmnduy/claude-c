@@ -103,6 +103,107 @@ void history_file_close(HistoryFile *hf) {
     free(hf);
 }
 
+// Escape newlines in text for storage
+#ifdef TEST_BUILD
+char* escape_newlines(const char *text) {
+#else
+static char* escape_newlines(const char *text) {
+#endif
+    if (!text) return NULL;
+
+    // Count how many newlines we need to escape
+    size_t newline_count = 0;
+    for (const char *p = text; *p; p++) {
+        if (*p == '\n') newline_count++;
+    }
+
+    // If no newlines, just return a copy
+    if (newline_count == 0) {
+        return strdup(text);
+    }
+
+    // Allocate buffer for escaped text (each \n becomes \\n)
+    size_t escaped_len = strlen(text) + newline_count + 1;
+    char *escaped = malloc(escaped_len);
+    if (!escaped) return NULL;
+
+    // Perform escaping
+    char *dest = escaped;
+    for (const char *src = text; *src; src++) {
+        if (*src == '\n') {
+            *dest++ = '\\';
+            *dest++ = 'n';
+        } else {
+            *dest++ = *src;
+        }
+    }
+    *dest = '\0';
+
+    return escaped;
+}
+
+// Unescape newlines when loading from storage
+#ifdef TEST_BUILD
+char* unescape_newlines(const char *escaped_text) {
+#else
+static char* unescape_newlines(const char *escaped_text) {
+#endif
+    if (!escaped_text) return NULL;
+
+    // Count how many escape sequences we have
+    size_t escape_count = 0;
+    for (const char *p = escaped_text; *p; p++) {
+        if (*p == '\\' && *(p + 1) == 'n') {
+            escape_count++;
+            p++; // Skip the 'n'
+        }
+    }
+
+    // If no escapes, just return a copy
+    if (escape_count == 0) {
+        return strdup(escaped_text);
+    }
+
+    // Allocate buffer for unescaped text (each \\n becomes \n)
+    size_t unescaped_len = strlen(escaped_text) - escape_count + 1;
+    char *unescaped = malloc(unescaped_len);
+    if (!unescaped) return NULL;
+
+    // Perform unescaping
+    char *dest = unescaped;
+    for (const char *src = escaped_text; *src; src++) {
+        if (*src == '\\' && *(src + 1) == 'n') {
+            *dest++ = '\n';
+            src++; // Skip the 'n'
+        } else {
+            *dest++ = *src;
+        }
+    }
+    *dest = '\0';
+
+    return unescaped;
+}
+
+int history_file_append(HistoryFile *hf, const char *text) {
+    if (!hf || !hf->fp || !text || text[0] == '\0') return 0;
+
+    // Escape newlines before storing
+    char *escaped_text = escape_newlines(text);
+    if (!escaped_text) {
+        LOG_WARN("[HIST] Failed to escape text for history");
+        return -1;
+    }
+
+    if (fprintf(hf->fp, "%s\n", escaped_text) < 0) {
+        LOG_WARN("[HIST] Failed to append to history file: %s", hf->path);
+        free(escaped_text);
+        return -1;
+    }
+    fflush(hf->fp); // allow OS buffering; no fsync
+    free(escaped_text);
+    return 0;
+}
+
 char** history_file_load_recent(HistoryFile *hf, int limit, int *out_count) {
     if (out_count) *out_count = 0;
     if (!hf || !hf->path || limit <= 0) return NULL;
@@ -149,11 +250,19 @@ char** history_file_load_recent(HistoryFile *hf, int limit, int *out_count) {
                 // Trim carriage return
                 if (len > 0 && line_start[len - 1] == '\r') len--;
                 if (len > 0) {
-                    char *s = malloc(len + 1);
-                    if (s) {
-                        memcpy(s, line_start, len);
-                        s[len] = '\0';
-                        tmp[out_idx++] = s;
+                    // Create null-terminated copy of the line
+                    char *line_copy = malloc(len + 1);
+                    if (line_copy) {
+                        memcpy(line_copy, line_start, len);
+                        line_copy[len] = '\0';
+
+                        // Unescape newlines
+                        char *unescaped = unescape_newlines(line_copy);
+                        free(line_copy);
+
+                        if (unescaped) {
+                            tmp[out_idx++] = unescaped;
+                        }
                     }
                 }
             }
@@ -167,15 +276,5 @@ char** history_file_load_recent(HistoryFile *hf, int limit, int *out_count) {
     free(buf);
     if (out_count) *out_count = out_idx;
     return (out_idx > 0) ? tmp : (free(tmp), NULL);
-}
-
-int history_file_append(HistoryFile *hf, const char *text) {
-    if (!hf || !hf->fp || !text || text[0] == '\0') return 0;
-    if (fprintf(hf->fp, "%s\n", text) < 0) {
-        LOG_WARN("[HIST] Failed to append to history file: %s", hf->path);
-        return -1;
-    }
-    fflush(hf->fp); // allow OS buffering; no fsync
-    return 0;
 }
 

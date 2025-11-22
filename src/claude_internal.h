@@ -27,6 +27,7 @@
 #define MAX_TOKENS 16384
 #define MAX_TOOLS 10
 #define BUFFER_SIZE 8192
+#define BASH_OUTPUT_MAX_SIZE 12228  // 12,228 byte limit for bash output
 #define MAX_MESSAGES 10000
 
 // Retry configuration for rate limiting (429 errors)
@@ -75,7 +76,8 @@ typedef enum {
 typedef enum {
     INTERNAL_TEXT,           // Plain text content
     INTERNAL_TOOL_CALL,      // Agent requesting tool execution
-    INTERNAL_TOOL_RESPONSE   // Result from tool execution
+    INTERNAL_TOOL_RESPONSE,  // Result from tool execution
+    INTERNAL_IMAGE           // Image content for upload
 } InternalContentType;
 
 // ============================================================================
@@ -98,6 +100,12 @@ typedef struct {
     cJSON *tool_params;      // Tool parameters (for TOOL_CALL)
     cJSON *tool_output;      // Tool execution result (for TOOL_RESPONSE)
     int is_error;            // Whether tool execution failed (for TOOL_RESPONSE)
+
+    // For INTERNAL_IMAGE
+    char *image_path;        // Path to the image file
+    char *mime_type;         // MIME type of the image
+    char *base64_data;       // Base64 encoded image data
+    size_t image_size;       // Size of the image in bytes
 } InternalContent;
 
 /**
@@ -127,6 +135,7 @@ typedef struct {
     ToolCall *tools;          // Array of tool calls (NULL if no tools)
     int tool_count;           // Number of tool calls
     cJSON *raw_response;      // Raw response for adding to history (owned, must be freed)
+    char *error_message;      // Error message if API call failed (owned, must be freed)
 } ApiResponse;
 
 /**
@@ -184,6 +193,11 @@ typedef struct ConversationState {
     int conv_mutex_initialized;     // Tracks mutex initialization
     volatile sig_atomic_t interrupt_requested;  // Flag to interrupt ongoing API calls
     struct MCPConfig *mcp_config;   // MCP server configuration (NULL if not enabled)
+
+    // Token usage tracking (cumulative for the session)
+    int total_prompt_tokens;        // Total input tokens used
+    int total_completion_tokens;    // Total output tokens used
+    int total_cached_tokens;        // Total cached tokens
 } ConversationState;
 
 // ============================================================================
@@ -267,5 +281,15 @@ void add_cache_control(cJSON *obj);
 
 // Get tool definitions for the API request
 cJSON* get_tool_definitions(ConversationState *state, int enable_caching);
+
+/**
+ * Extract and accumulate token usage from API response
+ * Updates the token counters in ConversationState
+ *
+ * Parameters:
+ *   state: Conversation state to update
+ *   raw_response: Raw JSON response string from API
+ */
+void accumulate_token_usage(ConversationState *state, const char *raw_response);
 
 #endif // CLAUDE_INTERNAL_H

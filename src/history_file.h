@@ -26,5 +26,11 @@ char** history_file_load_recent(HistoryFile *hf, int limit, int *out_count);
 // Append a line (adds trailing '\n'). Skips empty strings.
 int history_file_append(HistoryFile *hf, const char *text);
 
+#ifdef TEST_BUILD
+// Internal functions exposed for testing
+char* escape_newlines(const char *text);
+char* unescape_newlines(const char *escaped_text);
+#endif
+
 #endif // HISTORY_FILE_H
 

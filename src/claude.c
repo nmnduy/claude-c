@@ -127,6 +127,9 @@ static int bedrock_handle_auth_error(BedrockConfig *config, long http_status, co
 #include "mcp.h"
 #endif
 
+// Base64 encoding/decoding for binary content
+#include "base64.h"
+
 #ifdef TEST_BUILD
 #define main claude_main
 #endif
@@ -508,6 +511,44 @@ static char* get_tool_details(const char *tool_name, cJSON *arguments) {
             int count = cJSON_GetArraySize(todos);
             snprintf(details, sizeof(details), "%d task%s", count, count == 1 ? "" : "s");
         }
+    } else if (strncmp(tool_name, "mcp_", 4) == 0) {
+        // Handle MCP tools (format: mcp_<server>_<toolname>)
+        // Extract the actual tool name after the server prefix for display
+        const char *actual_tool = strchr(tool_name + 4, '_');
+        if (actual_tool) {
+            actual_tool++; // Skip the underscore
+
+            // Try to extract the most relevant argument for display
+            // Common patterns: url, text, path, element, values, etc.
+            cJSON *url = cJSON_GetObjectItem(arguments, "url");
+            cJSON *text = cJSON_GetObjectItem(arguments, "text");
+            cJSON *path = cJSON_GetObjectItem(arguments, "path");
+            cJSON *element = cJSON_GetObjectItem(arguments, "element");
+
+            if (cJSON_IsString(url)) {
+                // Tools with URL parameter (navigate, fetch, etc.)
+                snprintf(details, sizeof(details), "%s: %s", actual_tool, url->valuestring);
+            } else if (cJSON_IsString(text) && strlen(text->valuestring) > 0) {
+                // Tools with text parameter (type, search, etc.)
+                snprintf(details, sizeof(details), "%s: %.30s%s", actual_tool,
+                        text->valuestring,
+                        strlen(text->valuestring) > 30 ? "..." : "");
+            } else if (cJSON_IsString(path)) {
+                // Tools with path parameter (read, write, etc.)
+                snprintf(details, sizeof(details), "%s: %s", actual_tool, path->valuestring);
+            } else if (cJSON_IsString(element)) {
+                // Tools with element parameter (click, hover, etc.)
+                snprintf(details, sizeof(details), "%s: %s", actual_tool, element->valuestring);
+            } else {
+                // Generic display: just show the tool name
+                snprintf(details, sizeof(details), "%s", actual_tool);
+            }
+            details[sizeof(details) - 1] = '\0';
+        } else {
+            // Fallback: show the full tool name without "mcp_" prefix
+            snprintf(details, sizeof(details), "%s", tool_name + 4);
+            details[sizeof(details) - 1] = '\0';
+        }
     }
 
     return strlen(details) > 0 ? details : NULL;
@@ -551,6 +592,7 @@ cJSON* tool_edit(cJSON *params, ConversationState *state);
 cJSON* tool_todo_write(cJSON *params, ConversationState *state);
 cJSON* tool_bash(cJSON *params, ConversationState *state);
 static cJSON* tool_sleep(cJSON *params, ConversationState *state);
+static cJSON* tool_upload_image(cJSON *params, ConversationState *state);
 #else
 #define STATIC static
 // Forward declarations
@@ -566,6 +608,10 @@ char* read_file(const char *path) {
 
     fseek(f, 0, SEEK_END);
     long fsize = ftell(f);
+    if (fsize < 0) {
+        fclose(f);
+        return NULL;
+    }
     fseek(f, 0, SEEK_SET);
 
     char *content = malloc((size_t)fsize + 1);
@@ -692,6 +738,253 @@ out:
     return result;
 }
 
+static cJSON* tool_upload_image(cJSON *params, ConversationState *state) {
+    const cJSON *path_json = cJSON_GetObjectItem(params, "file_path");
+
+    if (!path_json || !cJSON_IsString(path_json)) {
+        cJSON *error = cJSON_CreateObject();
+        cJSON_AddStringToObject(error, "error", "Missing 'file_path' parameter");
+        return error;
+    }
+
+    const char *image_path = path_json->valuestring;
+
+    // Check for interrupt before starting
+    if (state && state->interrupt_requested) {
+        cJSON *error = cJSON_CreateObject();
+        cJSON_AddStringToObject(error, "error", "Operation interrupted by user");
+        return error;
+    }
+
+    // Read the image file as binary
+    FILE *f = fopen(image_path, "rb");
+    if (!f) {
+        cJSON *error = cJSON_CreateObject();
+        cJSON_AddStringToObject(error, "error", "Failed to open image file");
+        return error;
+    }
+
+    // Get file size
+    fseek(f, 0, SEEK_END);
+    long file_size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+
+    if (file_size <= 0) {
+        fclose(f);
+        cJSON *error = cJSON_CreateObject();
+        cJSON_AddStringToObject(error, "error", "Image file is empty or invalid");
+        return error;
+    }
+
+    // Read file content
+    unsigned char *image_data = malloc((size_t)file_size);
+    if (!image_data) {
+        fclose(f);
+        cJSON *error = cJSON_CreateObject();
+        cJSON_AddStringToObject(error, "error", "Memory allocation failed");
+        return error;
+    }
+
+    size_t bytes_read = fread(image_data, 1, (size_t)file_size, f);
+    fclose(f);
+
+    if (bytes_read != (size_t)file_size) {
+        free(image_data);
+        cJSON *error = cJSON_CreateObject();
+        cJSON_AddStringToObject(error, "error", "Failed to read entire image file");
+        return error;
+    }
+
+    // Base64 encode the image
+    size_t encoded_size = 0;
+    char *base64_data = base64_encode(image_data, (size_t)file_size, &encoded_size);
+    free(image_data);
+
+    if (!base64_data) {
+        cJSON *error = cJSON_CreateObject();
+        cJSON_AddStringToObject(error, "error", "Failed to encode image as base64");
+        return error;
+    }
+
+    // Determine MIME type from file extension
+    const char *mime_type = "image/jpeg"; // default
+    const char *ext = strrchr(image_path, '.');
+    if (ext) {
+        if (strcasecmp(ext, ".png") == 0) {
+            mime_type = "image/png";
+        } else if (strcasecmp(ext, ".jpg") == 0 || strcasecmp(ext, ".jpeg") == 0) {
+            mime_type = "image/jpeg";
+        } else if (strcasecmp(ext, ".gif") == 0) {
+            mime_type = "image/gif";
+        } else if (strcasecmp(ext, ".webp") == 0) {
+            mime_type = "image/webp";
+        }
+    }
+
+    // Create an image content block instead of a regular tool result
+    // This will be handled specially in the message building logic
+    cJSON *result = cJSON_CreateObject();
+    cJSON_AddStringToObject(result, "status", "success");
+    cJSON_AddStringToObject(result, "message", "Image uploaded successfully");
+    cJSON_AddStringToObject(result, "file_path", image_path);
+    cJSON_AddStringToObject(result, "mime_type", mime_type);
+    cJSON_AddNumberToObject(result, "file_size_bytes", file_size);
+    cJSON_AddStringToObject(result, "base64_data", base64_data);
+    cJSON_AddStringToObject(result, "content_type", "image"); // Special marker for image content
+
+    free(base64_data);
+
+    return result;
+}
+
+// ============================================================================
+// ANSI Escape Sequence Filtering
+// ============================================================================
+
+/**
+ * Strip ANSI escape sequences from a string
+ * This prevents terminal corruption when displaying command output in ncurses
+ */
+static char* strip_ansi_escapes(const char *input) {
+    if (!input) return NULL;
+
+    size_t len = strlen(input);
+    char *result = malloc(len + 1);
+    if (!result) return NULL;
+
+    size_t j = 0;
+    int in_escape = 0;
+
+    for (size_t i = 0; i < len; i++) {
+        if (in_escape) {
+            // Inside escape sequence - skip until command character
+            if ((input[i] >= 'A' && input[i] <= 'Z') ||
+                (input[i] >= 'a' && input[i] <= 'z') ||
+                input[i] == '@') {
+                in_escape = 0;
+            }
+        } else if (input[i] == '\033') {  // ESC character
+            in_escape = 1;
+        } else if (i + 1 < len && input[i] == '\033' && input[i + 1] == '[') {
+            // CSI (Control Sequence Introducer)
+            in_escape = 1;
+            i++;  // Skip the '['
+        } else {
+            // Normal character - copy to result
+            result[j++] = input[i];
+        }
+    }
+
+    result[j] = '\0';
+    return result;
+}
+
+// ============================================================================
+// Binary File Handling for MCP Tools
+// ============================================================================
+
+/**
+ * Save binary data to a file
+ * Returns: 0 on success, -1 on error
+ */
+static int save_binary_file(const char *filename, const void *data, size_t size) {
+    if (!filename || !data || size == 0) {
+        return -1;
+    }
+
+    // Create parent directories if they don't exist
+    char *path_copy = strdup(filename);
+    if (!path_copy) return -1;
+
+    // Extract directory path
+    char *dir_path = dirname(path_copy);
+
+    // Create directory recursively (ignore errors if directory already exists)
+    char mkdir_cmd[PATH_MAX];
+    snprintf(mkdir_cmd, sizeof(mkdir_cmd), "mkdir -p '%s' 2>/dev/null", dir_path);
+    int mkdir_result = system(mkdir_cmd);
+    (void)mkdir_result; // Suppress unused result warning
+
+    free(path_copy);
+
+    // Open file for writing
+    FILE *f = fopen(filename, "wb");
+    if (!f) {
+        LOG_ERROR("Failed to open file for binary writing: %s", filename);
+        return -1;
+    }
+
+    // Write binary data
+    size_t written = fwrite(data, 1, size, f);
+    fclose(f);
+
+    if (written != size) {
+        LOG_ERROR("Failed to write all binary data to file: %s (written: %zu, expected: %zu)",
+                 filename, written, size);
+        return -1;
+    }
+
+    LOG_DEBUG("Successfully saved binary data to '%s' (%zu bytes)", filename, size);
+    return 0;
+}
+
+/**
+ * Generate timestamped filename
+ * Format: <prefix>_YYYYMMDD_HHMMSS.<extension>
+ */
+static void generate_timestamped_filename(char *buffer, size_t buffer_size,
+                                         const char *prefix, const char *mime_type) {
+    if (!buffer || buffer_size == 0) return;
+
+    // Get current time
+    time_t now = time(NULL);
+    struct tm *tm_info = localtime(&now);
+
+    // Determine file extension from MIME type
+    const char *extension = "bin";
+    if (mime_type) {
+        if (strcmp(mime_type, "image/png") == 0) {
+            extension = "png";
+        } else if (strcmp(mime_type, "image/jpeg") == 0 || strcmp(mime_type, "image/jpg") == 0) {
+            extension = "jpg";
+        } else if (strcmp(mime_type, "image/gif") == 0) {
+            extension = "gif";
+        } else if (strcmp(mime_type, "image/webp") == 0) {
+            extension = "webp";
+        } else if (strncmp(mime_type, "image/", 6) == 0) {
+            // Generic image type
+            extension = "img";
+        }
+    }
+
+    // Generate filename
+    snprintf(buffer, buffer_size, "%s_%04d%02d%02d_%02d%02d%02d.%s",
+             prefix ? prefix : "file",
+             tm_info->tm_year + 1900, tm_info->tm_mon + 1, tm_info->tm_mday,
+             tm_info->tm_hour, tm_info->tm_min, tm_info->tm_sec,
+             extension);
+}
+
+/**
+ * Format file size in human-readable format
+ * Returns: Static buffer with formatted size (not thread-safe)
+ */
+static const char* format_file_size(size_t size) {
+    static char buffer[32];
+
+    if (size < 1024) {
+        snprintf(buffer, sizeof(buffer), "%zu B", size);
+    } else if (size < 1024 * 1024) {
+        snprintf(buffer, sizeof(buffer), "%.1f KB", (double)size / 1024);
+    } else if (size < 1024 * 1024 * 1024) {
+        snprintf(buffer, sizeof(buffer), "%.1f MB", (double)size / (1024 * 1024));
+    } else {
+        snprintf(buffer, sizeof(buffer), "%.1f GB", (double)size / (1024 * 1024 * 1024));
+    }
+
+    return buffer;
+}
+
 // ============================================================================
 // Diff Functionality
 // ============================================================================
@@ -816,12 +1109,54 @@ STATIC cJSON* tool_bash(cJSON *params, ConversationState *state) {
     }
 
     // Execute command and capture both stdout and stderr
-    // Use 2>&1 to redirect stderr to stdout so we capture all output
+    // Use shell wrapper with proper quoting and stderr redirection
     char full_command[BUFFER_SIZE];
-    snprintf(full_command, sizeof(full_command), "%s 2>&1", command);
+    // Escape single quotes in the command for shell safety
+    char escaped_command[BUFFER_SIZE];
+    size_t j = 0;
+    for (size_t i = 0; command[i] && j < sizeof(escaped_command) - 1; i++) {
+        if (command[i] == '\'') {
+            if (j < sizeof(escaped_command) - 2) {
+                escaped_command[j++] = '\'';
+                escaped_command[j++] = '\\';
+                escaped_command[j++] = '\'';
+                escaped_command[j++] = '\'';
+            }
+        } else {
+            escaped_command[j++] = command[i];
+        }
+    }
+    escaped_command[j] = '\0';
+
+    // Use shell wrapper to ensure consistent execution and stderr capture
+    // Redirect stdin to /dev/null to prevent child processes from competing for terminal input
+    snprintf(full_command, sizeof(full_command), "sh -c '%s' </dev/null 2>&1", escaped_command);
+
+    // Temporarily redirect stderr to prevent any direct terminal output
+    int saved_stderr = -1;
+    FILE *stderr_redirect = NULL;
+
+    // Only redirect stderr if we're in TUI mode (g_active_tool_queue is set)
+    if (g_active_tool_queue) {
+        saved_stderr = dup(STDERR_FILENO);
+        stderr_redirect = freopen("/dev/null", "w", stderr);
+        if (!stderr_redirect) {
+            LOG_WARN("Failed to redirect stderr, continuing without redirection");
+            if (saved_stderr != -1) {
+                close(saved_stderr);
+                saved_stderr = -1;
+            }
+        }
+    }
 
     FILE *pipe = popen(full_command, "r");
     if (!pipe) {
+        // Restore stderr before returning error
+        if (saved_stderr != -1) {
+            dup2(saved_stderr, STDERR_FILENO);
+            close(saved_stderr);
+            fflush(stderr);
+        }
         cJSON *error = cJSON_CreateObject();
         cJSON_AddStringToObject(error, "error", "Failed to execute command");
         return error;
@@ -835,12 +1170,19 @@ STATIC cJSON* tool_bash(cJSON *params, ConversationState *state) {
     int fd = fileno(pipe);
 
     int timed_out = 0;
+    int truncated = 0;
 
     while (1) {
         // Check for interrupt during long-running command
         if (state && state->interrupt_requested) {
             free(output);
             pclose(pipe);
+            // Restore stderr before returning error
+            if (saved_stderr != -1) {
+                dup2(saved_stderr, STDERR_FILENO);
+                close(saved_stderr);
+                fflush(stderr);
+            }
             cJSON *error = cJSON_CreateObject();
             cJSON_AddStringToObject(error, "error", "Operation interrupted by user");
             return error;
@@ -871,6 +1213,12 @@ STATIC cJSON* tool_bash(cJSON *params, ConversationState *state) {
             LOG_ERROR("select() failed: %s", strerror(errno));
             free(output);
             pclose(pipe);
+            // Restore stderr before returning error
+            if (saved_stderr != -1) {
+                dup2(saved_stderr, STDERR_FILENO);
+                close(saved_stderr);
+                fflush(stderr);
+            }
             cJSON *error = cJSON_CreateObject();
             cJSON_AddStringToObject(error, "error", "Failed to monitor command execution");
             return error;
@@ -891,10 +1239,48 @@ STATIC cJSON* tool_bash(cJSON *params, ConversationState *state) {
         }
 
         size_t len = strlen(buffer);
+
+        // Check if adding this buffer would exceed maximum output size
+        if (total_size + len >= BASH_OUTPUT_MAX_SIZE) {
+            // Calculate how much we can add before hitting the limit
+            size_t remaining = BASH_OUTPUT_MAX_SIZE - total_size;
+            if (remaining > 0) {
+                // Add partial buffer content
+                char *new_output = realloc(output, total_size + remaining + 1);
+                if (!new_output) {
+                    free(output);
+                    pclose(pipe);
+                    // Restore stderr before returning error
+                    if (saved_stderr != -1) {
+                        dup2(saved_stderr, STDERR_FILENO);
+                        close(saved_stderr);
+                        fflush(stderr);
+                    }
+                    cJSON *error = cJSON_CreateObject();
+                    cJSON_AddStringToObject(error, "error", "Out of memory");
+                    return error;
+                }
+                output = new_output;
+                memcpy(output + total_size, buffer, remaining);
+                total_size += remaining;
+                output[total_size] = '\0';
+            }
+
+            // Set truncated flag and break out of the loop
+            truncated = 1;
+            break;
+        }
+
         char *new_output = realloc(output, total_size + len + 1);
         if (!new_output) {
             free(output);
             pclose(pipe);
+            // Restore stderr before returning error
+            if (saved_stderr != -1) {
+                dup2(saved_stderr, STDERR_FILENO);
+                close(saved_stderr);
+                fflush(stderr);
+            }
             cJSON *error = cJSON_CreateObject();
             cJSON_AddStringToObject(error, "error", "Out of memory");
             return error;
@@ -931,9 +1317,24 @@ STATIC cJSON* tool_bash(cJSON *params, ConversationState *state) {
         exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
     }
 
+    // Check if ANSI filtering is disabled
+    const char *filter_env = getenv("CLAUDE_C_BASH_FILTER_ANSI");
+    int filter_ansi = 1;  // Default: filter ANSI sequences
+    if (filter_env && (strcmp(filter_env, "0") == 0 || strcasecmp(filter_env, "false") == 0)) {
+        filter_ansi = 0;
+    }
+
+    // Strip ANSI escape sequences to prevent terminal corruption (unless disabled)
+    char *clean_output = NULL;
+    if (filter_ansi && output) {
+        clean_output = strip_ansi_escapes(output);
+    }
+
     cJSON *result = cJSON_CreateObject();
     cJSON_AddNumberToObject(result, "exit_code", exit_code);
-    cJSON_AddStringToObject(result, "output", output ? output : "");
+    cJSON_AddStringToObject(result, "output", clean_output ? clean_output : (output ? output : ""));
+
+    free(clean_output);
 
     if (timed_out) {
         char timeout_msg[256];
@@ -941,6 +1342,21 @@ STATIC cJSON* tool_bash(cJSON *params, ConversationState *state) {
                 "Command timed out after %d seconds. Use CLAUDE_C_BASH_TIMEOUT to adjust timeout.",
                 timeout_seconds);
         cJSON_AddStringToObject(result, "timeout_error", timeout_msg);
+    }
+
+    if (truncated) {
+        char truncate_msg[256];
+        snprintf(truncate_msg, sizeof(truncate_msg),
+                "Command output was truncated at %zu bytes (maximum: %d bytes).",
+                total_size, BASH_OUTPUT_MAX_SIZE);
+        cJSON_AddStringToObject(result, "truncation_warning", truncate_msg);
+    }
+
+    // Restore stderr if we redirected it
+    if (saved_stderr != -1) {
+        dup2(saved_stderr, STDERR_FILENO);
+        close(saved_stderr);
+        fflush(stderr);
     }
 
     free(output);
@@ -1399,11 +1815,26 @@ static void *tool_thread_func(void *arg) {
     cJSON_Delete(t->input);
     t->input = NULL;  // Mark as freed for cleanup handler
     // Populate result block
-    t->result_block->type = INTERNAL_TOOL_RESPONSE;
-    t->result_block->tool_id = t->tool_use_id;
-    t->result_block->tool_name = strdup(t->tool_name);  // Store tool name for error reporting
-    t->result_block->tool_output = res;
-   t->result_block->is_error = cJSON_HasObjectItem(res, "error");
+    // Check if this is an image upload result
+    const cJSON *content_type = cJSON_GetObjectItem(res, "content_type");
+    if (content_type && cJSON_IsString(content_type) && strcmp(content_type->valuestring, "image") == 0) {
+        // This is an image upload - create image content instead of tool response
+        t->result_block->type = INTERNAL_IMAGE;
+        t->result_block->image_path = strdup(cJSON_GetObjectItem(res, "file_path")->valuestring);
+        t->result_block->mime_type = strdup(cJSON_GetObjectItem(res, "mime_type")->valuestring);
+        t->result_block->base64_data = strdup(cJSON_GetObjectItem(res, "base64_data")->valuestring);
+        t->result_block->image_size = (size_t)cJSON_GetObjectItem(res, "file_size_bytes")->valueint;
+        t->result_block->is_error = 0;
+        // Free the result JSON since we've extracted the data
+        cJSON_Delete(res);
+    } else {
+        // Regular tool response
+        t->result_block->type = INTERNAL_TOOL_RESPONSE;
+        t->result_block->tool_id = t->tool_use_id;
+        t->result_block->tool_name = strdup(t->tool_name);  // Store tool name for error reporting
+        t->result_block->tool_output = res;
+        t->result_block->is_error = cJSON_HasObjectItem(res, "error");
+    }
 
     tool_tracker_notify_completion(t);
 
@@ -2354,20 +2785,102 @@ static cJSON* tool_call_mcp_tool(cJSON *params, ConversationState *state) {
     MCPToolResult *call_result = mcp_call_tool(target, tool_name, args_object);
     cJSON *result = cJSON_CreateObject();
     if (!call_result) {
-        LOG_ERROR("tool_call_mcp_tool: MCP tool call failed for tool '%s' on server '%s'",
+        LOG_ERROR("tool_call_mcp_tool: MCP tool call failed for tool '%s' on server '%s' (memory allocation error)",
                  tool_name, server_name);
-        cJSON_AddStringToObject(result, "error", "MCP tool call failed");
+        cJSON_AddStringToObject(result, "error", "MCP tool call failed: memory allocation error");
         return result;
     }
 
     if (call_result->is_error) {
         LOG_ERROR("tool_call_mcp_tool: MCP tool returned error: %s",
                  call_result->result ? call_result->result : "MCP tool error");
+        // Include the detailed error message for the user
         cJSON_AddStringToObject(result, "error", call_result->result ? call_result->result : "MCP tool error");
     } else {
-        LOG_DEBUG("tool_call_mcp_tool: MCP tool call succeeded, result length: %zu",
-                 call_result->result ? strlen(call_result->result) : 0);
-        cJSON_AddStringToObject(result, "content", call_result->result ? call_result->result : "");
+        LOG_DEBUG("tool_call_mcp_tool: MCP tool call succeeded, result length: %zu, blob size: %zu, mime_type: %s",
+                 call_result->result ? strlen(call_result->result) : 0,
+                 call_result->blob_size,
+                 call_result->mime_type ? call_result->mime_type : "none");
+
+        // Handle different content types
+        if (call_result->blob && call_result->blob_size > 0) {
+            // Binary content (e.g., images) - auto-save to file
+            const char *mime_type = call_result->mime_type ? call_result->mime_type : "application/octet-stream";
+
+            // Generate appropriate filename based on tool and MIME type
+            char filename[256];
+            if (strncmp(tool_name, "screenshot", 10) == 0 ||
+                strncmp(tool_name, "take_screenshot", 15) == 0) {
+                generate_timestamped_filename(filename, sizeof(filename), "screenshot", mime_type);
+            } else if (strncmp(mime_type, "image/", 6) == 0) {
+                generate_timestamped_filename(filename, sizeof(filename), "image", mime_type);
+            } else {
+                generate_timestamped_filename(filename, sizeof(filename), "file", mime_type);
+            }
+
+            // Save binary data to file
+            int save_result = save_binary_file(filename, call_result->blob, call_result->blob_size);
+
+            if (save_result == 0) {
+                // Success - encode base64 for image content (if it's an image)
+                int is_image = (strncmp(mime_type, "image/", 6) == 0);
+
+                if (is_image) {
+                    // For images, encode to base64 and mark as image content
+                    // This allows the TUI to display it properly like UploadImage
+                    size_t encoded_size = 0;
+                    char *encoded_data = base64_encode(call_result->blob, call_result->blob_size, &encoded_size);
+                    if (encoded_data) {
+                        cJSON_AddStringToObject(result, "content_type", "image");
+                        cJSON_AddStringToObject(result, "file_path", filename);
+                        cJSON_AddStringToObject(result, "mime_type", mime_type);
+                        cJSON_AddStringToObject(result, "base64_data", encoded_data);
+                        cJSON_AddNumberToObject(result, "file_size_bytes", call_result->blob_size);
+                        free(encoded_data);
+                        LOG_INFO("tool_call_mcp_tool: Saved image to '%s' (%zu bytes)", filename, call_result->blob_size);
+                    } else {
+                        // Encoding failed, fall back to file info only
+                        LOG_WARN("tool_call_mcp_tool: Failed to encode image to base64, returning file info only");
+                        cJSON_AddStringToObject(result, "status", "success");
+                        cJSON_AddStringToObject(result, "message", "Image saved to file");
+                        cJSON_AddStringToObject(result, "file_path", filename);
+                        cJSON_AddStringToObject(result, "file_type", mime_type);
+                        cJSON_AddNumberToObject(result, "file_size_bytes", call_result->blob_size);
+                        cJSON_AddStringToObject(result, "file_size_human", format_file_size(call_result->blob_size));
+                    }
+                } else {
+                    // For non-image binary content, return file info only
+                    cJSON_AddStringToObject(result, "status", "success");
+                    cJSON_AddStringToObject(result, "message", "Binary content saved to file");
+                    cJSON_AddStringToObject(result, "file_path", filename);
+                    cJSON_AddStringToObject(result, "file_type", mime_type);
+                    cJSON_AddNumberToObject(result, "file_size_bytes", call_result->blob_size);
+                    cJSON_AddStringToObject(result, "file_size_human", format_file_size(call_result->blob_size));
+                    LOG_INFO("tool_call_mcp_tool: Saved binary content to '%s' (%zu bytes)", filename, call_result->blob_size);
+                }
+            } else {
+                // Failed to save - fall back to base64 (but this shouldn't happen)
+                LOG_WARN("tool_call_mcp_tool: Failed to save binary content to file, falling back to base64");
+                cJSON_AddStringToObject(result, "content_type", "binary");
+                cJSON_AddStringToObject(result, "mime_type", mime_type);
+
+                size_t encoded_size = 0;
+                char *encoded_data = base64_encode(call_result->blob, call_result->blob_size, &encoded_size);
+                if (encoded_data) {
+                    cJSON_AddStringToObject(result, "content", encoded_data);
+                    free(encoded_data);
+                } else {
+                    cJSON_AddStringToObject(result, "content", "[binary data received - saving and encoding failed]");
+                }
+            }
+        } else {
+            // Text content
+            cJSON_AddStringToObject(result, "content_type", "text");
+            if (call_result->mime_type) {
+                cJSON_AddStringToObject(result, "mime_type", call_result->mime_type);
+            }
+            cJSON_AddStringToObject(result, "content", call_result->result ? call_result->result : "");
+        }
     }
 
     mcp_free_tool_result(call_result);
@@ -2394,6 +2907,7 @@ static Tool tools[] = {
     {"Glob", tool_glob},
     {"Grep", tool_grep},
     {"TodoWrite", tool_todo_write},
+    {"UploadImage", tool_upload_image},
 #ifndef TEST_BUILD
     {"ListMcpResources", tool_list_mcp_resources},
     {"ReadMcpResource", tool_read_mcp_resource},
@@ -2450,8 +2964,90 @@ static cJSON* execute_tool(const char *tool_name, cJSON *input, ConversationStat
                                 mcp_result->result ? mcp_result->result : "MCP tool error");
                         cJSON_AddStringToObject(result, "error", mcp_result->result ? mcp_result->result : "MCP tool error");
                     } else {
-                        LOG_DEBUG("execute_tool: MCP tool returned success");
-                        cJSON_AddStringToObject(result, "content", mcp_result->result ? mcp_result->result : "");
+                        LOG_DEBUG("execute_tool: MCP tool returned success, result length: %zu, blob size: %zu, mime_type: %s",
+                                 mcp_result->result ? strlen(mcp_result->result) : 0,
+                                 mcp_result->blob_size,
+                                 mcp_result->mime_type ? mcp_result->mime_type : "none");
+
+                        // Handle different content types
+                        if (mcp_result->blob && mcp_result->blob_size > 0) {
+                            // Binary content (e.g., images) - auto-save to file
+                            const char *mime_type = mcp_result->mime_type ? mcp_result->mime_type : "application/octet-stream";
+
+                            // Generate appropriate filename based on tool and MIME type
+                            char filename[256];
+                            if (strncmp(actual_tool_name, "screenshot", 10) == 0 ||
+                                strncmp(actual_tool_name, "take_screenshot", 15) == 0) {
+                                generate_timestamped_filename(filename, sizeof(filename), "screenshot", mime_type);
+                            } else if (strncmp(mime_type, "image/", 6) == 0) {
+                                generate_timestamped_filename(filename, sizeof(filename), "image", mime_type);
+                            } else {
+                                generate_timestamped_filename(filename, sizeof(filename), "file", mime_type);
+                            }
+
+                            // Save binary data to file
+                            int save_result = save_binary_file(filename, mcp_result->blob, mcp_result->blob_size);
+
+                            if (save_result == 0) {
+                                // Success - encode base64 for image content (if it's an image)
+                                int is_image = (strncmp(mime_type, "image/", 6) == 0);
+
+                                if (is_image) {
+                                    // For images, encode to base64 and mark as image content
+                                    // This allows the TUI to display it properly like UploadImage
+                                    size_t encoded_size = 0;
+                                    char *encoded_data = base64_encode(mcp_result->blob, mcp_result->blob_size, &encoded_size);
+                                    if (encoded_data) {
+                                        cJSON_AddStringToObject(result, "content_type", "image");
+                                        cJSON_AddStringToObject(result, "file_path", filename);
+                                        cJSON_AddStringToObject(result, "mime_type", mime_type);
+                                        cJSON_AddStringToObject(result, "base64_data", encoded_data);
+                                        cJSON_AddNumberToObject(result, "file_size_bytes", mcp_result->blob_size);
+                                        free(encoded_data);
+                                        LOG_INFO("execute_tool: Saved image to '%s' (%zu bytes)", filename, mcp_result->blob_size);
+                                    } else {
+                                        // Encoding failed, fall back to file info only
+                                        LOG_WARN("execute_tool: Failed to encode image to base64, returning file info only");
+                                        cJSON_AddStringToObject(result, "status", "success");
+                                        cJSON_AddStringToObject(result, "message", "Image saved to file");
+                                        cJSON_AddStringToObject(result, "file_path", filename);
+                                        cJSON_AddStringToObject(result, "file_type", mime_type);
+                                        cJSON_AddNumberToObject(result, "file_size_bytes", mcp_result->blob_size);
+                                        cJSON_AddStringToObject(result, "file_size_human", format_file_size(mcp_result->blob_size));
+                                    }
+                                } else {
+                                    // For non-image binary content, return file info only
+                                    cJSON_AddStringToObject(result, "status", "success");
+                                    cJSON_AddStringToObject(result, "message", "Binary content saved to file");
+                                    cJSON_AddStringToObject(result, "file_path", filename);
+                                    cJSON_AddStringToObject(result, "file_type", mime_type);
+                                    cJSON_AddNumberToObject(result, "file_size_bytes", mcp_result->blob_size);
+                                    cJSON_AddStringToObject(result, "file_size_human", format_file_size(mcp_result->blob_size));
+                                    LOG_INFO("execute_tool: Saved binary content to '%s' (%zu bytes)", filename, mcp_result->blob_size);
+                                }
+                            } else {
+                                // Failed to save - fall back to base64 (but this shouldn't happen)
+                                LOG_WARN("execute_tool: Failed to save binary content to file, falling back to base64");
+                                cJSON_AddStringToObject(result, "content_type", "binary");
+                                cJSON_AddStringToObject(result, "mime_type", mime_type);
+
+                                size_t encoded_size = 0;
+                                char *encoded_data = base64_encode(mcp_result->blob, mcp_result->blob_size, &encoded_size);
+                                if (encoded_data) {
+                                    cJSON_AddStringToObject(result, "content", encoded_data);
+                                    free(encoded_data);
+                                } else {
+                                    cJSON_AddStringToObject(result, "content", "[binary data received - saving and encoding failed]");
+                                }
+                            }
+                        } else {
+                            // Text content
+                            cJSON_AddStringToObject(result, "content_type", "text");
+                            if (mcp_result->mime_type) {
+                                cJSON_AddStringToObject(result, "mime_type", mcp_result->mime_type);
+                            }
+                            cJSON_AddStringToObject(result, "content", mcp_result->result ? mcp_result->result : "");
+                        }
                     }
 
                     mcp_free_tool_result(mcp_result);
@@ -2536,7 +3132,9 @@ cJSON* get_tool_definitions(ConversationState *state, int enable_caching) {
         "to prevent terminal corruption, so both stdout and stderr output will be "
         "captured in the 'output' field. Commands have a configurable timeout "
         "(default: 30 seconds) to prevent hanging. Use the 'timeout' parameter to "
-        "override the default or set to 0 for no timeout.");
+        "override the default or set to 0 for no timeout. If the output exceeds "
+        "12,228 bytes, it will be truncated and a 'truncation_warning' field "
+        "will be added to the result.");
     cJSON *bash_params = cJSON_CreateObject();
     cJSON_AddStringToObject(bash_params, "type", "object");
     cJSON *bash_props = cJSON_CreateObject();
@@ -2708,6 +3306,28 @@ cJSON* get_tool_definitions(ConversationState *state, int enable_caching) {
     cJSON_AddItemToObject(grep_func, "parameters", grep_params);
     cJSON_AddItemToObject(grep_tool, "function", grep_func);
     cJSON_AddItemToArray(tool_array, grep_tool);
+
+    // UploadImage tool
+    cJSON *upload_image_tool = cJSON_CreateObject();
+    cJSON_AddStringToObject(upload_image_tool, "type", "function");
+    cJSON *upload_image_func = cJSON_CreateObject();
+    cJSON_AddStringToObject(upload_image_func, "name", "UploadImage");
+    cJSON_AddStringToObject(upload_image_func, "description",
+        "Uploads an image file to be included in the conversation context using OpenAI-compatible format. Supports common image formats (PNG, JPEG, GIF, WebP).");
+    cJSON *upload_image_params = cJSON_CreateObject();
+    cJSON_AddStringToObject(upload_image_params, "type", "object");
+    cJSON *upload_image_props = cJSON_CreateObject();
+    cJSON *image_path_prop = cJSON_CreateObject();
+    cJSON_AddStringToObject(image_path_prop, "type", "string");
+    cJSON_AddStringToObject(image_path_prop, "description", "Path to the image file to upload");
+    cJSON_AddItemToObject(upload_image_props, "file_path", image_path_prop);
+    cJSON_AddItemToObject(upload_image_params, "properties", upload_image_props);
+    cJSON *upload_image_req = cJSON_CreateArray();
+    cJSON_AddItemToArray(upload_image_req, cJSON_CreateString("file_path"));
+    cJSON_AddItemToObject(upload_image_params, "required", upload_image_req);
+    cJSON_AddItemToObject(upload_image_func, "parameters", upload_image_params);
+    cJSON_AddItemToObject(upload_image_tool, "function", upload_image_func);
+    cJSON_AddItemToArray(tool_array, upload_image_tool);
 
     // TodoWrite tool
     cJSON *todo_tool = cJSON_CreateObject();
@@ -3027,27 +3647,54 @@ char* build_request_json_from_state(ConversationState *state) {
                 cJSON_Delete(msg);
                 continue; // Skip adding the user message itself
             } else {
-                // Regular user text message
-                if (state->messages[i].content_count > 0 &&
-                    state->messages[i].contents[0].type == INTERNAL_TEXT) {
-
-                    // Use content array for recent messages to support cache_control
+                // Regular user message - handle text and image content
+                if (state->messages[i].content_count > 0) {
+                    // Use content array for recent messages to support cache_control and mixed content
                     if (is_recent_message) {
                         cJSON *content_array = cJSON_CreateArray();
-                        cJSON *text_block = cJSON_CreateObject();
-                        cJSON_AddStringToObject(text_block, "type", "text");
-                        cJSON_AddStringToObject(text_block, "text", state->messages[i].contents[0].text);
 
-                        // Add cache_control to the last user message
-                        if (i == state->count - 1) {
-                            add_cache_control(text_block);
+                        for (int j = 0; j < state->messages[i].content_count; j++) {
+                            InternalContent *cb = &state->messages[i].contents[j];
+
+                            if (cb->type == INTERNAL_TEXT) {
+                                // Text content
+                                cJSON *text_block = cJSON_CreateObject();
+                                cJSON_AddStringToObject(text_block, "type", "text");
+                                cJSON_AddStringToObject(text_block, "text", cb->text);
+
+                                // Add cache_control to the last user message
+                                if (i == state->count - 1) {
+                                    add_cache_control(text_block);
+                                }
+
+                                cJSON_AddItemToArray(content_array, text_block);
+                            } else if (cb->type == INTERNAL_IMAGE) {
+                                // Image content - OpenAI format
+                                cJSON *image_block = cJSON_CreateObject();
+                                cJSON_AddStringToObject(image_block, "type", "image_url");
+                                cJSON *image_url = cJSON_CreateObject();
+
+                                // Calculate required buffer size for data URL
+                                size_t data_url_size = strlen("data:") + strlen(cb->mime_type) +
+                                                     strlen(";base64,") + strlen(cb->base64_data) + 1;
+                                char *data_url = malloc(data_url_size);
+                                if (data_url) {
+                                    snprintf(data_url, data_url_size, "data:%s;base64,%s",
+                                             cb->mime_type, cb->base64_data);
+                                    cJSON_AddStringToObject(image_url, "url", data_url);
+                                    free(data_url);
+                                }
+                                cJSON_AddItemToObject(image_block, "image_url", image_url);
+                                cJSON_AddItemToArray(content_array, image_block);
+                            }
                         }
 
-                        cJSON_AddItemToArray(content_array, text_block);
                         cJSON_AddItemToObject(msg, "content", content_array);
                     } else {
-                        // For older messages, use simple string content
-                        cJSON_AddStringToObject(msg, "content", state->messages[i].contents[0].text);
+                        // For older messages, use simple string content (images not supported in simple format)
+                        if (state->messages[i].contents[0].type == INTERNAL_TEXT) {
+                            cJSON_AddStringToObject(msg, "content", state->messages[i].contents[0].text);
+                        }
                     }
                 }
             }
@@ -3146,12 +3793,86 @@ void api_response_free(ApiResponse *response) {
         cJSON_Delete(response->raw_response);
     }
 
+    // Free error message
+    free(response->error_message);
+
     free(response);
 }
 
 // ============================================================================
 // API Call Logic
 // ============================================================================
+
+/**
+ * Extract and accumulate token usage from API response
+ * Updates the token counters in ConversationState
+ */
+void accumulate_token_usage(ConversationState *state, const char *raw_response) {
+    if (!state || !raw_response) {
+        return;
+    }
+
+    cJSON *json = cJSON_Parse(raw_response);
+    if (!json) {
+        LOG_DEBUG("accumulate_token_usage: failed to parse JSON response");
+        return;
+    }
+
+    // Extract usage object
+    cJSON *usage = cJSON_GetObjectItem(json, "usage");
+    if (!usage) {
+        LOG_DEBUG("accumulate_token_usage: no 'usage' object found in response");
+        cJSON_Delete(json);
+        return;
+    }
+
+    // Extract token counts
+    cJSON *prompt_tokens_json = cJSON_GetObjectItem(usage, "prompt_tokens");
+    cJSON *completion_tokens_json = cJSON_GetObjectItem(usage, "completion_tokens");
+
+    int prompt_tokens = 0;
+    int completion_tokens = 0;
+    int cached_tokens = 0;
+
+    if (prompt_tokens_json && cJSON_IsNumber(prompt_tokens_json)) {
+        prompt_tokens = prompt_tokens_json->valueint;
+    }
+
+    if (completion_tokens_json && cJSON_IsNumber(completion_tokens_json)) {
+        completion_tokens = completion_tokens_json->valueint;
+    }
+
+    // Try to extract cached tokens from prompt_tokens_details
+    cJSON *prompt_tokens_details = cJSON_GetObjectItem(usage, "prompt_tokens_details");
+    if (prompt_tokens_details) {
+        cJSON *cached_tokens_json = cJSON_GetObjectItem(prompt_tokens_details, "cached_tokens");
+        if (cached_tokens_json && cJSON_IsNumber(cached_tokens_json)) {
+            cached_tokens = cached_tokens_json->valueint;
+        }
+    }
+
+    // Also check for direct cache metrics (some providers use this format)
+    if (cached_tokens == 0) {
+        cJSON *cache_hit_tokens = cJSON_GetObjectItem(usage, "prompt_cache_hit_tokens");
+        if (cache_hit_tokens && cJSON_IsNumber(cache_hit_tokens)) {
+            cached_tokens = cache_hit_tokens->valueint;
+        }
+    }
+
+    cJSON_Delete(json);
+
+    // Accumulate tokens in state (thread-safe)
+    if (conversation_state_lock(state) == 0) {
+        state->total_prompt_tokens += prompt_tokens;
+        state->total_completion_tokens += completion_tokens;
+        state->total_cached_tokens += cached_tokens;
+        conversation_state_unlock(state);
+
+        LOG_DEBUG("Token usage accumulated: +%d prompt, +%d completion, +%d cached (totals: %d/%d/%d)",
+                 prompt_tokens, completion_tokens, cached_tokens,
+                 state->total_prompt_tokens, state->total_completion_tokens, state->total_cached_tokens);
+    }
+}
 
 /**
  * Call API with retry logic (generic wrapper around provider->call_api)
@@ -3192,6 +3913,8 @@ static ApiResponse* call_api_with_retries(ConversationState *state) {
 
     int attempt_num = 1;
     int backoff_ms = INITIAL_BACKOFF_MS;
+    char *last_error = NULL;
+    long last_http_status = 0;
 
     struct timespec call_start, call_end, retry_start;
     clock_gettime(CLOCK_MONOTONIC, &call_start);
@@ -3205,6 +3928,7 @@ static ApiResponse* call_api_with_retries(ConversationState *state) {
         if (state->interrupt_requested) {
             LOG_INFO("API call interrupted by user request");
             print_error("Operation interrupted by user");
+            free(last_error);
             return NULL;
         }
 
@@ -3217,7 +3941,19 @@ static ApiResponse* call_api_with_retries(ConversationState *state) {
         if (attempt_num > 1 && elapsed_ms >= state->max_retry_duration_ms) {
             LOG_ERROR("Maximum retry duration (%d ms) exceeded after %d attempts",
                      state->max_retry_duration_ms, attempt_num - 1);
-            print_error("Maximum retry duration exceeded");
+
+            // Include the last error details for user context
+            char error_msg[1024];
+            if (last_error && last_http_status > 0) {
+                snprintf(error_msg, sizeof(error_msg),
+                        "Maximum retry duration exceeded. Last error: %s (HTTP %ld)",
+                        last_error, last_http_status);
+            } else {
+                snprintf(error_msg, sizeof(error_msg),
+                        "Maximum retry duration exceeded");
+            }
+            print_error(error_msg);
+            free(last_error);
             return NULL;
         }
 
@@ -3234,6 +3970,11 @@ static ApiResponse* call_api_with_retries(ConversationState *state) {
             LOG_INFO("API call succeeded (duration: %ld ms, provider duration: %ld ms, attempts: %d, auth_refreshed: %s)",
                      total_ms, result.duration_ms, attempt_num,
                      result.auth_refreshed ? "yes" : "no");
+
+            // Accumulate token usage from this API call
+            if (result.raw_response) {
+                accumulate_token_usage(state, result.raw_response);
+            }
 
             // Log success to persistence
             if (state->persistence_db && result.raw_response) {
@@ -3286,6 +4027,13 @@ static ApiResponse* call_api_with_retries(ConversationState *state) {
             );
         }
 
+        // Save last error details for potential timeout message
+        if (last_error) {
+            free(last_error);
+        }
+        last_error = result.error_message ? strdup(result.error_message) : NULL;
+        last_http_status = result.http_status;
+
         // Check if we should retry
         if (!result.is_retryable) {
             // Non-retryable error
@@ -3296,10 +4044,17 @@ static ApiResponse* call_api_with_retries(ConversationState *state) {
                     result.http_status);
             print_error(error_msg);
 
+            // Create an error response instead of returning NULL
+            ApiResponse *error_response = calloc(1, sizeof(ApiResponse));
+            if (error_response) {
+                error_response->error_message = strdup(result.error_message ? result.error_message : "unknown error");
+            }
+
+            free(last_error);
             free(result.raw_response);
             free(result.request_json);
             free(result.error_message);
-            return NULL;
+            return error_response;
         }
 
         // Calculate backoff with jitter (0-25% reduction)
@@ -3316,7 +4071,20 @@ static ApiResponse* call_api_with_retries(ConversationState *state) {
             delay_ms = (int)remaining_ms;
             if (delay_ms <= 0) {
                 LOG_ERROR("Maximum retry duration (%d ms) exceeded", state->max_retry_duration_ms);
-                print_error("Maximum retry duration exceeded");
+
+                // Include the error details for user context
+                char error_msg[1024];
+                if (result.error_message && result.http_status > 0) {
+                    snprintf(error_msg, sizeof(error_msg),
+                            "Maximum retry duration exceeded. Last error: %s (HTTP %ld)",
+                            result.error_message, result.http_status);
+                } else {
+                    snprintf(error_msg, sizeof(error_msg),
+                            "Maximum retry duration exceeded");
+                }
+                print_error(error_msg);
+
+                free(last_error);
                 free(result.raw_response);
                 free(result.request_json);
                 free(result.error_message);
@@ -3548,6 +4316,7 @@ char* build_system_prompt(ConversationState *state) {
         free(date);
         free(os_version);
         free(git_status);
+        free(claude_md);
         return NULL;
     }
 
@@ -3902,8 +4671,26 @@ static void free_internal_contents(InternalContent *results, int count) {
         free(cb->tool_name);
         if (cb->tool_params) cJSON_Delete(cb->tool_params);
         if (cb->tool_output) cJSON_Delete(cb->tool_output);
+
+        // Handle INTERNAL_IMAGE type
+        if (cb->type == INTERNAL_IMAGE) {
+            free(cb->image_path);
+            free(cb->mime_type);
+            free(cb->base64_data);
+        }
     }
     free(results);
+}
+
+// Helper: Check if TodoWrite was executed in the results array
+static int check_todo_write_executed(InternalContent *results, int count) {
+    if (!results) return 0;
+    for (int i = 0; i < count; i++) {
+        if (results[i].tool_name && strcmp(results[i].tool_name, "TodoWrite") == 0) {
+            return 1;
+        }
+    }
+    return 0;
 }
 
 static void add_tool_results(ConversationState *state, InternalContent *results, int count) {
@@ -4221,16 +5008,13 @@ static void process_response(ConversationState *state,
                     for (int t = 0; t < started_threads; t++) {
                         pthread_cancel(threads[t]);
                     }
+                    // Reset interrupt flag immediately after cancelling threads
+                    state->interrupt_requested = 0;
                     break;
                 }
 
-                int done = 0;
-                int cancelled = 0;
-
                 pthread_mutex_lock(&tracker.mutex);
                 if (tracker.cancelled || tracker.completed >= tracker.total) {
-                    done = tracker.completed >= tracker.total;
-                    cancelled = tracker.cancelled;
                     pthread_mutex_unlock(&tracker.mutex);
                     break;
                 }
@@ -4245,13 +5029,11 @@ static void process_response(ConversationState *state,
 
                 // Wait for condition variable with timeout
                 (void)pthread_cond_timedwait(&tracker.cond, &tracker.mutex, &deadline);
-                done = tracker.completed >= tracker.total;
-                cancelled = tracker.cancelled;
-                pthread_mutex_unlock(&tracker.mutex);
-
-                if (done || cancelled) {
+                if (tracker.cancelled || tracker.completed >= tracker.total) {
+                    pthread_mutex_unlock(&tracker.mutex);
                     break;
                 }
+                pthread_mutex_unlock(&tracker.mutex);
 
                 // Interactive interrupt handling (Ctrl+C) is done by the TUI event loop
                 // Non-TUI mode doesn't have interactive interrupt support here
@@ -4300,6 +5082,8 @@ static void process_response(ConversationState *state,
             } else {
                 ui_set_status(tui, queue, "Interrupted by user (Ctrl+C) - tools terminated");
             }
+            // Reset interrupt flag after tool execution is interrupted
+            state->interrupt_requested = 0;
         }
 
         if (!tui && !queue) {
@@ -4321,18 +5105,12 @@ static void process_response(ConversationState *state,
         free(threads);
         free(args);
 
+        // Extract TodoWrite information BEFORE transferring ownership to add_tool_results
+        int todo_write_executed = check_todo_write_executed(results, tool_count);
+
         // Record tool results even in the interrupt path so that every tool_call
         // has a corresponding tool_result. This prevents 400s due to missing results.
         add_tool_results(state, results, tool_count);
-
-        // Check if TodoWrite was executed and display the updated TODO list
-        int todo_write_executed = 0;
-        for (int i = 0; i < tool_count; i++) {
-            if (results[i].tool_name && strcmp(results[i].tool_name, "TodoWrite") == 0) {
-                todo_write_executed = 1;
-                break;
-            }
-        }
 
         if (todo_write_executed && state->todo_list && state->todo_list->count > 0) {
             // For TUI without queue, use colored rendering
@@ -4406,6 +5184,13 @@ static void ai_worker_handle_instruction(AIWorkerContext *ctx, const AIInstructi
         return;
     }
 
+    // Check if response contains an error message
+    if (response->error_message) {
+        ui_show_error(NULL, ctx->tui_queue, response->error_message);
+        api_response_free(response);
+        return;
+    }
+
     cJSON *error = cJSON_GetObjectItem(response->raw_response, "error");
     if (error) {
         cJSON *error_message = cJSON_GetObjectItem(error, "message");
@@ -4413,6 +5198,15 @@ static void ai_worker_handle_instruction(AIWorkerContext *ctx, const AIInstructi
         ui_show_error(NULL, ctx->tui_queue, error_msg);
         api_response_free(response);
         return;
+    }
+
+    // Post token usage update to TUI (token counts were accumulated in call_api)
+    if (conversation_state_lock(ctx->state) == 0) {
+        post_token_update(ctx->tui_queue,
+                         ctx->state->total_prompt_tokens,
+                         ctx->state->total_completion_tokens,
+                         ctx->state->total_cached_tokens);
+        conversation_state_unlock(ctx->state);
     }
 
     process_response(ctx->state, response, NULL, ctx->tui_queue, ctx);
@@ -4458,7 +5252,7 @@ static int interrupt_callback(void *user_data) {
 
     // Check if there's work in progress
     int queue_depth = instr_queue ? ai_queue_depth(instr_queue) : 0;
-    int work_in_progress = (queue_depth > 0) || state->interrupt_requested;
+    int work_in_progress = (queue_depth > 0);
 
     if (work_in_progress) {
         // There's an API call or tool execution in progress - interrupt it
@@ -4624,6 +5418,14 @@ static int submit_input_callback(const char *input, void *user_data) {
             return 0;
         }
 
+        // Check if response contains an error message
+        if (response->error_message) {
+            ui_show_error(tui, queue, response->error_message);
+            api_response_free(response);
+            free(input_copy);
+            return 0;
+        }
+
         cJSON *error = cJSON_GetObjectItem(response->raw_response, "error");
         if (error) {
             cJSON *error_message = cJSON_GetObjectItem(error, "message");
@@ -4639,6 +5441,172 @@ static int submit_input_callback(const char *input, void *user_data) {
     }
 
     free(input_copy);
+    return 0;
+}
+
+// Execute a single command and exit
+// Forward declaration for recursion
+static int process_single_command_response(ConversationState *state, ApiResponse *response);
+
+static int single_command_mode(ConversationState *state, const char *prompt) {
+    LOG_INFO("Executing single command: %s", prompt);
+
+    // Add user message to conversation
+    add_user_message(state, prompt);
+
+    // Call API synchronously
+    ApiResponse *response = call_api(state);
+    if (!response) {
+        LOG_ERROR("Failed to get response from API");
+        fprintf(stderr, "Error: Failed to get response from API\n");
+        return 1;
+    }
+
+    // Check if response contains an error message
+    if (response->error_message) {
+        LOG_ERROR("API error: %s", response->error_message);
+        fprintf(stderr, "Error: %s\n", response->error_message);
+        api_response_free(response);
+        return 1;
+    }
+
+    cJSON *error = cJSON_GetObjectItem(response->raw_response, "error");
+    if (error) {
+        cJSON *error_message = cJSON_GetObjectItem(error, "message");
+        const char *error_msg = error_message ? error_message->valuestring : "Unknown error";
+        LOG_ERROR("API error: %s", error_msg);
+        fprintf(stderr, "Error: %s\n", error_msg);
+        api_response_free(response);
+        return 1;
+    }
+
+    // Process response recursively (handles tool calls and follow-up responses)
+    int result = process_single_command_response(state, response);
+    api_response_free(response);
+    return result;
+}
+
+/**
+ * Process a single API response in single command mode
+ * Recursively handles tool calls and follow-up responses
+ * Returns: 0 on success, 1 on error
+ */
+static int process_single_command_response(ConversationState *state, ApiResponse *response) {
+    // Print assistant's text content if present
+    if (response->message.text && response->message.text[0] != '\0') {
+        // Skip whitespace-only content
+        const char *p = response->message.text;
+        while (*p && isspace((unsigned char)*p)) p++;
+
+        if (*p != '\0') {  // Has non-whitespace content
+            printf("%s\n", p);
+        }
+    }
+
+    // Add to conversation history
+    cJSON *choices = cJSON_GetObjectItem(response->raw_response, "choices");
+    if (choices && cJSON_IsArray(choices) && cJSON_GetArraySize(choices) > 0) {
+        cJSON *choice = cJSON_GetArrayItem(choices, 0);
+        cJSON *message = cJSON_GetObjectItem(choice, "message");
+        if (message) {
+            add_assistant_message_openai(state, message);
+        }
+    }
+
+    // Process tool calls
+    int tool_count = response->tool_count;
+    ToolCall *tool_calls_array = response->tools;
+
+    if (tool_count > 0) {
+        LOG_INFO("Processing %d tool call(s)", tool_count);
+
+        InternalContent *results = calloc((size_t)tool_count, sizeof(InternalContent));
+        if (!results) {
+            LOG_ERROR("Failed to allocate tool result buffer");
+            return 1;
+        }
+
+        int valid_tool_calls = 0;
+        for (int i = 0; i < tool_count; i++) {
+            ToolCall *tool = &tool_calls_array[i];
+            if (tool->name && tool->id) {
+                valid_tool_calls++;
+            }
+        }
+
+        if (valid_tool_calls > 0) {
+            // Execute tools
+            for (int i = 0; i < tool_count; i++) {
+                ToolCall *tool = &tool_calls_array[i];
+                if (!tool->name || !tool->id) {
+                    continue;
+                }
+
+                LOG_DEBUG("Executing tool: %s", tool->name);
+
+                // Convert ToolCall to execute_tool parameters
+                cJSON *input = tool->parameters
+                    ? cJSON_Duplicate(tool->parameters, /*recurse*/1)
+                    : cJSON_CreateObject();
+
+                // Print tool name header in single command mode (no colors available)
+                char *tool_details = get_tool_details(tool->name, input);
+                if (tool_details && strlen(tool_details) > 0) {
+                    printf("⚙️  %s: %s\n", tool->name, tool_details);
+                } else {
+                    printf("⚙️  %s\n", tool->name);
+                }
+                fflush(stdout);
+
+                // Execute tool synchronously
+                cJSON *tool_result = execute_tool(tool->name, input, state);
+
+                // Tool output is already emitted via tool_emit_line during tool execution
+                // Only print errors that occurred during tool execution
+                if (tool_result) {
+                    cJSON *error = cJSON_GetObjectItem(tool_result, "error");
+                    if (error && cJSON_IsString(error)) {
+                        printf("Error: %s\n", error->valuestring);
+                    }
+                }
+
+                // Convert result to InternalContent
+                results[i].type = INTERNAL_TOOL_RESPONSE;
+                results[i].tool_id = strdup(tool->id);
+                results[i].tool_name = strdup(tool->name);
+                results[i].tool_output = tool_result;
+                results[i].is_error = tool_result ? cJSON_HasObjectItem(tool_result, "error") : 1;
+
+                // Tool result is logged via LOG_DEBUG in execute_tool
+
+                cJSON_Delete(input);
+            }
+
+            // Add tool results to conversation
+            // Note: add_tool_results takes ownership of the results array and its contents
+            add_tool_results(state, results, tool_count);
+
+            // Call API again with tool results and process recursively
+            ApiResponse *next_response = call_api(state);
+            if (next_response) {
+                // Recursively process the next response (may contain more tool calls)
+                int result = process_single_command_response(state, next_response);
+                api_response_free(next_response);
+                return result;
+            } else {
+                LOG_ERROR("Failed to get response after tool execution");
+                fprintf(stderr, "Error: Failed to get response after tool execution\n");
+                return 1;
+            }
+
+            // Do NOT free results here - add_tool_results() took ownership
+        } else {
+            // No valid tool calls, free the allocated results array
+            free(results);
+        }
+    }
+
+    // No tool calls - conversation is complete
     return 0;
 }
 
@@ -4807,6 +5775,7 @@ int main(int argc, char *argv[]) {
         printf("Version: %s\n\n", CLAUDE_C_VERSION_FULL);
         printf("Usage:\n");
         printf("  %s               Start interactive mode\n", argv[0]);
+        printf("  %s \"PROMPT\"       Execute single command and exit\n", argv[0]);
         printf("  %s -h, --help    Show this help message\n", argv[0]);
         printf("  %s --version     Show version information\n\n", argv[0]);
         printf("Environment Variables:\n");
@@ -4842,8 +5811,16 @@ int main(int argc, char *argv[]) {
         return 0;
     }
 
-    // Check that no extra arguments were provided
-    if (argc > 1) {
+    // Check for single command mode: ./claude-c "prompt"
+    int is_single_command_mode = 0;
+    char *single_command = NULL;
+
+    if (argc == 2) {
+        // Single argument provided - treat as prompt for single command mode
+        is_single_command_mode = 1;
+        single_command = argv[1];
+        LOG_INFO("Single command mode enabled with prompt: %s", single_command);
+    } else if (argc > 2) {
         LOG_ERROR("Unexpected arguments provided");
         printf("Try '%s --help' for usage information.\n", argv[0]);
         return 1;
@@ -4999,7 +5976,12 @@ int main(int argc, char *argv[]) {
     state.api_key = strdup(api_key);
     state.api_url = strdup(api_base);
     state.model = strdup(model);
-    state.working_dir = getcwd(NULL, 0);
+
+    // Get current working directory - use PATH_MAX to satisfy static analyzer
+    char cwd_buf[PATH_MAX];
+    char *cwd = getcwd(cwd_buf, sizeof(cwd_buf));
+    state.working_dir = cwd ? strdup(cwd) : NULL;
+
     state.session_id = session_id;
     state.persistence_db = persistence_db;
     state.max_retry_duration_ms = get_env_int_retry("CLAUDE_C_MAX_RETRY_DURATION_MS", MAX_RETRY_DURATION_MS);
@@ -5065,7 +6047,7 @@ int main(int argc, char *argv[]) {
         }
     } else {
         state.mcp_config = NULL;
-        LOG_DEBUG("MCP: Disabled (set CLAUDE_MCP_ENABLED=1 to enable; default is enabled)");
+        LOG_DEBUG("MCP: Disabled (set CLAUDE_MCP_ENABLED=1 to enable)");
     }
 #else
     state.provider = NULL;
@@ -5116,8 +6098,13 @@ int main(int argc, char *argv[]) {
         LOG_WARN("Failed to build system prompt");
     }
 
-    // Run interactive mode
-    interactive_mode(&state);
+    // Run either single command mode or interactive mode
+    int exit_code = 0;
+    if (is_single_command_mode) {
+        exit_code = single_command_mode(&state, single_command);
+    } else {
+        interactive_mode(&state);
+    }
 
     // Cleanup conversation messages
     conversation_free(&state);
@@ -5175,7 +6162,7 @@ int main(int argc, char *argv[]) {
     LOG_INFO("Application terminated");
     log_shutdown();
 
-    return 0;
+    return exit_code;
 }
 
 #endif // TEST_BUILD
