@@ -128,7 +128,9 @@ static int test_input_buffer_expansion_success(void) {
 
     // Verify buffer was expanded
     ASSERT((size_t)input->capacity >= history_len + 1024);
-    ASSERT(input->buffer != original_buffer); // Should have new memory
+    // Note: Don't check if buffer pointer changed - realloc() may return the same
+    // address if it can expand in place, especially on Ubuntu/GCC builds
+    (void)original_buffer; // Mark as used to avoid unused variable warning
 
     // Simulate copying the history
     memcpy(input->buffer, large_history, history_len);
