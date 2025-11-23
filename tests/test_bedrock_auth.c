@@ -145,7 +145,7 @@ static void test_authenticate_sets_credentials(void) {
     exec_calls = 0;
     AWSCredentials *creds = bedrock_load_credentials(NULL, NULL);
     ASSERT_TRUE(creds != NULL, "Credentials available after authenticate");
-    
+
     bedrock_creds_free(creds);
 }
 

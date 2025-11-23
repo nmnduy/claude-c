@@ -323,7 +323,7 @@ static ApiCallResult bedrock_call_api(Provider *self, ConversationState *state) 
 
         if (bedrock_authenticate(profile) == 0) {
             LOG_INFO("Authentication successful, loading credentials...");
-            
+
             // Poll for credentials after authentication
             AWSCredentials *new_creds = NULL;
             int max_attempts = 10;
