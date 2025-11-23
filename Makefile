@@ -136,6 +136,7 @@ VOICE_INPUT_SRC = src/voice_input.c
 VOICE_INPUT_OBJ = $(BUILD_DIR)/voice_input.o
 MCP_SRC = src/mcp.c
 MCP_OBJ = $(BUILD_DIR)/mcp.o
+MCP_TEST_OBJ = $(BUILD_DIR)/mcp_test.o
 WINDOW_MANAGER_SRC = src/window_manager.c
 WINDOW_MANAGER_OBJ = $(BUILD_DIR)/window_manager.o
 TOOL_UTILS_SRC = src/tool_utils.c
@@ -685,6 +686,10 @@ $(MCP_OBJ): $(MCP_SRC) src/mcp.h src/logger.h
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c -o $(MCP_OBJ) $(MCP_SRC)
 
+$(MCP_TEST_OBJ): $(MCP_SRC) src/mcp.h src/logger.h
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(CFLAGS) -DTEST_BUILD -c -o $(MCP_TEST_OBJ) $(MCP_SRC)
+
 $(TODO_OBJ): $(TODO_SRC) src/todo.h
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c -o $(TODO_OBJ) $(TODO_SRC)
@@ -1023,10 +1028,10 @@ $(TEST_TEXT_WRAP_TARGET): tests/test_text_wrap.c
 	@echo "✓ Text Wrapping test build successful!"
 	@echo ""
 
-$(TEST_MCP_TARGET): $(TEST_MCP_SRC) $(MCP_OBJ) $(BASE64_OBJ)
+$(TEST_MCP_TARGET): $(TEST_MCP_SRC) $(MCP_TEST_OBJ) $(BASE64_OBJ)
 	@mkdir -p $(BUILD_DIR)
 	@echo "Compiling MCP integration tests..."
-	@$(CC) $(CFLAGS) -o $(TEST_MCP_TARGET) $(TEST_MCP_SRC) $(MCP_OBJ) $(BASE64_OBJ) $(LDFLAGS)
+	@$(CC) $(CFLAGS) -DTEST_BUILD -o $(TEST_MCP_TARGET) $(TEST_MCP_SRC) $(MCP_TEST_OBJ) $(BASE64_OBJ) $(LDFLAGS)
 	@echo ""
 	@echo "✓ MCP test build successful!"
 	@echo ""

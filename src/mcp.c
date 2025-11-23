@@ -826,8 +826,9 @@ static cJSON* mcp_send_request(MCPServer *server, const char *method, cJSON *par
     cJSON *error = cJSON_GetObjectItem(response, "error");
     if (error) {
         cJSON *message = cJSON_GetObjectItem(error, "message");
-        LOG_ERROR("MCP: Server returned error: %s",
-                 message && cJSON_IsString(message) ? message->valuestring : "unknown");
+        const char *error_msg = (message && cJSON_IsString(message)) ? message->valuestring : "unknown";
+        LOG_ERROR("MCP: Server returned error: %s", error_msg);
+        (void)error_msg;  // Suppress unused warning when LOG_ERROR is stubbed out
         cJSON_Delete(response);
         return NULL;
     }
