@@ -19,6 +19,7 @@
 #include <errno.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <sys/stat.h>
 #include <signal.h>
 #include <fcntl.h>
 #include <cjson/cJSON.h>
@@ -38,6 +39,45 @@
 // Global MCP state
 static int mcp_initialized = 0;
 static int mcp_enabled = 0;
+
+/*
+ * Create directory recursively (like mkdir -p)
+ */
+#ifdef TEST_BUILD
+int mcp_mkdir_p(const char *path) {
+#else
+static int mkdir_p(const char *path) {
+#endif
+    char tmp[512];
+    char *p = NULL;
+    size_t len;
+
+    snprintf(tmp, sizeof(tmp), "%s", path);
+    len = strlen(tmp);
+
+    // Remove trailing slash
+    if (tmp[len - 1] == '/') {
+        tmp[len - 1] = '\0';
+    }
+
+    // Create directories recursively
+    for (p = tmp + 1; *p; p++) {
+        if (*p == '/') {
+            *p = '\0';
+            if (mkdir(tmp, 0755) != 0 && errno != EEXIST) {
+                return -1;
+            }
+            *p = '/';
+        }
+    }
+
+    // Create final directory
+    if (mkdir(tmp, 0755) != 0 && errno != EEXIST) {
+        return -1;
+    }
+
+    return 0;
+}
 
 /*
  * Initialize MCP subsystem
@@ -507,7 +547,13 @@ int mcp_connect_server(MCPServer *server) {
     snprintf(log_path, sizeof(log_path), ".claude-c/mcp/%s.log", server->name);
 
     // Create directory if it doesn't exist
-    system("mkdir -p .claude-c/mcp");
+#ifdef TEST_BUILD
+    if (mcp_mkdir_p(".claude-c/mcp") != 0) {
+#else
+    if (mkdir_p(".claude-c/mcp") != 0) {
+#endif
+        LOG_WARN("MCP: Failed to create directory .claude-c/mcp: %s", strerror(errno));
+    }
 
     server->stderr_log = fopen(log_path, "w");
     if (server->stderr_log) {

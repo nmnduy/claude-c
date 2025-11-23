@@ -248,4 +248,12 @@ void mcp_free_resource_list(MCPResourceList *list);
  */
 void mcp_free_resource_content(MCPResourceContent *content);
 
+#ifdef TEST_BUILD
+/*
+ * Test-only: Create directory recursively (like mkdir -p)
+ * Returns: 0 on success, -1 on error
+ */
+int mcp_mkdir_p(const char *path);
+#endif
+
 #endif // MCP_H

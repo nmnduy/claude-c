@@ -313,8 +313,50 @@ static void test_find_tool_server(void) {
     printf("PASSED\n");
 }
 
+// Test 10: Test mkdir_p utility function
+static void test_mkdir_p_func(void) {
+    printf("Test 10: Test mkdir_p utility... ");
+
+    // Clean up any existing test directories
+    system("rm -rf /tmp/mcp_test_dir");
+
+    // Test 1: Create a simple directory
+    int result = mcp_mkdir_p("/tmp/mcp_test_dir");
+    assert(result == 0);
+
+    struct stat st;
+    result = stat("/tmp/mcp_test_dir", &st);
+    assert(result == 0);
+    assert(S_ISDIR(st.st_mode));
+
+    // Test 2: Create nested directories
+    result = mcp_mkdir_p("/tmp/mcp_test_dir/nested/deep/path");
+    assert(result == 0);
+
+    result = stat("/tmp/mcp_test_dir/nested/deep/path", &st);
+    assert(result == 0);
+    assert(S_ISDIR(st.st_mode));
+
+    // Test 3: Directory already exists (should succeed)
+    result = mcp_mkdir_p("/tmp/mcp_test_dir/nested");
+    assert(result == 0);
+
+    // Test 4: Create directory with trailing slash
+    result = mcp_mkdir_p("/tmp/mcp_test_dir/trailing/");
+    assert(result == 0);
+
+    result = stat("/tmp/mcp_test_dir/trailing", &st);
+    assert(result == 0);
+    assert(S_ISDIR(st.st_mode));
+
+    // Clean up
+    system("rm -rf /tmp/mcp_test_dir");
+
+    printf("PASSED\\n");
+}
+
 int main(void) {
-    printf("=== MCP Integration Tests ===\n\n");
+    printf("=== MCP Integration Tests ===\\n\\n");
 
     test_mcp_init();
     test_load_valid_config();
@@ -325,7 +367,8 @@ int main(void) {
     test_mcp_enabled_state();
     test_mcp_get_status();
     test_find_tool_server();
+    test_mkdir_p_func();
 
-    printf("\n=== All MCP tests passed! ===\n");
+    printf("\\n=== All MCP tests passed! ===\\n");
     return 0;
 }
