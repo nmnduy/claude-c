@@ -318,7 +318,8 @@ static void test_mkdir_p_func(void) {
     printf("Test 10: Test mkdir_p utility... ");
 
     // Clean up any existing test directories
-    system("rm -rf /tmp/mcp_test_dir");
+    int cleanup_result = system("rm -rf /tmp/mcp_test_dir");
+    (void)cleanup_result; // Cleanup failure is not critical for test
 
     // Test 1: Create a simple directory
     int result = mcp_mkdir_p("/tmp/mcp_test_dir");
@@ -350,7 +351,8 @@ static void test_mkdir_p_func(void) {
     assert(S_ISDIR(st.st_mode));
 
     // Clean up
-    system("rm -rf /tmp/mcp_test_dir");
+    cleanup_result = system("rm -rf /tmp/mcp_test_dir");
+    (void)cleanup_result; // Cleanup failure is not critical for test
 
     printf("PASSED\\n");
 }
