@@ -828,7 +828,7 @@ static cJSON* tool_upload_image(cJSON *params, ConversationState *state) {
     cJSON_AddStringToObject(result, "message", "Image uploaded successfully");
     cJSON_AddStringToObject(result, "file_path", image_path);
     cJSON_AddStringToObject(result, "mime_type", mime_type);
-    cJSON_AddNumberToObject(result, "file_size_bytes", file_size);
+    cJSON_AddNumberToObject(result, "file_size_bytes", (double)file_size);
     cJSON_AddStringToObject(result, "base64_data", base64_data);
     cJSON_AddStringToObject(result, "content_type", "image"); // Special marker for image content
 
@@ -2835,7 +2835,7 @@ static cJSON* tool_call_mcp_tool(cJSON *params, ConversationState *state) {
                         cJSON_AddStringToObject(result, "file_path", filename);
                         cJSON_AddStringToObject(result, "mime_type", mime_type);
                         cJSON_AddStringToObject(result, "base64_data", encoded_data);
-                        cJSON_AddNumberToObject(result, "file_size_bytes", call_result->blob_size);
+                        cJSON_AddNumberToObject(result, "file_size_bytes", (double)call_result->blob_size);
                         free(encoded_data);
                         LOG_INFO("tool_call_mcp_tool: Saved image to '%s' (%zu bytes)", filename, call_result->blob_size);
                     } else {
@@ -2845,7 +2845,7 @@ static cJSON* tool_call_mcp_tool(cJSON *params, ConversationState *state) {
                         cJSON_AddStringToObject(result, "message", "Image saved to file");
                         cJSON_AddStringToObject(result, "file_path", filename);
                         cJSON_AddStringToObject(result, "file_type", mime_type);
-                        cJSON_AddNumberToObject(result, "file_size_bytes", call_result->blob_size);
+                        cJSON_AddNumberToObject(result, "file_size_bytes", (double)call_result->blob_size);
                         cJSON_AddStringToObject(result, "file_size_human", format_file_size(call_result->blob_size));
                     }
                 } else {
@@ -2854,7 +2854,7 @@ static cJSON* tool_call_mcp_tool(cJSON *params, ConversationState *state) {
                     cJSON_AddStringToObject(result, "message", "Binary content saved to file");
                     cJSON_AddStringToObject(result, "file_path", filename);
                     cJSON_AddStringToObject(result, "file_type", mime_type);
-                    cJSON_AddNumberToObject(result, "file_size_bytes", call_result->blob_size);
+                    cJSON_AddNumberToObject(result, "file_size_bytes", (double)call_result->blob_size);
                     cJSON_AddStringToObject(result, "file_size_human", format_file_size(call_result->blob_size));
                     LOG_INFO("tool_call_mcp_tool: Saved binary content to '%s' (%zu bytes)", filename, call_result->blob_size);
                 }
@@ -3002,7 +3002,7 @@ static cJSON* execute_tool(const char *tool_name, cJSON *input, ConversationStat
                                         cJSON_AddStringToObject(result, "file_path", filename);
                                         cJSON_AddStringToObject(result, "mime_type", mime_type);
                                         cJSON_AddStringToObject(result, "base64_data", encoded_data);
-                                        cJSON_AddNumberToObject(result, "file_size_bytes", mcp_result->blob_size);
+                                        cJSON_AddNumberToObject(result, "file_size_bytes", (double)mcp_result->blob_size);
                                         free(encoded_data);
                                         LOG_INFO("execute_tool: Saved image to '%s' (%zu bytes)", filename, mcp_result->blob_size);
                                     } else {
@@ -3012,7 +3012,7 @@ static cJSON* execute_tool(const char *tool_name, cJSON *input, ConversationStat
                                         cJSON_AddStringToObject(result, "message", "Image saved to file");
                                         cJSON_AddStringToObject(result, "file_path", filename);
                                         cJSON_AddStringToObject(result, "file_type", mime_type);
-                                        cJSON_AddNumberToObject(result, "file_size_bytes", mcp_result->blob_size);
+                                        cJSON_AddNumberToObject(result, "file_size_bytes", (double)mcp_result->blob_size);
                                         cJSON_AddStringToObject(result, "file_size_human", format_file_size(mcp_result->blob_size));
                                     }
                                 } else {
@@ -3021,7 +3021,7 @@ static cJSON* execute_tool(const char *tool_name, cJSON *input, ConversationStat
                                     cJSON_AddStringToObject(result, "message", "Binary content saved to file");
                                     cJSON_AddStringToObject(result, "file_path", filename);
                                     cJSON_AddStringToObject(result, "file_type", mime_type);
-                                    cJSON_AddNumberToObject(result, "file_size_bytes", mcp_result->blob_size);
+                                    cJSON_AddNumberToObject(result, "file_size_bytes", (double)mcp_result->blob_size);
                                     cJSON_AddStringToObject(result, "file_size_human", format_file_size(mcp_result->blob_size));
                                     LOG_INFO("execute_tool: Saved binary content to '%s' (%zu bytes)", filename, mcp_result->blob_size);
                                 }
