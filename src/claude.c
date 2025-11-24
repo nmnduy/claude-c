@@ -5237,7 +5237,6 @@ typedef struct {
     AIInstructionQueue *instruction_queue;
     TUIMessageQueue *tui_queue;
     int instruction_queue_capacity;
-    int exit_confirmation_pending;  // Track if user needs to confirm exit
 } InteractiveContext;
 
 // Interrupt callback invoked by the TUI event loop when the user presses Ctrl+C in INSERT mode
@@ -5260,37 +5259,12 @@ static int interrupt_callback(void *user_data) {
         LOG_INFO("User requested interrupt (Ctrl+C pressed) - canceling ongoing operations");
         state->interrupt_requested = 1;
         ui_set_status(NULL, queue, "Interrupt requested - canceling operations...");
-        // Clear any pending exit confirmation since we're interrupting work
-        ctx->exit_confirmation_pending = 0;
         return 0;  // Continue running (don't exit)
     } else {
-        // Nothing is running - prompt for exit confirmation
-        if (ctx->exit_confirmation_pending) {
-            // User pressed Ctrl+C twice - exit confirmed
-            LOG_INFO("User confirmed exit (Ctrl+C pressed twice)");
-            ui_set_status(NULL, queue, "Exiting...");
-            return 1;  // Exit the event loop
-        } else {
-            // First Ctrl+C - ask for confirmation
-            LOG_INFO("User pressed Ctrl+C with no work in progress - requesting confirmation");
-            ctx->exit_confirmation_pending = 1;
-            ui_set_status(NULL, queue, "Press Ctrl+C again to exit, or continue typing to cancel");
-            return 0;  // Continue running
-        }
-    }
-}
-
-// Keypress callback invoked on any keypress (before processing)
-// Used to reset exit confirmation state when user starts typing
-static void keypress_callback(void *user_data) {
-    InteractiveContext *ctx = (InteractiveContext *)user_data;
-    if (ctx && ctx->exit_confirmation_pending) {
-        // User typed something - cancel exit confirmation
-        ctx->exit_confirmation_pending = 0;
-        // Clear the status message (it will be updated by other events)
-        if (ctx->tui_queue) {
-            ui_set_status(NULL, ctx->tui_queue, "");
-        }
+        // Nothing is running - exit immediately
+        LOG_INFO("User pressed Ctrl+C with no work in progress - exiting");
+        ui_set_status(NULL, queue, "Exiting...");
+        return 1;  // Exit the event loop
     }
 }
 
@@ -5310,9 +5284,8 @@ static int submit_input_callback(const char *input, void *user_data) {
     AIWorkerContext *worker = ctx->worker;
     TUIMessageQueue *queue = ctx->tui_queue;
 
-    // Reset interrupt flag and exit confirmation when new input is submitted
+    // Reset interrupt flag when new input is submitted
     state->interrupt_requested = 0;
-    ctx->exit_confirmation_pending = 0;
 
     char *input_copy = strdup(input);
     if (!input_copy) {
@@ -5691,11 +5664,10 @@ static void interactive_mode(ConversationState *state) {
         .instruction_queue = instruction_queue_initialized ? &instruction_queue : NULL,
         .tui_queue = tui_queue_initialized ? &tui_queue : NULL,
         .instruction_queue_capacity = instruction_queue_initialized ? (int)AI_QUEUE_CAPACITY : 0,
-        .exit_confirmation_pending = 0,
     };
 
     void *event_loop_queue = tui_queue_initialized ? (void *)&tui_queue : NULL;
-    tui_event_loop(&tui, prompt, submit_input_callback, interrupt_callback, keypress_callback, &ctx, event_loop_queue);
+    tui_event_loop(&tui, prompt, submit_input_callback, interrupt_callback, NULL, &ctx, event_loop_queue);
 
     if (worker_started) {
         ai_worker_stop(&worker_ctx);
