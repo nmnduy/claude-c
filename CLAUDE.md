@@ -235,22 +235,4 @@ Verify: `make check-deps`
 
 Most documentation is in `docs/`
 
-Do not write documentation unless specified otherwise.
-
-## Prompt Caching
-
-**Implementation**: Lines ~1241-1400 in `src/claude.c`
-**Status**: Enabled by default (matches TypeScript CLI)
-
-**Cache breakpoints:**
-- System prompt (environment context)
-- Tool definitions (all 6 tools)
-- Last 3 conversation turns
-
-**Performance:**
-- Reduced latency (no reprocessing)
-- 10x cost reduction: $0.30/MTok reads vs $3/MTok regular
-- 5-minute TTL across conversation
-- Typically 5-10KB cached per conversation
-
-**Control**: `DISABLE_PROMPT_CACHING=1` to disable
+Do not write documentation or markdown files unless explicitly instructed to.
