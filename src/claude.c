@@ -44,11 +44,11 @@
 #pragma GCC diagnostic ignored "-Wunused-function"
 // Test build: stub out persistence (logger is linked via LOGGER_OBJ)
 // Stub persistence types and functions
-struct PersistenceDB { int dummy; };
-static struct PersistenceDB* persistence_init(const char *path) { (void)path; return NULL; }
-static void persistence_close(struct PersistenceDB *db) { (void)db; }
+typedef struct PersistenceDB { int dummy; } PersistenceDB;
+static PersistenceDB* persistence_init(const char *path) { (void)path; return NULL; }
+static void persistence_close(PersistenceDB *db) { (void)db; }
 static void persistence_log_api_call(
-    struct PersistenceDB *db,
+    PersistenceDB *db,
     const char *session_id,
     const char *url,
     const char *request,
@@ -5743,6 +5743,7 @@ static int get_env_int_retry(const char *name, int default_value) {
     return (int)result;
 }
 
+#ifndef TEST_BUILD
 // Dump conversation from database by session ID
 static int dump_conversation_from_db(const char *session_id) {
     PersistenceDB *db = persistence_init(NULL);
@@ -5934,6 +5935,7 @@ static int dump_conversation_from_db(const char *session_id) {
     persistence_close(db);
     return 0;
 }
+#endif // TEST_BUILD
 
 // Format: sess_<timestamp>_<random>
 // Returns: Newly allocated string (caller must free)
@@ -5972,11 +5974,12 @@ int main(int argc, char *argv[]) {
         printf("Claude Code - Pure C Implementation (OpenAI Compatible)\n");
         printf("Version: %s\n\n", CLAUDE_C_VERSION_FULL);
         printf("Usage:\n");
-        printf("  %s                        Start interactive mode\n", argv[0]);
-        printf("  %s \"PROMPT\"                Execute single command and exit\n", argv[0]);
-        printf("  %s -d, --dump-conversation Dump conversation to console and exit\n", argv[0]);
-        printf("  %s -h, --help              Show this help message\n", argv[0]);
-        printf("  %s --version               Show version information\n\n", argv[0]);
+        printf("  %s                               Start interactive mode\n", argv[0]);
+        printf("  %s \"PROMPT\"                       Execute single command and exit\n", argv[0]);
+        printf("  %s -d, --dump-conversation [ID]  Dump conversation to console and exit\n", argv[0]);
+        printf("                                      (defaults to most recent session if no ID given)\n");
+        printf("  %s -h, --help                     Show this help message\n", argv[0]);
+        printf("  %s --version                      Show version information\n\n", argv[0]);
         printf("Environment Variables:\n");
         printf("  API Configuration:\n");
         printf("    OPENAI_API_KEY       Required: Your OpenAI API key (not needed for Bedrock)\n");
@@ -6011,10 +6014,13 @@ int main(int argc, char *argv[]) {
     }
 
     // Check for dump conversation flag
-    if (argc == 2 && (strcmp(argv[1], "-d") == 0 || strcmp(argv[1], "--dump-conversation") == 0)) {
+#ifndef TEST_BUILD
+    if ((argc == 2 || argc == 3) && (strcmp(argv[1], "-d") == 0 || strcmp(argv[1], "--dump-conversation") == 0)) {
         // Dump conversation mode: query database and display
-        return dump_conversation_from_db(NULL);  // NULL = most recent session
+        const char *session_id = (argc == 3) ? argv[2] : NULL;  // NULL = most recent session
+        return dump_conversation_from_db(session_id);
     }
+#endif
 
     // Check for single command mode: ./claude-c "prompt"
     int is_single_command_mode = 0;
