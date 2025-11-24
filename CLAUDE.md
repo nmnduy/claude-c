@@ -21,7 +21,7 @@ Project instructions for Claude Code when working with this codebase.
 **Tools**: Built-in tools in `src/claude.c`, MCP support in `src/mcp.h`, `src/mcp.c`
 **MCP integration**: `docs/mcp.md` (external tool servers)
 **TODO system**: `src/todo.h`, `src/todo.c`
-**TUI & Vim Modes**: `src/tui.h`, `src/tui.c`, `docs/normal-mode.md`, `docs/visual-mode.md`, `docs/command-mode.md`, `docs/vim-modes-quick-reference.md`
+**TUI & Normal Mode**: `src/tui.h`, `src/tui.c`, `docs/normal-mode.md`
 **Color themes**: `src/colorscheme.h`, `src/builtin_themes.h`, `src/builtin_themes.c`
 **Token usage tracking**: `docs/token-usage.md`, `src/persistence.c`
 **Tests**: `tests/test_*.c`
