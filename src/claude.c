@@ -1588,16 +1588,48 @@ STATIC cJSON* tool_write(cJSON *params, ConversationState *state) {
 
     int ret = write_file(resolved_path, content_json->valuestring);
 
-    // Show diff if write was successful and file existed before
+    // Show diff if write was successful
     if (ret == 0) {
         if (original_content) {
             show_diff(resolved_path, original_content);
         } else {
-            // New file creation
+            // New file creation - show content as diff with all lines added
             char header[PATH_MAX + 64];
             snprintf(header, sizeof(header), "--- Created new file: %s ---", resolved_path);
             tool_emit_line(" ", header);
-            tool_emit_line(" ", "New file written - no previous content to compare");
+
+            // Get color for added lines
+            char add_color[32];
+            const char *add_color_str;
+            if (get_colorscheme_color(COLORSCHEME_DIFF_ADD, add_color, sizeof(add_color)) == 0) {
+                add_color_str = add_color;
+            } else {
+                add_color_str = ANSI_FALLBACK_DIFF_ADD;
+            }
+
+            // Show each line of the new file as an added line
+            const char *line_start = content_json->valuestring;
+            const char *line_end;
+            char line_buf[1024];
+
+            while (*line_start) {
+                line_end = strchr(line_start, '\n');
+                if (line_end) {
+                    ptrdiff_t diff = line_end - line_start;
+                    size_t line_len = (diff > 0) ? (size_t)diff : 0;
+                    if (line_len >= sizeof(line_buf) - 2) {
+                        line_len = sizeof(line_buf) - 3;  // Leave room for +, newline, and null
+                    }
+                    snprintf(line_buf, sizeof(line_buf), "+%.*s\n", (int)line_len, line_start);
+                    emit_diff_line(line_buf, add_color_str, add_color_str);
+                    line_start = line_end + 1;
+                } else {
+                    // Last line without newline
+                    snprintf(line_buf, sizeof(line_buf), "+%s\n", line_start);
+                    emit_diff_line(line_buf, add_color_str, add_color_str);
+                    break;
+                }
+            }
         }
     }
 
