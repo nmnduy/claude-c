@@ -2047,32 +2047,21 @@ int tui_process_input_char(TUIState *tui, int ch, const char *prompt) {
     } else if (ch == 5) {  // Ctrl+E: end of line
         input->cursor = input->length;
         input_redraw(tui, prompt);
-    } else if (ch == 4) {  // Ctrl+D: Scroll down half page
-        int viewport_h = tui->wm.conv_viewport_height;
-        if (viewport_h <= 0) {
-            int pad_h, pad_w;
-            getmaxyx(tui->wm.conv_pad, pad_h, pad_w);
-            viewport_h = pad_h > 0 ? pad_h : 1;
-        }
-        int half_page = viewport_h / 2;
-        if (half_page < 1) half_page = 1;
-        tui_scroll_conversation(tui, half_page);
-        input_redraw(tui, prompt);
+    } else if (ch == 4) {  // Ctrl+D: EOF
+        return -1;
     } else if (ch == 11) {  // Ctrl+K: kill to end of line
         input->buffer[input->cursor] = '\0';
         input->length = input->cursor;
         input_redraw(tui, prompt);
-    } else if (ch == 21) {  // Ctrl+U: Scroll up half page
-        int viewport_h = tui->wm.conv_viewport_height;
-        if (viewport_h <= 0) {
-            int pad_h, pad_w;
-            getmaxyx(tui->wm.conv_pad, pad_h, pad_w);
-            viewport_h = pad_h > 0 ? pad_h : 1;
+    } else if (ch == 21) {  // Ctrl+U: kill to beginning of line
+        if (input->cursor > 0) {
+            memmove(input->buffer,
+                    &input->buffer[input->cursor],
+                    (size_t)(input->length - input->cursor + 1));
+            input->length -= input->cursor;
+            input->cursor = 0;
+            input_redraw(tui, prompt);
         }
-        int half_page = viewport_h / 2;
-        if (half_page < 1) half_page = 1;
-        tui_scroll_conversation(tui, -half_page);
-        input_redraw(tui, prompt);
     } else if (ch == 12) {  // Ctrl+L: clear input
         input->buffer[0] = '\0';
         input->length = 0;
