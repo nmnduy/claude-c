@@ -852,6 +852,133 @@ char* bedrock_build_endpoint(const char *region, const char *model_id) {
     return endpoint;
 }
 
+/**
+ * Helper: Convert OpenAI image_url format to Anthropic image format
+ *
+ * OpenAI format:
+ * {
+ *   "type": "image_url",
+ *   "image_url": {
+ *     "url": "data:image/jpeg;base64,<base64_data>"
+ *   }
+ * }
+ *
+ * Anthropic format:
+ * {
+ *   "type": "image",
+ *   "source": {
+ *     "type": "base64",
+ *     "media_type": "image/jpeg",
+ *     "data": "<base64_data>"
+ *   }
+ * }
+ *
+ * Returns a new cJSON object in Anthropic format, or NULL on error.
+ */
+static cJSON* convert_image_url_to_anthropic(cJSON *image_url_block) {
+    if (!image_url_block) return NULL;
+
+    cJSON *type = cJSON_GetObjectItem(image_url_block, "type");
+    if (!type || !cJSON_IsString(type) || strcmp(type->valuestring, "image_url") != 0) {
+        return NULL;  // Not an image_url block
+    }
+
+    cJSON *image_url = cJSON_GetObjectItem(image_url_block, "image_url");
+    if (!image_url) return NULL;
+
+    cJSON *url = cJSON_GetObjectItem(image_url, "url");
+    if (!url || !cJSON_IsString(url)) return NULL;
+
+    const char *url_str = url->valuestring;
+
+    // Parse data URL: "data:image/jpeg;base64,<base64_data>"
+    if (strncmp(url_str, "data:", 5) != 0) {
+        LOG_WARN("Image URL is not a data URL, skipping conversion: %s", url_str);
+        return NULL;
+    }
+
+    // Find the media type
+    const char *media_start = url_str + 5;  // Skip "data:"
+    const char *semicolon = strchr(media_start, ';');
+    if (!semicolon) {
+        LOG_WARN("Invalid data URL format (no semicolon): %s", url_str);
+        return NULL;
+    }
+
+    // Extract media type (e.g., "image/jpeg")
+    size_t media_len = (size_t)(semicolon - media_start);
+    char *media_type = malloc(media_len + 1);
+    if (!media_type) return NULL;
+    strncpy(media_type, media_start, media_len);
+    media_type[media_len] = '\0';
+
+    // Find base64 data (after "base64,")
+    const char *base64_marker = strstr(semicolon, "base64,");
+    if (!base64_marker) {
+        LOG_WARN("Invalid data URL format (no base64 marker): %s", url_str);
+        free(media_type);
+        return NULL;
+    }
+
+    const char *base64_data = base64_marker + 7;  // Skip "base64,"
+
+    LOG_DEBUG("Converting image_url to Anthropic image format (media_type: %s)", media_type);
+
+    // Create Anthropic format
+    cJSON *anthropic_image = cJSON_CreateObject();
+    cJSON_AddStringToObject(anthropic_image, "type", "image");
+
+    cJSON *source = cJSON_CreateObject();
+    cJSON_AddStringToObject(source, "type", "base64");
+    cJSON_AddStringToObject(source, "media_type", media_type);
+    cJSON_AddStringToObject(source, "data", base64_data);
+
+    cJSON_AddItemToObject(anthropic_image, "source", source);
+
+    free(media_type);
+
+    return anthropic_image;
+}
+
+/**
+ * Helper: Convert a content array from OpenAI format to Anthropic format
+ * Handles image_url -> image conversion
+ *
+ * Returns a new cJSON array with converted content blocks.
+ */
+static cJSON* convert_content_array_to_anthropic(cJSON *openai_content) {
+    if (!openai_content || !cJSON_IsArray(openai_content)) {
+        return NULL;
+    }
+
+    cJSON *anthropic_content = cJSON_CreateArray();
+
+    cJSON *block = NULL;
+    cJSON_ArrayForEach(block, openai_content) {
+        cJSON *type = cJSON_GetObjectItem(block, "type");
+        if (!type || !cJSON_IsString(type)) {
+            // Unknown block type, copy as-is
+            cJSON_AddItemToArray(anthropic_content, cJSON_Duplicate(block, 1));
+            continue;
+        }
+
+        if (strcmp(type->valuestring, "image_url") == 0) {
+            // Convert image_url to Anthropic image format
+            cJSON *anthropic_image = convert_image_url_to_anthropic(block);
+            if (anthropic_image) {
+                cJSON_AddItemToArray(anthropic_content, anthropic_image);
+            } else {
+                LOG_WARN("Failed to convert image_url block, skipping");
+            }
+        } else {
+            // Other block types (text, etc.) - copy as-is
+            cJSON_AddItemToArray(anthropic_content, cJSON_Duplicate(block, 1));
+        }
+    }
+
+    return anthropic_content;
+}
+
 char* bedrock_convert_request(const char *openai_request) {
     // AWS Bedrock uses Anthropic's native format, not OpenAI format
     // We need to convert from OpenAI to Anthropic format
@@ -991,7 +1118,18 @@ char* bedrock_convert_request(const char *openai_request) {
                 if (cJSON_IsString(content) && strlen(content->valuestring) > 0) {
                     cJSON_AddStringToObject(anthropic_msg, "content", content->valuestring);
                 } else if (cJSON_IsArray(content) && cJSON_GetArraySize(content) > 0) {
-                    cJSON_AddItemToObject(anthropic_msg, "content", cJSON_Duplicate(content, 1));
+                    // Convert content array (handles image_url -> image conversion)
+                    cJSON *anthropic_content = convert_content_array_to_anthropic(content);
+                    if (anthropic_content && cJSON_GetArraySize(anthropic_content) > 0) {
+                        cJSON_AddItemToObject(anthropic_msg, "content", anthropic_content);
+                    } else {
+                        // Conversion failed or empty - skip this message
+                        if (anthropic_content) cJSON_Delete(anthropic_content);
+                        cJSON_Delete(anthropic_msg);
+                        anthropic_msg = NULL;
+                        LOG_WARN("Skipping user message with invalid content array");
+                        continue;
+                    }
                 } else {
                     // No valid content - skip this message
                     cJSON_Delete(anthropic_msg);
