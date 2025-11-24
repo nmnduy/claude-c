@@ -49,6 +49,111 @@ static int g_paste_timeout_ms = 400;    // idle time to finalize paste
 // Global flag to detect terminal resize
 static volatile sig_atomic_t g_resize_flag = 0;
 
+// ============================================================================
+// Clipboard Utilities (for yank operations)
+// ============================================================================
+
+// Copy text to system clipboard
+// Returns: 0 on success, -1 on failure
+static int copy_to_clipboard(const char *text) {
+    if (!text || text[0] == '\0') {
+        return -1;
+    }
+
+    FILE *clipboard = NULL;
+
+#ifdef __APPLE__
+    // macOS: use pbcopy
+    clipboard = popen("pbcopy", "w");
+#elif defined(__linux__) || defined(__unix__)
+    // Linux/Unix: try xclip first, then xsel
+    clipboard = popen("xclip -selection clipboard 2>/dev/null || xsel --clipboard --input 2>/dev/null", "w");
+#else
+    // Unsupported platform
+    LOG_WARN("[TUI] Clipboard not supported on this platform");
+    return -1;
+#endif
+
+    if (!clipboard) {
+        LOG_ERROR("[TUI] Failed to open clipboard command");
+        return -1;
+    }
+
+    size_t len = strlen(text);
+    size_t written = fwrite(text, 1, len, clipboard);
+    int status = pclose(clipboard);
+
+    if (written != len || status != 0) {
+        LOG_ERROR("[TUI] Failed to write to clipboard");
+        return -1;
+    }
+
+    return 0;
+}
+
+// Extract text from conversation entries (line range)
+// start_line and end_line are 0-indexed, inclusive
+// Returns: Allocated string (caller must free), or NULL on error
+static char* extract_conversation_text(TUIState *tui, int start_line, int end_line) {
+    if (!tui || !tui->entries || start_line < 0 || end_line < 0) {
+        return NULL;
+    }
+
+    if (start_line > end_line) {
+        // Swap if backwards
+        int tmp = start_line;
+        start_line = end_line;
+        end_line = tmp;
+    }
+
+    // Clamp to valid range
+    if (start_line >= tui->entries_count) {
+        return NULL;
+    }
+    if (end_line >= tui->entries_count) {
+        end_line = tui->entries_count - 1;
+    }
+
+    // Calculate total size needed
+    size_t total_size = 0;
+    for (int i = start_line; i <= end_line; i++) {
+        if (tui->entries[i].prefix) {
+            total_size += strlen(tui->entries[i].prefix);
+        }
+        if (tui->entries[i].text) {
+            total_size += strlen(tui->entries[i].text);
+        }
+        total_size += 1; // newline
+    }
+    total_size += 1; // null terminator
+
+    // Allocate buffer
+    char *result = malloc(total_size);
+    if (!result) {
+        LOG_ERROR("[TUI] Failed to allocate buffer for text extraction");
+        return NULL;
+    }
+
+    // Copy text
+    char *ptr = result;
+    for (int i = start_line; i <= end_line; i++) {
+        if (tui->entries[i].prefix) {
+            size_t prefix_len = strlen(tui->entries[i].prefix);
+            memcpy(ptr, tui->entries[i].prefix, prefix_len);
+            ptr += prefix_len;
+        }
+        if (tui->entries[i].text) {
+            size_t text_len = strlen(tui->entries[i].text);
+            memcpy(ptr, tui->entries[i].text, text_len);
+            ptr += text_len;
+        }
+        *ptr++ = '\n';
+    }
+    *ptr = '\0';
+
+    return result;
+}
+
 // Ncurses color pair definitions (match TUIColorPair enum)
 #define NCURSES_PAIR_FOREGROUND 1
 #define NCURSES_PAIR_USER 2
@@ -121,11 +226,9 @@ static void render_status_window(TUIState *tui) {
 
     int col = 0;
 
-    // MODE INDICATOR - Commented out (hiding input box in normal mode instead)
-    // If we want to restore mode indicator, uncomment this section:
-    /*
-    const char *mode_str;
-    int mode_color;
+    // MODE INDICATOR
+    const char *mode_str = NULL;
+    int mode_color = NCURSES_PAIR_FOREGROUND;
     switch (tui->mode) {
         case TUI_MODE_NORMAL:
             mode_str = "-- NORMAL --";
@@ -139,20 +242,21 @@ static void render_status_window(TUIState *tui) {
             mode_str = "-- COMMAND --";
             mode_color = NCURSES_PAIR_STATUS;
             break;
+        case TUI_MODE_VISUAL:
+            mode_str = "-- VISUAL --";
+            mode_color = NCURSES_PAIR_TODO_IN_PROGRESS;  // Yellow for visual
+            break;
         default:
             mode_str = "-- UNKNOWN --";
             mode_color = NCURSES_PAIR_ERROR;
             break;
     }
-    int mode_len = (int)strlen(mode_str);
-    int mode_col = width - mode_len - 1;
-    if (mode_col < 0) mode_col = 0;
-    */
+    int mode_len = mode_str ? (int)strlen(mode_str) : 0;
 
-    // Render token usage on the right side (only in NORMAL mode, if any tokens used)
+    // Render token usage on the right side (only in NORMAL/VISUAL mode, if any tokens used)
     char token_str[64] = {0};
     int token_str_len = 0;
-    if (tui->mode == TUI_MODE_NORMAL &&
+    if ((tui->mode == TUI_MODE_NORMAL || tui->mode == TUI_MODE_VISUAL) &&
         (tui->total_prompt_tokens > 0 || tui->total_completion_tokens > 0)) {
         int total_tokens = tui->total_prompt_tokens + tui->total_completion_tokens;
         if (tui->total_cached_tokens > 0) {
@@ -164,8 +268,8 @@ static void render_status_window(TUIState *tui) {
         token_str_len = (int)strlen(token_str);
     }
 
-    // Calculate how much space we have for the status message
-    int max_status_len = width - token_str_len - 1;
+    // Calculate how much space we have for the status message and mode indicator
+    int max_status_len = width - token_str_len - mode_len - 2;
 
     // Render status message on the left (if visible)
     if (tui->status_visible && tui->status_message && tui->status_message[0] != '\0') {
@@ -210,7 +314,27 @@ static void render_status_window(TUIState *tui) {
         }
     }
 
-    // Render token usage on the right
+    // MODE INDICATOR RENDERING (on the right, before token usage)
+    if (mode_str && mode_len > 0) {
+        int mode_col = width - token_str_len - mode_len - 1;
+        if (mode_col < 0) mode_col = 0;
+
+        if (mode_col < width) {
+            if (has_colors()) {
+                wattron(tui->wm.status_win, COLOR_PAIR(mode_color) | A_BOLD);
+            } else {
+                wattron(tui->wm.status_win, A_BOLD);
+            }
+            mvwaddnstr(tui->wm.status_win, 0, mode_col, mode_str, width - mode_col - token_str_len);
+            if (has_colors()) {
+                wattroff(tui->wm.status_win, COLOR_PAIR(mode_color) | A_BOLD);
+            } else {
+                wattroff(tui->wm.status_win, A_BOLD);
+            }
+        }
+    }
+
+    // Render token usage on the right (rightmost)
     if (token_str_len > 0 && token_str_len < width) {
         int token_col = width - token_str_len;
         if (token_col < 0) token_col = 0;
@@ -223,23 +347,6 @@ static void render_status_window(TUIState *tui) {
             wattroff(tui->wm.status_win, COLOR_PAIR(NCURSES_PAIR_ASSISTANT));
         }
     }
-
-    // MODE INDICATOR RENDERING - Commented out (hiding input box in normal mode instead)
-    /*
-    if (mode_col < width) {
-        if (has_colors()) {
-            wattron(tui->status_win, COLOR_PAIR(mode_color) | A_BOLD);
-        } else {
-            wattron(tui->status_win, A_BOLD);
-        }
-        mvwaddnstr(tui->status_win, 0, mode_col, mode_str, width - mode_col);
-        if (has_colors()) {
-            wattroff(tui->status_win, COLOR_PAIR(mode_color) | A_BOLD);
-        } else {
-            wattroff(tui->status_win, A_BOLD);
-        }
-    }
-    */
 
     wrefresh(tui->wm.status_win);
 }
@@ -873,8 +980,8 @@ static void input_redraw(TUIState *tui, const char *prompt) {
         return;
     }
 
-    // Hide input window in NORMAL mode
-    if (tui->mode == TUI_MODE_NORMAL) {
+    // Hide input window in NORMAL and VISUAL modes
+    if (tui->mode == TUI_MODE_NORMAL || tui->mode == TUI_MODE_VISUAL) {
         werase(win);
         wrefresh(win);
         return;
@@ -1141,6 +1248,10 @@ int tui_init(TUIState *tui) {
     tui->command_buffer = NULL;
     tui->command_buffer_len = 0;
     tui->command_buffer_capacity = 0;
+
+    // Initialize visual mode selection
+    tui->visual_start_line = -1;
+    tui->visual_end_line = -1;
 
     // Initialize input buffer
     if (input_init(tui) != 0) {
@@ -1882,6 +1993,17 @@ static int handle_normal_mode_input(TUIState *tui, int ch, const char *prompt) {
             input_redraw(tui, prompt);
             break;
 
+        case 'v':  // Enter visual mode
+            tui->mode = TUI_MODE_VISUAL;
+            // Initialize selection at current scroll position (top visible line)
+            tui->visual_start_line = tui->wm.conv_scroll_offset;
+            tui->visual_end_line = tui->wm.conv_scroll_offset;
+            if (tui->wm.status_height > 0) {
+                render_status_window(tui);
+            }
+            input_redraw(tui, prompt);
+            break;
+
         case 'q':  // Quit (when input is empty)
             if (tui->input_buffer && tui->input_buffer->length == 0) {
                 return -1;  // Signal quit
@@ -1896,6 +2018,143 @@ static int handle_normal_mode_input(TUIState *tui, int ch, const char *prompt) {
             break;
         default:
             /* Unhandled key in normal mode */
+            break;
+    }
+
+    return 0;
+}
+
+// Handle visual mode input
+// Returns: 0 to continue, -1 on error
+static int handle_visual_mode_input(TUIState *tui, int ch, const char *prompt) {
+    if (!tui || !tui->wm.conv_pad) {
+        return 0;
+    }
+
+    // Calculate scrolling parameters
+    int viewport_h = tui->wm.conv_viewport_height;
+    if (viewport_h <= 0) {
+        int pad_h, pad_w;
+        getmaxyx(tui->wm.conv_pad, pad_h, pad_w);
+        viewport_h = pad_h > 0 ? pad_h : 1;
+    }
+
+    int half_page = viewport_h / 2;
+    if (half_page < 1) half_page = 1;
+
+    switch (ch) {
+        case 27:  // ESC - exit visual mode
+        case 'v': // v again - exit visual mode
+            tui->mode = TUI_MODE_NORMAL;
+            tui->visual_start_line = -1;
+            tui->visual_end_line = -1;
+            if (tui->wm.status_height > 0) {
+                render_status_window(tui);
+            }
+            input_redraw(tui, prompt);
+            break;
+
+        case 'y':  // Yank (copy) selected text
+            if (tui->visual_start_line >= 0 && tui->visual_end_line >= 0) {
+                char *text = extract_conversation_text(tui, tui->visual_start_line, tui->visual_end_line);
+                if (text) {
+                    if (copy_to_clipboard(text) == 0) {
+                        // Calculate number of lines yanked
+                        int start = tui->visual_start_line;
+                        int end = tui->visual_end_line;
+                        if (start > end) {
+                            int tmp = start;
+                            start = end;
+                            end = tmp;
+                        }
+                        int lines_yanked = end - start + 1;
+
+                        // Show feedback
+                        char msg[64];
+                        snprintf(msg, sizeof(msg), "Yanked %d line%s",
+                                lines_yanked, lines_yanked == 1 ? "" : "s");
+                        tui_add_conversation_line(tui, "[System]", msg, COLOR_PAIR_STATUS);
+                    } else {
+                        tui_add_conversation_line(tui, "[Error]",
+                                "Failed to copy to clipboard", COLOR_PAIR_ERROR);
+                    }
+                    free(text);
+                } else {
+                    tui_add_conversation_line(tui, "[Error]",
+                            "Failed to extract text", COLOR_PAIR_ERROR);
+                }
+            }
+            // Exit visual mode after yank
+            tui->mode = TUI_MODE_NORMAL;
+            tui->visual_start_line = -1;
+            tui->visual_end_line = -1;
+            if (tui->wm.status_height > 0) {
+                render_status_window(tui);
+            }
+            input_redraw(tui, prompt);
+            break;
+
+        case 'j':  // Extend selection down
+        case KEY_DOWN:
+            if (tui->visual_end_line < tui->entries_count - 1) {
+                tui->visual_end_line++;
+                // Scroll if needed to keep selection visible
+                tui_scroll_conversation(tui, 1);
+            }
+            input_redraw(tui, prompt);
+            break;
+
+        case 'k':  // Extend selection up
+        case KEY_UP:
+            if (tui->visual_end_line > 0) {
+                tui->visual_end_line--;
+                // Scroll if needed to keep selection visible
+                tui_scroll_conversation(tui, -1);
+            }
+            input_redraw(tui, prompt);
+            break;
+
+        case 4:  // Ctrl+D: Extend selection down half page
+            tui->visual_end_line += half_page;
+            if (tui->visual_end_line >= tui->entries_count) {
+                tui->visual_end_line = tui->entries_count - 1;
+            }
+            tui_scroll_conversation(tui, half_page);
+            input_redraw(tui, prompt);
+            break;
+
+        case 21:  // Ctrl+U: Extend selection up half page
+            tui->visual_end_line -= half_page;
+            if (tui->visual_end_line < 0) {
+                tui->visual_end_line = 0;
+            }
+            tui_scroll_conversation(tui, -half_page);
+            input_redraw(tui, prompt);
+            break;
+
+        case 'g':  // Go to top (extend selection)
+            tui->visual_end_line = 0;
+            window_manager_scroll_to_top(&tui->wm);
+            refresh_conversation_viewport(tui);
+            input_redraw(tui, prompt);
+            break;
+
+        case 'G':  // Go to bottom (extend selection)
+            tui->visual_end_line = tui->entries_count - 1;
+            window_manager_scroll_to_bottom(&tui->wm);
+            refresh_conversation_viewport(tui);
+            input_redraw(tui, prompt);
+            break;
+
+        case KEY_RESIZE:
+            tui_handle_resize(tui);
+            refresh_conversation_viewport(tui);
+            render_status_window(tui);
+            input_redraw(tui, prompt);
+            break;
+
+        default:
+            /* Unhandled key in visual mode */
             break;
     }
 
@@ -1976,6 +2235,16 @@ int tui_process_input_char(TUIState *tui, int ch, const char *prompt) {
         }
         // After handling normal mode input, always return
         // We don't want to process the mode-switching key as text
+        return 0;
+    }
+
+    // Handle visual mode separately
+    if (tui->mode == TUI_MODE_VISUAL) {
+        int result = handle_visual_mode_input(tui, ch, prompt);
+        if (result == -1) {
+            return -1;  // Quit signal
+        }
+        // Visual mode handles all input internally
         return 0;
     }
 
