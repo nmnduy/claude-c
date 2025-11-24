@@ -27,6 +27,7 @@
 #include <regex.h>
 #include <curl/curl.h>
 #include <cjson/cJSON.h>
+#include <sqlite3.h>
 #include <limits.h>
 #include <libgen.h>
 #include <dirent.h>
@@ -5710,6 +5711,198 @@ static int get_env_int_retry(const char *name, int default_value) {
     return (int)result;
 }
 
+// Dump conversation from database by session ID
+static int dump_conversation_from_db(const char *session_id) {
+    PersistenceDB *db = persistence_init(NULL);
+    if (!db) {
+        fprintf(stderr, "Error: Failed to open persistence database\n");
+        return 1;
+    }
+
+    // Query for all API calls in this session
+    const char *query =
+        "SELECT timestamp, request_json, response_json, model, status, error_message "
+        "FROM api_calls "
+        "WHERE session_id = ? "
+        "ORDER BY created_at ASC";
+
+    sqlite3_stmt *stmt = NULL;
+    int rc = sqlite3_prepare_v2(db->db, query, -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "Error: Failed to prepare query: %s\n", sqlite3_errmsg(db->db));
+        persistence_close(db);
+        return 1;
+    }
+
+    // If no session_id provided, get the most recent one
+    if (!session_id) {
+        const char *latest_query =
+            "SELECT session_id FROM api_calls "
+            "WHERE session_id IS NOT NULL "
+            "ORDER BY created_at DESC LIMIT 1";
+
+        sqlite3_stmt *latest_stmt = NULL;
+        rc = sqlite3_prepare_v2(db->db, latest_query, -1, &latest_stmt, NULL);
+        if (rc != SQLITE_OK) {
+            fprintf(stderr, "Error: Failed to get latest session: %s\n", sqlite3_errmsg(db->db));
+            sqlite3_finalize(stmt);
+            persistence_close(db);
+            return 1;
+        }
+
+        rc = sqlite3_step(latest_stmt);
+        if (rc == SQLITE_ROW) {
+            const unsigned char *sid = sqlite3_column_text(latest_stmt, 0);
+            if (sid) {
+                session_id = strdup((const char *)sid);
+            }
+        }
+        sqlite3_finalize(latest_stmt);
+
+        if (!session_id) {
+            fprintf(stderr, "Error: No sessions found in database\n");
+            sqlite3_finalize(stmt);
+            persistence_close(db);
+            return 1;
+        }
+    }
+
+    sqlite3_bind_text(stmt, 1, session_id, -1, SQLITE_TRANSIENT);
+
+    fprintf(stdout, "\n");
+    fprintf(stdout, "=================================================================\n");
+    fprintf(stdout, "                    CONVERSATION DUMP\n");
+    fprintf(stdout, "=================================================================\n");
+    fprintf(stdout, "Session ID: %s\n", session_id);
+    fprintf(stdout, "=================================================================\n\n");
+
+    int call_num = 0;
+    while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+        call_num++;
+
+        const char *timestamp = (const char *)sqlite3_column_text(stmt, 0);
+        const char *request_json = (const char *)sqlite3_column_text(stmt, 1);
+        const char *response_json = (const char *)sqlite3_column_text(stmt, 2);
+        const char *model = (const char *)sqlite3_column_text(stmt, 3);
+        const char *status = (const char *)sqlite3_column_text(stmt, 4);
+        const char *error_msg = (const char *)sqlite3_column_text(stmt, 5);
+
+        fprintf(stdout, "-----------------------------------------------------------------\n");
+        fprintf(stdout, "API Call #%d - %s\n", call_num, timestamp ? timestamp : "unknown");
+        fprintf(stdout, "Model: %s\n", model ? model : "unknown");
+        fprintf(stdout, "Status: %s\n", status ? status : "unknown");
+        fprintf(stdout, "-----------------------------------------------------------------\n\n");
+
+        // Parse and display request
+        if (request_json) {
+            cJSON *request = cJSON_Parse(request_json);
+            if (request) {
+                cJSON *messages = cJSON_GetObjectItem(request, "messages");
+                if (messages && cJSON_IsArray(messages)) {
+                    fprintf(stdout, "REQUEST MESSAGES:\n");
+                    int msg_count = cJSON_GetArraySize(messages);
+                    for (int i = 0; i < msg_count; i++) {
+                        cJSON *msg = cJSON_GetArrayItem(messages, i);
+                        cJSON *role = cJSON_GetObjectItem(msg, "role");
+                        cJSON *content = cJSON_GetObjectItem(msg, "content");
+
+                        if (role && cJSON_IsString(role)) {
+                            fprintf(stdout, "\n  [%s]\n", role->valuestring);
+                        }
+
+                        if (content) {
+                            if (cJSON_IsString(content)) {
+                                fprintf(stdout, "  %s\n", content->valuestring);
+                            } else if (cJSON_IsArray(content)) {
+                                int content_count = cJSON_GetArraySize(content);
+                                for (int j = 0; j < content_count; j++) {
+                                    cJSON *block = cJSON_GetArrayItem(content, j);
+                                    cJSON *type = cJSON_GetObjectItem(block, "type");
+
+                                    if (type && cJSON_IsString(type)) {
+                                        if (strcmp(type->valuestring, "text") == 0) {
+                                            cJSON *text = cJSON_GetObjectItem(block, "text");
+                                            if (text && cJSON_IsString(text)) {
+                                                fprintf(stdout, "  %s\n", text->valuestring);
+                                            }
+                                        } else if (strcmp(type->valuestring, "tool_use") == 0) {
+                                            cJSON *name = cJSON_GetObjectItem(block, "name");
+                                            cJSON *id = cJSON_GetObjectItem(block, "id");
+                                            fprintf(stdout, "  [TOOL_USE: %s", name && cJSON_IsString(name) ? name->valuestring : "unknown");
+                                            if (id && cJSON_IsString(id)) {
+                                                fprintf(stdout, " (id: %s)", id->valuestring);
+                                            }
+                                            fprintf(stdout, "]\n");
+                                        } else if (strcmp(type->valuestring, "tool_result") == 0) {
+                                            cJSON *tool_use_id = cJSON_GetObjectItem(block, "tool_use_id");
+                                            fprintf(stdout, "  [TOOL_RESULT");
+                                            if (tool_use_id && cJSON_IsString(tool_use_id)) {
+                                                fprintf(stdout, " for %s", tool_use_id->valuestring);
+                                            }
+                                            fprintf(stdout, "]\n");
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                cJSON_Delete(request);
+            }
+        }
+
+        // Parse and display response
+        fprintf(stdout, "\nRESPONSE:\n");
+        if (strcmp(status, "error") == 0 && error_msg) {
+            fprintf(stdout, "  [ERROR] %s\n", error_msg);
+        } else if (response_json) {
+            cJSON *response = cJSON_Parse(response_json);
+            if (response) {
+                cJSON *content = cJSON_GetObjectItem(response, "content");
+                if (content && cJSON_IsArray(content)) {
+                    int content_count = cJSON_GetArraySize(content);
+                    for (int i = 0; i < content_count; i++) {
+                        cJSON *block = cJSON_GetArrayItem(content, i);
+                        cJSON *type = cJSON_GetObjectItem(block, "type");
+
+                        if (type && cJSON_IsString(type)) {
+                            if (strcmp(type->valuestring, "text") == 0) {
+                                cJSON *text = cJSON_GetObjectItem(block, "text");
+                                if (text && cJSON_IsString(text)) {
+                                    fprintf(stdout, "\n  %s\n", text->valuestring);
+                                }
+                            } else if (strcmp(type->valuestring, "tool_use") == 0) {
+                                cJSON *name = cJSON_GetObjectItem(block, "name");
+                                cJSON *id = cJSON_GetObjectItem(block, "id");
+                                fprintf(stdout, "\n  [TOOL_USE: %s", name && cJSON_IsString(name) ? name->valuestring : "unknown");
+                                if (id && cJSON_IsString(id)) {
+                                    fprintf(stdout, " (id: %s)", id->valuestring);
+                                }
+                                fprintf(stdout, "]\n");
+                            }
+                        }
+                    }
+                }
+                cJSON_Delete(response);
+            }
+        }
+
+        fprintf(stdout, "\n");
+    }
+
+    if (call_num == 0) {
+        fprintf(stdout, "No API calls found for this session.\n");
+    }
+
+    fprintf(stdout, "=================================================================\n");
+    fprintf(stdout, "                    END OF CONVERSATION\n");
+    fprintf(stdout, "=================================================================\n\n");
+
+    sqlite3_finalize(stmt);
+    persistence_close(db);
+    return 0;
+}
+
 // Format: sess_<timestamp>_<random>
 // Returns: Newly allocated string (caller must free)
 static char* generate_session_id(void) {
@@ -5747,10 +5940,11 @@ int main(int argc, char *argv[]) {
         printf("Claude Code - Pure C Implementation (OpenAI Compatible)\n");
         printf("Version: %s\n\n", CLAUDE_C_VERSION_FULL);
         printf("Usage:\n");
-        printf("  %s               Start interactive mode\n", argv[0]);
-        printf("  %s \"PROMPT\"       Execute single command and exit\n", argv[0]);
-        printf("  %s -h, --help    Show this help message\n", argv[0]);
-        printf("  %s --version     Show version information\n\n", argv[0]);
+        printf("  %s                        Start interactive mode\n", argv[0]);
+        printf("  %s \"PROMPT\"                Execute single command and exit\n", argv[0]);
+        printf("  %s -d, --dump-conversation Dump conversation to console and exit\n", argv[0]);
+        printf("  %s -h, --help              Show this help message\n", argv[0]);
+        printf("  %s --version               Show version information\n\n", argv[0]);
         printf("Environment Variables:\n");
         printf("  API Configuration:\n");
         printf("    OPENAI_API_KEY       Required: Your OpenAI API key (not needed for Bedrock)\n");
@@ -5782,6 +5976,12 @@ int main(int argc, char *argv[]) {
         printf("  Type /help for commands (e.g., /clear, /exit, /add-dir, /voice)\n");
         printf("  Press Ctrl+C to cancel a running API/tool action\n\n");
         return 0;
+    }
+
+    // Check for dump conversation flag
+    if (argc == 2 && (strcmp(argv[1], "-d") == 0 || strcmp(argv[1], "--dump-conversation") == 0)) {
+        // Dump conversation mode: query database and display
+        return dump_conversation_from_db(NULL);  // NULL = most recent session
     }
 
     // Check for single command mode: ./claude-c "prompt"
@@ -6110,6 +6310,11 @@ int main(int argc, char *argv[]) {
         LOG_DEBUG("MCP configuration cleaned up");
     }
 #endif
+
+    // Print session ID to console on exit
+    if (state.session_id) {
+        fprintf(stderr, "\nSession ID: %s\n", state.session_id);
+    }
 
     free(state.api_key);
     free(state.api_url);
