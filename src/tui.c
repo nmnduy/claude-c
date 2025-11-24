@@ -1643,7 +1643,8 @@ void tui_show_startup_banner(TUIState *tui, const char *version, const char *mod
         "MCP is disabled by default; enable with CLAUDE_MCP_ENABLED=1 and configure servers in ~/.config/claude-c/.",
         "Use /clear to clear conversation; /quit or /exit to leave.",
         "Use /help to see all available commands.",
-        "Token usage stats shown in status bar when in Normal mode (Esc)."
+        "Token usage stats shown in status bar when in Normal mode (Esc).",
+        "Exit methods: Ctrl+D, /quit, or /exit."
     };
     size_t tips_count = sizeof(tips) / sizeof(tips[0]);
 
