@@ -34,6 +34,14 @@ typedef struct {
 void commands_init(void);
 
 /**
+ * Set TUI mode flag
+ * When true, commands won't print to stdout/stderr (prevents ncurses corruption)
+ *
+ * @param enabled  1 for TUI mode, 0 for single-command mode
+ */
+void commands_set_tui_mode(int enabled);
+
+/**
  * Register a new command
  *
  * @param cmd  Pointer to Command struct (must remain valid)

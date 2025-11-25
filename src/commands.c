@@ -27,11 +27,21 @@
 static const Command *command_registry[MAX_COMMANDS];
 static int command_count = 0;
 
+// TUI mode flag - when true, suppress stdout/stderr output
+static int tui_mode_enabled = 0;
+
 // ============================================================================
 // Helper Functions
 // ============================================================================
 
 static void print_status(const char *text) {
+    // In TUI mode, don't print to stdout (it corrupts ncurses)
+    // The caller (claude.c) will handle UI feedback
+    if (tui_mode_enabled) {
+        LOG_DEBUG("Status (TUI): %s", text);
+        return;
+    }
+    
     char color_buf[32];
     const char *status_color;
     if (get_colorscheme_color(COLORSCHEME_STATUS, color_buf, sizeof(color_buf)) == 0) {
@@ -45,6 +55,13 @@ static void print_status(const char *text) {
 }
 
 static void print_error(const char *text) {
+    // In TUI mode, don't print to stderr (it corrupts ncurses)
+    // The caller (claude.c) will handle UI feedback
+    if (tui_mode_enabled) {
+        LOG_DEBUG("Error (TUI): %s", text);
+        return;
+    }
+    
     char color_buf[32];
     const char *error_color;
     if (get_colorscheme_color(COLORSCHEME_ERROR, color_buf, sizeof(color_buf)) == 0) {
@@ -80,7 +97,7 @@ static int cmd_clear(ConversationState *state, const char *args) {
     (void)args;
     clear_conversation(state);
     print_status("Conversation cleared");
-    printf("\n");
+    if (!tui_mode_enabled) printf("\n");
     return 0;
 }
 
@@ -240,6 +257,11 @@ void commands_init(void) {
     commands_register(&voice_cmd);
 }
 
+void commands_set_tui_mode(int enabled) {
+    tui_mode_enabled = enabled;
+    LOG_DEBUG("Command system TUI mode: %s", enabled ? "enabled" : "disabled");
+}
+
 void commands_register(const Command *cmd) {
     if (command_count < MAX_COMMANDS) {
         command_registry[command_count++] = cmd;
@@ -260,9 +282,9 @@ int commands_execute(ConversationState *state, const char *input) {
             return cmd->handler(state, args);
         }
     }
-    char err_msg[256];
-    snprintf(err_msg, sizeof(err_msg), "Unknown command: %.*s", (int)cmd_len, cmd_line);
-    print_error(err_msg);
+    // Don't print error here - let the caller (claude.c) handle it
+    // This prevents stderr output from corrupting the ncurses TUI
+    LOG_DEBUG("Unknown command: %.*s", (int)cmd_len, cmd_line);
     return -1;
 }
 
