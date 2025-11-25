@@ -5986,7 +5986,7 @@ int main(int argc, char *argv[]) {
         printf("    OPENAI_API_BASE      Optional: API base URL (default: %s)\n", API_BASE_URL);
         printf("    OPENAI_MODEL         Optional: Model name (default: %s)\n", DEFAULT_MODEL);
         printf("    ANTHROPIC_MODEL      Alternative: Model name (fallback if OPENAI_MODEL not set)\n");
-        printf("    DISABLE_PROMPT_CACHING  Optional: Set to 1 to disable prompt caching\n\n");
+        /* printf("    DISABLE_PROMPT_CACHING  Optional: Set to 1 to disable prompt caching\n\n"); */
         printf("  AWS Bedrock Configuration:\n");
         printf("    CLAUDE_CODE_USE_BEDROCK  Set to 1 to use AWS Bedrock instead of OpenAI\n");
         printf("    ANTHROPIC_MODEL         Required for Bedrock: Claude model ID\n");
