@@ -44,4 +44,18 @@ InternalMessage parse_openai_response(cJSON *response);
  */
 void free_internal_message(InternalMessage *msg);
 
+/**
+ * Ensure all tool calls have matching tool results
+ *
+ * Scans the conversation state for assistant messages with tool_calls,
+ * and verifies each has a corresponding tool_result in a following message.
+ * If any tool calls are missing results (e.g., due to interrupted execution),
+ * injects synthetic "interrupted" error results to maintain API consistency.
+ *
+ * Must be called with state locked.
+ *
+ * @param state - Conversation state to validate and fix
+ */
+void ensure_tool_results(ConversationState *state);
+
 #endif // OPENAI_MESSAGES_H

@@ -13,6 +13,123 @@
 #include <string.h>
 
 /**
+ * Ensure all tool calls have matching tool results.
+ * If any are missing, inject synthetic "interrupted" results.
+ * Must be called with state locked.
+ */
+void ensure_tool_results(ConversationState *state) {
+    // Build set of tool_call IDs and corresponding result IDs
+    typedef struct {
+        char *id;
+        char *tool_name;
+        int has_result;
+    } ToolCallInfo;
+    
+    ToolCallInfo *tool_calls = NULL;
+    int tool_call_count = 0;
+    int tool_call_capacity = 0;
+    
+    // Scan messages to collect tool calls and check for results
+    for (int i = 0; i < state->count; i++) {
+        InternalMessage *msg = &state->messages[i];
+        
+        if (msg->role == MSG_ASSISTANT) {
+            // Collect tool calls from assistant messages
+            for (int j = 0; j < msg->content_count; j++) {
+                InternalContent *c = &msg->contents[j];
+                if (c->type == INTERNAL_TOOL_CALL && c->tool_id) {
+                    // Expand array if needed
+                    if (tool_call_count >= tool_call_capacity) {
+                        tool_call_capacity = tool_call_capacity == 0 ? 8 : tool_call_capacity * 2;
+                        ToolCallInfo *new_calls = realloc(tool_calls, (size_t)tool_call_capacity * sizeof(ToolCallInfo));
+                        if (!new_calls) {
+                            LOG_ERROR("Failed to allocate memory for tool call tracking");
+                            free(tool_calls);
+                            return;
+                        }
+                        tool_calls = new_calls;
+                    }
+                    
+                    tool_calls[tool_call_count].id = c->tool_id;
+                    tool_calls[tool_call_count].tool_name = c->tool_name;
+                    tool_calls[tool_call_count].has_result = 0;
+                    tool_call_count++;
+                }
+            }
+        } else if (msg->role == MSG_USER) {
+            // Check for tool results
+            for (int j = 0; j < msg->content_count; j++) {
+                InternalContent *c = &msg->contents[j];
+                if (c->type == INTERNAL_TOOL_RESPONSE && c->tool_id) {
+                    // Mark this tool call as having a result
+                    for (int k = 0; k < tool_call_count; k++) {
+                        if (tool_calls[k].id && strcmp(tool_calls[k].id, c->tool_id) == 0) {
+                            tool_calls[k].has_result = 1;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // Find missing results and inject synthetic ones
+    int missing_count = 0;
+    for (int i = 0; i < tool_call_count; i++) {
+        if (!tool_calls[i].has_result) {
+            missing_count++;
+        }
+    }
+    
+    if (missing_count > 0) {
+        LOG_WARN("Found %d tool call(s) without matching results - injecting synthetic results", missing_count);
+        
+        // Check if we have space for a new message
+        if (state->count >= MAX_MESSAGES) {
+            LOG_ERROR("Cannot inject tool results - maximum message count reached");
+            free(tool_calls);
+            return;
+        }
+        
+        // Create synthetic tool results
+        InternalContent *synthetic_results = calloc((size_t)missing_count, sizeof(InternalContent));
+        if (!synthetic_results) {
+            LOG_ERROR("Failed to allocate memory for synthetic tool results");
+            free(tool_calls);
+            return;
+        }
+        
+        int result_idx = 0;
+        for (int i = 0; i < tool_call_count; i++) {
+            if (!tool_calls[i].has_result) {
+                synthetic_results[result_idx].type = INTERNAL_TOOL_RESPONSE;
+                synthetic_results[result_idx].tool_id = strdup(tool_calls[i].id);
+                synthetic_results[result_idx].tool_name = strdup(tool_calls[i].tool_name ? tool_calls[i].tool_name : "unknown");
+                synthetic_results[result_idx].is_error = 1;
+                
+                // Create error output JSON
+                cJSON *error_output = cJSON_CreateObject();
+                cJSON_AddStringToObject(error_output, "error", "Tool execution was interrupted");
+                synthetic_results[result_idx].tool_output = error_output;
+                
+                LOG_INFO("Injected synthetic result for tool_call_id=%s, tool=%s", 
+                         tool_calls[i].id, 
+                         tool_calls[i].tool_name ? tool_calls[i].tool_name : "unknown");
+                result_idx++;
+            }
+        }
+        
+        // Add as a new user message
+        InternalMessage *msg = &state->messages[state->count++];
+        msg->role = MSG_USER;
+        msg->contents = synthetic_results;
+        msg->content_count = missing_count;
+    }
+    
+    free(tool_calls);
+}
+
+/**
  * Build OpenAI request JSON from internal message format
  */
 cJSON* build_openai_request(ConversationState *state, int enable_caching) {
@@ -24,6 +141,9 @@ cJSON* build_openai_request(ConversationState *state, int enable_caching) {
     if (conversation_state_lock(state) != 0) {
         return NULL;
     }
+
+    // Ensure all tool calls have matching results before building request
+    ensure_tool_results(state);
 
     LOG_DEBUG("Building OpenAI request (messages: %d, caching: %s)",
               state->count, enable_caching ? "enabled" : "disabled");
