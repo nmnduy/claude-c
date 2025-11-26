@@ -1501,17 +1501,55 @@ void tui_clear_conversation(TUIState *tui) {
 void tui_handle_resize(TUIState *tui) {
     if (!tui || !tui->is_initialized) return;
 
+    // Temporarily save scroll position and reset to 0 to avoid accessing
+    // invalid pad coordinates during rebuild
+    int saved_scroll_offset = tui->wm.conv_scroll_offset;
+    tui->wm.conv_scroll_offset = 0;
+
     // Handle screen resize via WindowManager
     if (window_manager_resize_screen(&tui->wm) != 0) {
         LOG_ERROR("[TUI] WindowManager screen resize failed");
         return;
     }
 
+    // Verify pad was successfully recreated
+    if (!tui->wm.conv_pad) {
+        LOG_ERROR("[TUI] Conversation pad is NULL after resize");
+        return;
+    }
+
+    // Estimate needed capacity for all entries (conservative: 2 lines per entry minimum)
+    int estimated_lines = (tui->entries_count * 2) + 100;
+    if (window_manager_ensure_pad_capacity(&tui->wm, estimated_lines) != 0) {
+        LOG_ERROR("[TUI] Failed to ensure pad capacity before rebuild");
+        return;
+    }
+
     // Rebuild pad content from stored entries (ensures wrapping updates with new width)
-    if (tui->wm.conv_pad) {
-        werase(tui->wm.conv_pad);
-        for (int i = 0; i < tui->entries_count; i++) {
-                ConversationEntry *entry = &tui->entries[i];
+    werase(tui->wm.conv_pad);
+    int pad_height, pad_width;
+    getmaxyx(tui->wm.conv_pad, pad_height, pad_width);
+    
+    for (int i = 0; i < tui->entries_count; i++) {
+        ConversationEntry *entry = &tui->entries[i];
+        
+        // Safety check: ensure we're not writing beyond pad capacity
+        int cur_y, cur_x;
+        getyx(tui->wm.conv_pad, cur_y, cur_x);
+        (void)cur_x;
+        
+        if (cur_y >= pad_height - 1) {
+            LOG_WARN("[TUI] Pad capacity exceeded during resize rebuild at entry %d/%d (cur_y=%d, pad_height=%d)",
+                     i, tui->entries_count, cur_y, pad_height);
+            // Expand pad capacity on-the-fly
+            int new_capacity = pad_height * 2;
+            if (window_manager_ensure_pad_capacity(&tui->wm, new_capacity) != 0) {
+                LOG_ERROR("[TUI] Failed to expand pad during rebuild");
+                break;
+            }
+            // Refresh pad dimensions after expansion
+            getmaxyx(tui->wm.conv_pad, pad_height, pad_width);
+        }
 
                 int mapped_pair = NCURSES_PAIR_FOREGROUND;
                 switch (entry->color_pair) {
@@ -1549,43 +1587,51 @@ void tui_handle_resize(TUIState *tui) {
                         break;
                 }
 
-                if (entry->prefix && entry->prefix[0] != '\0') {
-                    if (has_colors()) {
-                        wattron(tui->wm.conv_pad, COLOR_PAIR(mapped_pair) | A_BOLD);
-                    }
-                    waddstr(tui->wm.conv_pad, entry->prefix);
-                    waddch(tui->wm.conv_pad, ' ');
-                    if (has_colors()) {
-                        wattroff(tui->wm.conv_pad, COLOR_PAIR(mapped_pair) | A_BOLD);
-                    }
-                }
-
-                if (entry->text && entry->text[0] != '\0') {
-                    int text_pair = (entry->prefix && entry->prefix[0] != '\0') ? NCURSES_PAIR_FOREGROUND : mapped_pair;
-                    if (has_colors()) {
-                        wattron(tui->wm.conv_pad, COLOR_PAIR(text_pair));
-                    }
-                    waddstr(tui->wm.conv_pad, entry->text);
-                    if (has_colors()) {
-                        wattroff(tui->wm.conv_pad, COLOR_PAIR(text_pair));
-                    }
-                }
-
-                waddch(tui->wm.conv_pad, '\n');
+        if (entry->prefix && entry->prefix[0] != '\0') {
+            if (has_colors()) {
+                wattron(tui->wm.conv_pad, COLOR_PAIR(mapped_pair) | A_BOLD);
             }
-
-            int cur_y, cur_x;
-            getyx(tui->wm.conv_pad, cur_y, cur_x);
-            (void)cur_x;
-            window_manager_set_content_lines(&tui->wm, cur_y);
+            waddstr(tui->wm.conv_pad, entry->prefix);
+            waddch(tui->wm.conv_pad, ' ');
+            if (has_colors()) {
+                wattroff(tui->wm.conv_pad, COLOR_PAIR(mapped_pair) | A_BOLD);
+            }
         }
+
+        if (entry->text && entry->text[0] != '\0') {
+            int text_pair = (entry->prefix && entry->prefix[0] != '\0') ? NCURSES_PAIR_FOREGROUND : mapped_pair;
+            if (has_colors()) {
+                wattron(tui->wm.conv_pad, COLOR_PAIR(text_pair));
+            }
+            waddstr(tui->wm.conv_pad, entry->text);
+            if (has_colors()) {
+                wattroff(tui->wm.conv_pad, COLOR_PAIR(text_pair));
+            }
+        }
+
+        waddch(tui->wm.conv_pad, '\n');
+    }
+
+    // Get final cursor position to determine actual content lines
+    int cur_y, cur_x;
+    getyx(tui->wm.conv_pad, cur_y, cur_x);
+    (void)cur_x;
+    window_manager_set_content_lines(&tui->wm, cur_y);
+
+    // Restore scroll position (clamped to valid range by window manager)
+    tui->wm.conv_scroll_offset = saved_scroll_offset;
+    int max_scroll = cur_y - tui->wm.conv_viewport_height;
+    if (max_scroll < 0) max_scroll = 0;
+    if (tui->wm.conv_scroll_offset > max_scroll) {
+        tui->wm.conv_scroll_offset = max_scroll;
+    }
 
     validate_tui_windows(tui);
     window_manager_refresh_all(&tui->wm);
-    LOG_DEBUG("[TUI] Resize handled via WM (screen=%dx%d, conv_h=%d, status_h=%d, input_h=%d)",
+    LOG_DEBUG("[TUI] Resize handled via WM (screen=%dx%d, conv_h=%d, status_h=%d, input_h=%d, scroll=%d/%d)",
               tui->wm.screen_width, tui->wm.screen_height, tui->wm.conv_viewport_height,
-              tui->wm.status_height, tui->wm.input_height);
-    return;
+              tui->wm.status_height, tui->wm.input_height,
+              tui->wm.conv_scroll_offset, max_scroll);
 }
 
 void tui_show_startup_banner(TUIState *tui, const char *version, const char *model, const char *working_dir) {
@@ -2636,6 +2682,14 @@ int tui_event_loop(TUIState *tui, const char *prompt,
         if (g_resize_flag) {
             g_resize_flag = 0;
             tui_handle_resize(tui);
+            
+            // Verify windows are still valid after resize
+            if (!tui->wm.conv_pad || !tui->wm.input_win) {
+                LOG_ERROR("[TUI] Windows invalid after resize, exiting event loop");
+                running = 0;
+                break;
+            }
+            
             refresh_conversation_viewport(tui);
             render_status_window(tui);
             tui_redraw_input(tui, prompt);

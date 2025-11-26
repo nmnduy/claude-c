@@ -87,12 +87,23 @@ static void clear_gap_between_status_and_input(WindowManager *wm) {
 // Copy content from old pad to new pad (for capacity expansion)
 static int copy_pad_content(WINDOW *old_pad, WINDOW *new_pad,
                            int lines_to_copy, int width) {
-    if (!old_pad || !new_pad || lines_to_copy <= 0) {
+    if (!old_pad || !new_pad || lines_to_copy <= 0 || width <= 0) {
         return 0;
     }
 
-    LOG_DEBUG("[WM] Copying %d lines from old pad to new pad (width=%d)",
-              lines_to_copy, width);
+    // Get actual dimensions of both pads to avoid out-of-bounds access
+    int old_h, old_w, new_h, new_w;
+    getmaxyx(old_pad, old_h, old_w);
+    getmaxyx(new_pad, new_h, new_w);
+    
+    // Clamp copy dimensions to actual pad sizes
+    if (lines_to_copy > old_h) lines_to_copy = old_h;
+    if (lines_to_copy > new_h) lines_to_copy = new_h;
+    if (width > old_w) width = old_w;
+    if (width > new_w) width = new_w;
+
+    LOG_DEBUG("[WM] Copying %d lines from old pad to new pad (width=%d, old=%dx%d, new=%dx%d)",
+              lines_to_copy, width, old_w, old_h, new_w, new_h);
 
     for (int y = 0; y < lines_to_copy; y++) {
         for (int x = 0; x < width; x++) {
@@ -245,6 +256,7 @@ int window_manager_resize_screen(WindowManager *wm) {
     // Save current content for restoration
     int old_content_lines = wm->conv_pad_content_lines;
     int old_scroll_offset = wm->conv_scroll_offset;
+    int old_capacity = wm->conv_pad_capacity;
 
     // Recreate conversation pad with new width
     WINDOW *old_pad = wm->conv_pad;
@@ -258,11 +270,23 @@ int window_manager_resize_screen(WindowManager *wm) {
 
     // Copy content from old pad (but content will be re-rendered by caller)
     // We just need to preserve the pad structure
-    copy_pad_content(old_pad, wm->conv_pad,
-                    old_content_lines < wm->conv_pad_capacity ? old_content_lines : wm->conv_pad_capacity,
-                    old_width < wm->screen_width ? old_width : wm->screen_width);
+    // Be very defensive about bounds: don't copy more than either pad can hold
+    int lines_to_copy = old_content_lines;
+    if (lines_to_copy > old_capacity) lines_to_copy = old_capacity;
+    if (lines_to_copy > wm->conv_pad_capacity) lines_to_copy = wm->conv_pad_capacity;
+    
+    int width_to_copy = old_width < wm->screen_width ? old_width : wm->screen_width;
+    
+    // Additional safety: verify old_pad is still valid before copying
+    if (old_pad && lines_to_copy > 0 && width_to_copy > 0) {
+        copy_pad_content(old_pad, wm->conv_pad, lines_to_copy, width_to_copy);
+    }
 
-    delwin(old_pad);
+    // Delete old pad after copy is complete
+    if (old_pad) {
+        delwin(old_pad);
+        old_pad = NULL;
+    }
 
     LOG_DEBUG("[WM] Recreated conversation pad (capacity=%d, width=%d)",
               wm->conv_pad_capacity, wm->screen_width);

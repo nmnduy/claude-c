@@ -25,6 +25,7 @@
 #include <errno.h>
 #include <glob.h>
 #include <regex.h>
+#include <fcntl.h>
 #include <curl/curl.h>
 #include <cjson/cJSON.h>
 #include <sqlite3.h>
@@ -5332,13 +5333,50 @@ static int submit_input_callback(const char *input, void *user_data) {
         // Remember message count before command execution
         int msg_count_before = state->count;
 
+        // Redirect stdout/stderr to /dev/null during command execution to prevent TUI corruption
+        // Commands use print_error() and printf() which interfere with ncurses
+        int saved_stdout = dup(STDOUT_FILENO);
+        int saved_stderr = dup(STDERR_FILENO);
+        int devnull = open("/dev/null", O_WRONLY);
+        if (devnull != -1) {
+            dup2(devnull, STDOUT_FILENO);
+            dup2(devnull, STDERR_FILENO);
+            close(devnull);
+        }
+
         // Use the command system from commands.c
         int cmd_result = commands_execute(state, input_copy);
+
+        // Restore stdout/stderr
+        if (saved_stdout != -1) {
+            dup2(saved_stdout, STDOUT_FILENO);
+            close(saved_stdout);
+        }
+        if (saved_stderr != -1) {
+            dup2(saved_stderr, STDERR_FILENO);
+            close(saved_stderr);
+        }
 
         // Check if it's an exit command
         if (cmd_result == -2) {
             free(input_copy);
             return 1;  // Exit the program
+        }
+
+        // Check if command failed (unknown command or error)
+        if (cmd_result == -1) {
+            // Extract command name for error message
+            const char *cmd_line = input_copy + 1;
+            const char *space = strchr(cmd_line, ' ');
+            size_t cmd_len = space ? (size_t)(space - cmd_line) : strlen(cmd_line);
+            
+            char error_msg[256];
+            snprintf(error_msg, sizeof(error_msg), 
+                     "Unknown command: /%.*s (type /help for available commands)", 
+                     (int)cmd_len, cmd_line);
+            ui_show_error(tui, queue, error_msg);
+            free(input_copy);
+            return 0;
         }
 
         // For /clear, also clear the TUI
