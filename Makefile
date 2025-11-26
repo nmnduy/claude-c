@@ -96,8 +96,11 @@ TEST_JSON_PARSING_TARGET = $(BUILD_DIR)/test_json_parsing
 TEST_MCP_TARGET = $(BUILD_DIR)/test_mcp
 TEST_WM_TARGET = $(BUILD_DIR)/test_window_manager
 TEST_TOOL_RESULTS_REGRESSION_TARGET = $(BUILD_DIR)/test_tool_results_regression
+TEST_ARRAY_RESIZE_TARGET = $(BUILD_DIR)/test_array_resize
 QUERY_TOOL = $(BUILD_DIR)/query_logs
 SRC = src/claude.c
+ARRAY_RESIZE_SRC = src/array_resize.c
+ARRAY_RESIZE_OBJ = $(BUILD_DIR)/array_resize.o
 LOGGER_SRC = src/logger.c
 LOGGER_OBJ = $(BUILD_DIR)/logger.o
 PERSISTENCE_SRC = src/persistence.c
@@ -181,8 +184,9 @@ TEST_BASH_TRUNCATION_SRC = tests/test_bash_truncation.c
 TEST_HISTORY_FILE_SRC = tests/test_history_file.c
 TEST_TUI_INPUT_BUFFER_SRC = tests/test_tui_input_buffer.c
 TEST_TOOL_DETAILS_SRC = tests/test_tool_details_simple.c
+TEST_ARRAY_RESIZE_SRC = tests/test_array_resize.c
 
-.PHONY: all clean check-deps install test test-edit test-read test-todo test-todo-write test-paste test-retry-jitter test-openai-format test-write-diff-integration test-rotation test-patch-parser test-thread-cancel test-aws-cred-rotation test-message-queue test-event-loop test-wrap test-mcp test-mcp-image test-bash-summary test-bash-timeout test-bash-stderr test-bash-truncation test-tool-results-regression test-tool-details query-tool debug analyze sanitize-ub sanitize-all sanitize-leak valgrind memscan comprehensive-scan clang-tidy cppcheck flawfinder version show-version update-version bump-version bump-patch build clang ci-test ci-gcc ci-clang ci-gcc-sanitize ci-clang-sanitize ci-all fmt-whitespace
+.PHONY: all clean check-deps install test test-edit test-read test-todo test-todo-write test-paste test-retry-jitter test-openai-format test-write-diff-integration test-rotation test-patch-parser test-thread-cancel test-aws-cred-rotation test-message-queue test-event-loop test-wrap test-mcp test-mcp-image test-bash-summary test-bash-timeout test-bash-stderr test-bash-truncation test-tool-results-regression test-tool-details test-array-resize query-tool debug analyze sanitize-ub sanitize-all sanitize-leak valgrind memscan comprehensive-scan clang-tidy cppcheck flawfinder version show-version update-version bump-version bump-patch build clang ci-test ci-gcc ci-clang ci-gcc-sanitize ci-clang-sanitize ci-all fmt-whitespace
 
 all: check-deps $(TARGET)
 
@@ -194,7 +198,7 @@ debug: check-deps $(BUILD_DIR)/claude-c-debug
 
 query-tool: check-deps $(QUERY_TOOL)
 
-test: test-edit test-read test-todo test-paste test-json-parsing test-timing test-openai-format test-write-diff-integration test-rotation test-patch-parser test-thread-cancel test-aws-cred-rotation test-message-queue test-wrap test-mcp test-mcp-image test-wm test-bash-summary test-bash-timeout test-bash-stderr test-bash-truncation test-cancel-flow test-tool-results-regression test-base64 test-history-file test-tui-input-buffer test-tool-details
+test: test-edit test-read test-todo test-paste test-json-parsing test-timing test-openai-format test-write-diff-integration test-rotation test-patch-parser test-thread-cancel test-aws-cred-rotation test-message-queue test-wrap test-mcp test-mcp-image test-wm test-bash-summary test-bash-timeout test-bash-stderr test-bash-truncation test-cancel-flow test-tool-results-regression test-base64 test-history-file test-tui-input-buffer test-tool-details test-array-resize
 
 test-edit: check-deps $(TEST_EDIT_TARGET)
 	@echo ""
@@ -365,9 +369,15 @@ test-tool-details: check-deps $(TEST_TOOL_DETAILS_TARGET)
 	@echo ""
 	@./$(TEST_TOOL_DETAILS_TARGET)
 
-$(TARGET): $(SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(COMMANDS_OBJ) $(COMPLETION_OBJ) $(TUI_OBJ) $(WINDOW_MANAGER_OBJ) $(TODO_OBJ) $(AWS_BEDROCK_OBJ) $(PROVIDER_OBJ) $(OPENAI_PROVIDER_OBJ) $(OPENAI_MESSAGES_OBJ) $(BEDROCK_PROVIDER_OBJ) $(BUILTIN_THEMES_OBJ) $(PATCH_PARSER_OBJ) $(MESSAGE_QUEUE_OBJ) $(AI_WORKER_OBJ) $(VOICE_INPUT_OBJ) $(MCP_OBJ) $(TOOL_UTILS_OBJ) $(BASE64_OBJ) $(HISTORY_FILE_OBJ) $(VERSION_H)
+test-array-resize: check-deps $(TEST_ARRAY_RESIZE_TARGET)
+	@echo ""
+	@echo "Running Array Resize tests..."
+	@echo ""
+	@./$(TEST_ARRAY_RESIZE_TARGET)
+
+$(TARGET): $(SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(COMMANDS_OBJ) $(COMPLETION_OBJ) $(TUI_OBJ) $(WINDOW_MANAGER_OBJ) $(TODO_OBJ) $(AWS_BEDROCK_OBJ) $(PROVIDER_OBJ) $(OPENAI_PROVIDER_OBJ) $(OPENAI_MESSAGES_OBJ) $(BEDROCK_PROVIDER_OBJ) $(BUILTIN_THEMES_OBJ) $(PATCH_PARSER_OBJ) $(MESSAGE_QUEUE_OBJ) $(AI_WORKER_OBJ) $(VOICE_INPUT_OBJ) $(MCP_OBJ) $(TOOL_UTILS_OBJ) $(BASE64_OBJ) $(HISTORY_FILE_OBJ) $(ARRAY_RESIZE_OBJ) $(VERSION_H)
 	@mkdir -p $(BUILD_DIR)
-	$(CC) $(CFLAGS) -o $(TARGET) $(SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(COMMANDS_OBJ) $(COMPLETION_OBJ) $(TUI_OBJ) $(WINDOW_MANAGER_OBJ) $(TODO_OBJ) $(AWS_BEDROCK_OBJ) $(PROVIDER_OBJ) $(OPENAI_PROVIDER_OBJ) $(OPENAI_MESSAGES_OBJ) $(BEDROCK_PROVIDER_OBJ) $(BUILTIN_THEMES_OBJ) $(PATCH_PARSER_OBJ) $(MESSAGE_QUEUE_OBJ) $(AI_WORKER_OBJ) $(VOICE_INPUT_OBJ) $(MCP_OBJ) $(TOOL_UTILS_OBJ) $(BASE64_OBJ) $(HISTORY_FILE_OBJ) $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $(TARGET) $(SRC) $(LOGGER_OBJ) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ) $(COMMANDS_OBJ) $(COMPLETION_OBJ) $(TUI_OBJ) $(WINDOW_MANAGER_OBJ) $(TODO_OBJ) $(AWS_BEDROCK_OBJ) $(PROVIDER_OBJ) $(OPENAI_PROVIDER_OBJ) $(OPENAI_MESSAGES_OBJ) $(BEDROCK_PROVIDER_OBJ) $(BUILTIN_THEMES_OBJ) $(PATCH_PARSER_OBJ) $(MESSAGE_QUEUE_OBJ) $(AI_WORKER_OBJ) $(VOICE_INPUT_OBJ) $(MCP_OBJ) $(TOOL_UTILS_OBJ) $(BASE64_OBJ) $(HISTORY_FILE_OBJ) $(ARRAY_RESIZE_OBJ) $(LDFLAGS)
 	@echo ""
 	@echo "✓ Build successful!"
 	@echo "Version: $(VERSION)"
@@ -734,6 +744,10 @@ $(BASE64_OBJ): $(BASE64_SRC) src/base64.h
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c -o $(BASE64_OBJ) $(BASE64_SRC)
 
+$(ARRAY_RESIZE_OBJ): $(ARRAY_RESIZE_SRC) src/array_resize.h src/logger.h
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c -o $(ARRAY_RESIZE_OBJ) $(ARRAY_RESIZE_SRC)
+
 # Query tool - utility to inspect API call logs
 $(QUERY_TOOL): $(QUERY_TOOL_SRC) $(PERSISTENCE_OBJ) $(MIGRATIONS_OBJ)
 	@mkdir -p $(BUILD_DIR)
@@ -874,6 +888,15 @@ $(TEST_TOOL_DETAILS_TARGET): $(TEST_TOOL_DETAILS_SRC)
 	@$(CC) $(CFLAGS) -o $(TEST_TOOL_DETAILS_TARGET) $(TEST_TOOL_DETAILS_SRC) $(LDFLAGS)
 	@echo ""
 	@echo "✓ Tool Details test build successful!"
+	@echo ""
+
+# Test target for Array Resize - tests array/buffer resize utilities
+$(TEST_ARRAY_RESIZE_TARGET): $(TEST_ARRAY_RESIZE_SRC) $(ARRAY_RESIZE_OBJ) $(LOGGER_OBJ)
+	@mkdir -p $(BUILD_DIR)
+	@echo "Compiling Array Resize test suite..."
+	@$(CC) $(CFLAGS) -o $(TEST_ARRAY_RESIZE_TARGET) $(TEST_ARRAY_RESIZE_SRC) $(ARRAY_RESIZE_OBJ) $(LOGGER_OBJ) $(LDFLAGS)
+	@echo ""
+	@echo "✓ Array Resize test build successful!"
 	@echo ""
 
 # Test target for Retry Jitter - tests exponential backoff with jitter

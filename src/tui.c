@@ -1252,6 +1252,12 @@ void tui_cleanup(TUIState *tui) {
 void tui_add_conversation_line(TUIState *tui, const char *prefix, const char *text, TUIColorPair color_pair) {
     if (!tui || !tui->is_initialized) return;
 
+    // Validate conversation pad exists (critical - prevent segfault)
+    if (!tui->wm.conv_pad) {
+        LOG_ERROR("[TUI] Cannot add conversation line - conv_pad is NULL");
+        return;
+    }
+
     // Add entry to conversation history
     if (add_conversation_entry(tui, prefix, text, color_pair) != 0) {
         LOG_ERROR("[TUI] Failed to add conversation entry");
@@ -1484,6 +1490,12 @@ void tui_refresh(TUIState *tui) {
 void tui_clear_conversation(TUIState *tui) {
     if (!tui || !tui->is_initialized) return;
 
+    // Validate conversation pad exists
+    if (!tui->wm.conv_pad) {
+        LOG_ERROR("[TUI] Cannot clear conversation - conv_pad is NULL");
+        return;
+    }
+
     // Free all conversation entries
     free_conversation_entries(tui);
 
@@ -1516,6 +1528,16 @@ void tui_handle_resize(TUIState *tui) {
     if (!tui->wm.conv_pad) {
         LOG_ERROR("[TUI] Conversation pad is NULL after resize");
         return;
+    }
+
+    // Update input buffer to point to the new input window (critical for normal mode)
+    if (tui->input_buffer && tui->wm.input_win) {
+        int h, w;
+        getmaxyx(tui->wm.input_win, h, w);
+        tui->input_buffer->win = tui->wm.input_win;
+        tui->input_buffer->win_width = w - 2;
+        tui->input_buffer->win_height = h - 2;
+        LOG_DEBUG("[TUI] Updated input buffer window pointer after resize");
     }
 
     // Estimate needed capacity for all entries (conservative: 2 lines per entry minimum)
