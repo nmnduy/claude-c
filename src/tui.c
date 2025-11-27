@@ -28,11 +28,12 @@
 #include <strings.h>
 #include "message_queue.h"
 #include "history_file.h"
+#include "array_resize.h"
 
 #define INITIAL_CONV_CAPACITY 1000
 #define INPUT_BUFFER_SIZE 8192
 #define INPUT_WIN_MIN_HEIGHT 3  // Min height for input window (1 line + 2 borders)
-#define INPUT_WIN_MAX_HEIGHT 5  // Max height for input window (3 lines + 2 borders)
+#define INPUT_WIN_MAX_HEIGHT_PERCENT 20  // Max height as percentage of viewport
 #define CONV_WIN_PADDING 1      // Lines of padding between conv window and input window
 #define STATUS_WIN_HEIGHT 1     // Single-line status window
 #define TUI_MAX_MESSAGES_PER_FRAME 10  // Max messages processed per frame
@@ -435,13 +436,15 @@ static int add_conversation_entry(TUIState *tui, const char *prefix, const char 
     // Ensure capacity
     if (tui->entries_count >= tui->entries_capacity) {
         int new_capacity = tui->entries_capacity == 0 ? INITIAL_CONV_CAPACITY : tui->entries_capacity * 2;
-        ConversationEntry *new_entries = realloc(tui->entries, (size_t)new_capacity * sizeof(ConversationEntry));
-        if (!new_entries) {
+        void *entries_ptr = (void *)tui->entries;
+        size_t capacity = (size_t)tui->entries_capacity;
+        if (array_ensure_capacity(&entries_ptr, &capacity, (size_t)new_capacity, 
+                                  sizeof(ConversationEntry), NULL) != 0) {
             LOG_ERROR("[TUI] Failed to allocate memory for conversation entries");
             return -1;
         }
-        tui->entries = new_entries;
-        tui->entries_capacity = new_capacity;
+        tui->entries = (ConversationEntry *)entries_ptr;
+        tui->entries_capacity = (int)capacity;
     }
 
     // Allocate and copy strings
@@ -672,13 +675,12 @@ static int input_insert_char(TUIInputBuffer *input, const unsigned char *utf8_ch
         // Expand paste buffer if needed
         if (input->paste_content_len + (size_t)char_bytes >= input->paste_capacity) {
             size_t new_capacity = input->paste_capacity * 2;
-            char *new_buffer = realloc(input->paste_content, new_capacity);
-            if (!new_buffer) {
+            void *paste_ptr = (void *)input->paste_content;
+            if (buffer_reserve(&paste_ptr, &input->paste_capacity, new_capacity) != 0) {
                 LOG_ERROR("[TUI] Failed to expand paste buffer");
                 return -1;
             }
-            input->paste_content = new_buffer;
-            input->paste_capacity = new_capacity;
+            input->paste_content = (char *)paste_ptr;
         }
 
         // Append to paste buffer
@@ -1108,11 +1110,24 @@ int tui_init(TUIState *tui) {
     // Initialize colors from colorscheme
     init_ncurses_colors();
 
+    // Get screen dimensions to calculate max input height
+    int screen_height, screen_width;
+    getmaxyx(stdscr, screen_height, screen_width);
+    (void)screen_width;  // Unused
+
+    // Calculate max input height as 20% of screen height
+    // Formula: max_height = (screen_height * percentage / 100)
+    // Minimum of INPUT_WIN_MIN_HEIGHT to ensure at least 1 line + borders
+    int calculated_max_height = (screen_height * INPUT_WIN_MAX_HEIGHT_PERCENT) / 100;
+    if (calculated_max_height < INPUT_WIN_MIN_HEIGHT) {
+        calculated_max_height = INPUT_WIN_MIN_HEIGHT;
+    }
+
     // Initialize WindowManager (owner of ncurses windows)
     WindowManagerConfig cfg = DEFAULT_WINDOW_CONFIG;
     cfg.min_conv_height = 5;
     cfg.min_input_height = INPUT_WIN_MIN_HEIGHT;
-    cfg.max_input_height = INPUT_WIN_MAX_HEIGHT;
+    cfg.max_input_height = calculated_max_height;
     cfg.status_height = STATUS_WIN_HEIGHT;
     cfg.padding = CONV_WIN_PADDING;
 
@@ -1517,6 +1532,20 @@ void tui_handle_resize(TUIState *tui) {
     // invalid pad coordinates during rebuild
     int saved_scroll_offset = tui->wm.conv_scroll_offset;
     tui->wm.conv_scroll_offset = 0;
+
+    // Get new screen dimensions to recalculate max input height
+    int screen_height, screen_width;
+    getmaxyx(stdscr, screen_height, screen_width);
+    (void)screen_width;  // Unused
+
+    // Recalculate max input height as 20% of screen height
+    int calculated_max_height = (screen_height * INPUT_WIN_MAX_HEIGHT_PERCENT) / 100;
+    if (calculated_max_height < INPUT_WIN_MIN_HEIGHT) {
+        calculated_max_height = INPUT_WIN_MIN_HEIGHT;
+    }
+    
+    // Update window manager config with new max height
+    tui->wm.config.max_input_height = calculated_max_height;
 
     // Handle screen resize via WindowManager
     if (window_manager_resize_screen(&tui->wm) != 0) {
@@ -2177,13 +2206,12 @@ int tui_process_input_char(TUIState *tui, int ch, const char *prompt) {
                     // Dynamically resize input buffer if history entry is too large
                     if (len >= (size_t)tui->input_buffer->capacity) {
                         size_t new_capacity = len + 1024;  // Add some extra space
-                        char *new_buffer = realloc(tui->input_buffer->buffer, new_capacity);
-                        if (new_buffer) {
-                            tui->input_buffer->buffer = new_buffer;
-                            tui->input_buffer->capacity = new_capacity;
+                        void *buf_ptr = (void *)tui->input_buffer->buffer;
+                        if (buffer_reserve(&buf_ptr, &tui->input_buffer->capacity, new_capacity) == 0) {
+                            tui->input_buffer->buffer = (char *)buf_ptr;
                             LOG_DEBUG("[TUI] Expanded input buffer to %zu bytes for history entry", new_capacity);
                         } else {
-                            // If realloc fails, truncate to current capacity
+                            // If resize fails, truncate to current capacity
                             LOG_WARN("[TUI] Failed to expand input buffer, truncating history entry");
                             len = (size_t)tui->input_buffer->capacity - 1;
                         }
@@ -2210,13 +2238,12 @@ int tui_process_input_char(TUIState *tui, int ch, const char *prompt) {
                 // Dynamically resize input buffer if saved input is too large
                 if (len >= (size_t)tui->input_buffer->capacity) {
                     size_t new_capacity = len + 1024;  // Add some extra space
-                    char *new_buffer = realloc(tui->input_buffer->buffer, new_capacity);
-                    if (new_buffer) {
-                        tui->input_buffer->buffer = new_buffer;
-                        tui->input_buffer->capacity = new_capacity;
+                    void *buf_ptr = (void *)tui->input_buffer->buffer;
+                    if (buffer_reserve(&buf_ptr, &tui->input_buffer->capacity, new_capacity) == 0) {
+                        tui->input_buffer->buffer = (char *)buf_ptr;
                         LOG_DEBUG("[TUI] Expanded input buffer to %zu bytes for saved input", new_capacity);
                     } else {
-                        // If realloc fails, truncate to current capacity
+                        // If resize fails, truncate to current capacity
                         LOG_WARN("[TUI] Failed to expand input buffer, truncating saved input");
                         len = (size_t)tui->input_buffer->capacity - 1;
                     }
@@ -2238,13 +2265,12 @@ int tui_process_input_char(TUIState *tui, int ch, const char *prompt) {
                     // Dynamically resize input buffer if history entry is too large
                     if (len >= (size_t)tui->input_buffer->capacity) {
                         size_t new_capacity = len + 1024;  // Add some extra space
-                        char *new_buffer = realloc(tui->input_buffer->buffer, new_capacity);
-                        if (new_buffer) {
-                            tui->input_buffer->buffer = new_buffer;
-                            tui->input_buffer->capacity = new_capacity;
+                        void *buf_ptr = (void *)tui->input_buffer->buffer;
+                        if (buffer_reserve(&buf_ptr, &tui->input_buffer->capacity, new_capacity) == 0) {
+                            tui->input_buffer->buffer = (char *)buf_ptr;
                             LOG_DEBUG("[TUI] Expanded input buffer to %zu bytes for history entry", new_capacity);
                         } else {
-                            // If realloc fails, truncate to current capacity
+                            // If resize fails, truncate to current capacity
                             LOG_WARN("[TUI] Failed to expand input buffer, truncating history entry");
                             len = (size_t)tui->input_buffer->capacity - 1;
                         }
