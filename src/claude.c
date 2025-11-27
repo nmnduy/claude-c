@@ -342,6 +342,10 @@ static void ui_show_error(TUIState *tui,
 
 static _Thread_local TUIMessageQueue *g_active_tool_queue = NULL;
 
+// Oneshot/subagent mode flag - when enabled, tool outputs are wrapped in HTML-style tags
+// for easier parsing by parent processes or scripts
+static _Thread_local int g_oneshot_mode = 0;
+
 static void tool_emit_line(const char *prefix, const char *text) {
     const char *safe_prefix = prefix ? prefix : "";
     const char *safe_text = text ? text : "";
@@ -370,6 +374,12 @@ static void tool_emit_line(const char *prefix, const char *text) {
             LOG_WARN("Failed to post tool output to TUI queue");
         }
         free(formatted);
+        return;
+    }
+
+    // In oneshot/subagent mode, suppress individual line output
+    // Tool output will be captured and wrapped in HTML-style tags by the caller
+    if (g_oneshot_mode) {
         return;
     }
 
@@ -411,8 +421,9 @@ static void emit_diff_line(const char *line,
         // For TUI mode: just pass the line as-is
         // The TUI will detect diff prefixes and color appropriately
         tool_emit_line("", trimmed);
-    } else {
+    } else if (!g_oneshot_mode) {
         // For non-TUI mode (direct stdout): use ANSI color codes
+        // Skip output in oneshot/subagent mode as it will be captured in JSON
         const char *color = NULL;
         if (trimmed[0] == '+' && trimmed[1] != '+') {
             color = add_color;
@@ -5496,6 +5507,9 @@ static int process_single_command_response(ConversationState *state, ApiResponse
 static int single_command_mode(ConversationState *state, const char *prompt) {
     LOG_INFO("Executing single command: %s", prompt);
 
+    // Enable oneshot/subagent mode for structured tool output
+    g_oneshot_mode = 1;
+
     // Add user message to conversation
     add_user_message(state, prompt);
 
@@ -5580,7 +5594,7 @@ static int process_single_command_response(ConversationState *state, ApiResponse
         }
 
         if (valid_tool_calls > 0) {
-            // Execute tools
+            // Execute tools (oneshot/subagent mode)
             for (int i = 0; i < tool_count; i++) {
                 ToolCall *tool = &tool_calls_array[i];
                 if (!tool->name || !tool->id) {
@@ -5594,26 +5608,69 @@ static int process_single_command_response(ConversationState *state, ApiResponse
                     ? cJSON_Duplicate(tool->parameters, /*recurse*/1)
                     : cJSON_CreateObject();
 
-                // Print tool name header in single command mode (no colors available)
+                // Print tool name header with details
                 char *tool_details = get_tool_details(tool->name, input);
+                
+                // Print opening HTML-style tag with tool name and optional details
+                printf("<tool name=\"%s\"", tool->name);
                 if (tool_details && strlen(tool_details) > 0) {
-                    printf("⚙️  %s: %s\n", tool->name, tool_details);
-                } else {
-                    printf("⚙️  %s\n", tool->name);
+                    // Escape quotes and ampersands in tool details for XML attribute
+                    // Worst case: every character could be & or " requiring 6 chars each
+                    size_t max_escaped_len = strlen(tool_details) * 6 + 1;
+                    char *escaped_details = malloc(max_escaped_len);
+                    if (escaped_details) {
+                        size_t j = 0;
+                        for (size_t k = 0; tool_details[k]; k++) {
+                            if (tool_details[k] == '"') {
+                                escaped_details[j++] = '&';
+                                escaped_details[j++] = 'q';
+                                escaped_details[j++] = 'u';
+                                escaped_details[j++] = 'o';
+                                escaped_details[j++] = 't';
+                                escaped_details[j++] = ';';
+                            } else if (tool_details[k] == '&') {
+                                escaped_details[j++] = '&';
+                                escaped_details[j++] = 'a';
+                                escaped_details[j++] = 'm';
+                                escaped_details[j++] = 'p';
+                                escaped_details[j++] = ';';
+                            } else if (tool_details[k] == '<') {
+                                escaped_details[j++] = '&';
+                                escaped_details[j++] = 'l';
+                                escaped_details[j++] = 't';
+                                escaped_details[j++] = ';';
+                            } else if (tool_details[k] == '>') {
+                                escaped_details[j++] = '&';
+                                escaped_details[j++] = 'g';
+                                escaped_details[j++] = 't';
+                                escaped_details[j++] = ';';
+                            } else {
+                                escaped_details[j++] = tool_details[k];
+                            }
+                        }
+                        escaped_details[j] = '\0';
+                        printf(" details=\"%s\"", escaped_details);
+                        free(escaped_details);
+                    }
                 }
+                printf(">\n");
                 fflush(stdout);
 
                 // Execute tool synchronously
                 cJSON *tool_result = execute_tool(tool->name, input, state);
 
-                // Tool output is already emitted via tool_emit_line during tool execution
-                // Only print errors that occurred during tool execution
+                // Print tool result as JSON content inside the tag
                 if (tool_result) {
-                    cJSON *error = cJSON_GetObjectItem(tool_result, "error");
-                    if (error && cJSON_IsString(error)) {
-                        printf("Error: %s\n", error->valuestring);
+                    char *result_str = cJSON_Print(tool_result);
+                    if (result_str) {
+                        printf("%s\n", result_str);
+                        free(result_str);
                     }
                 }
+
+                // Print closing HTML-style tag
+                printf("</tool>\n");
+                fflush(stdout);
 
                 // Convert result to InternalContent
                 results[i].type = INTERNAL_TOOL_RESPONSE;
