@@ -58,6 +58,8 @@ We dont have config switching yet. But you can also just do this in .bashrc
 ```bash
 alias deepseek-chat="OPENAI_API_KEY=$DEEPSEEK_API_KEY OPENAI_API_BASE=https://api.deepseek.com OPENAI_MODEL=deepseek-chat claude-c"
 alias glm-4.6="OPENAI_API_KEY=$ZAI_API_KEY OPENAI_API_BASE=https://api.z.ai/api/paas/v4/chat/completions OPENAI_MODEL=glm-4.6 claude-c"
+alias kimi-k2-thinking="OPENAI_API_KEY=$MOONSHOT_AI_API_KEY OPENAI_API_BASE=https://api.moonshot.ai OPENAI_MODEL=kimi-k2-thinking claude-c"
+alias gpt-5="OPENAI_API_BASE=https://api.openai.com OPENAI_MODEL=gpt-5 claude-c"
 ```
 
 ### Color Theme Support
@@ -68,7 +70,7 @@ Override via env var `CLAUDE_C_THEME`
 
 ## Memory footprint
 
-![Memory usage analysis](assets/images/claude-c-memory-usage.webp)
+![Memory usage](assets/images/claude-c-memory-usage.webp)
 
 ## Security Notes
 
