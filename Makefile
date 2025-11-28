@@ -15,8 +15,8 @@ ifeq ($(UNAME_S),Darwin)
     NCURSES_LIB = -lncurses
 endif
 
-LDFLAGS = -lcurl -lpthread -lsqlite3 -lssl -lcrypto $(NCURSES_LIB) $(SANITIZERS)
-DEBUG_LDFLAGS = -lcurl -lpthread -lsqlite3 -lssl -lcrypto $(NCURSES_LIB) -fsanitize=address
+LDFLAGS = -lcurl -lpthread -lsqlite3 -lssl -lcrypto -lbsd $(NCURSES_LIB) $(SANITIZERS)
+DEBUG_LDFLAGS = -lcurl -lpthread -lsqlite3 -lssl -lcrypto -lbsd $(NCURSES_LIB) -fsanitize=address
 
 # Installation prefix (can be overridden via command line)
 INSTALL_PREFIX ?= $(HOME)/.local
@@ -1102,6 +1102,7 @@ check-deps:
 	@command -v pkg-config >/dev/null 2>&1 || { echo "Warning: pkg-config not found. May have issues detecting OpenSSL."; }
 	@pkg-config --exists openssl 2>/dev/null || { echo "Error: OpenSSL not found. Install with: brew install openssl (macOS) or apt-get install libssl-dev (Linux)"; exit 1; }
 	@pkg-config --exists libcjson 2>/dev/null || { echo "Error: cJSON not found. Install with: brew install cjson (macOS) or apt-get install libcjson-dev (Linux)"; exit 1; }
+	@pkg-config --exists libbsd 2>/dev/null || { echo "Error: libbsd not found. Install with: brew install libbsd (macOS) or apt-get install libbsd-dev (Linux)"; exit 1; }
 	@echo "✓ All dependencies found"
 	@echo ""
 
@@ -1162,16 +1163,17 @@ help:
 	@echo "  - cJSON"
 	@echo "  - sqlite3"
 	@echo "  - OpenSSL (for AWS Bedrock support)"
+	@echo "  - libbsd (for safer C functions)"
 	@echo "  - pthread (usually included with OS)"
 	@echo "  - valgrind (optional, for memory leak detection)"
 	@echo ""
 	@echo "macOS installation:"
-	@echo "  brew install curl cjson sqlite3 openssl valgrind"
+	@echo "  brew install curl cjson sqlite3 openssl libbsd valgrind"
 	@echo ""
 	@echo "Linux installation:"
-	@echo "  apt-get install libcurl4-openssl-dev libcjson-dev libsqlite3-dev libssl-dev valgrind"
+	@echo "  apt-get install libcurl4-openssl-dev libcjson-dev libsqlite3-dev libssl-dev libbsd-dev valgrind"
 	@echo "  or"
-	@echo "  yum install libcurl-devel cjson-devel sqlite-devel openssl-devel valgrind"
+	@echo "  yum install libcurl-devel cjson-devel sqlite-devel openssl-devel libbsd-devel valgrind"
 	@echo ""
 	@echo "AWS Bedrock Configuration:"
 	@echo "  export CLAUDE_CODE_USE_BEDROCK=true"
