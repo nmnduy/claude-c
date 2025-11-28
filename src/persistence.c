@@ -278,8 +278,31 @@ PersistenceDB* persistence_init(const char *db_path) {
         return NULL;
     }
 
-    // Create schema
+    // Configure database for better concurrency and performance
     char *err_msg = NULL;
+
+    // Enable WAL mode for better concurrency
+    rc = sqlite3_exec(pdb->db, "PRAGMA journal_mode=WAL;", NULL, NULL, &err_msg);
+    if (rc != SQLITE_OK) {
+        LOG_WARN("Failed to enable WAL mode: %s", err_msg);
+        sqlite3_free(err_msg);
+        err_msg = NULL;
+        // Non-fatal, continue anyway
+    }
+
+    // Set synchronous mode to NORMAL for better performance
+    rc = sqlite3_exec(pdb->db, "PRAGMA synchronous=NORMAL;", NULL, NULL, &err_msg);
+    if (rc != SQLITE_OK) {
+        LOG_WARN("Failed to set synchronous mode: %s", err_msg);
+        sqlite3_free(err_msg);
+        err_msg = NULL;
+        // Non-fatal, continue anyway
+    }
+
+    // Set busy timeout to 5 seconds
+    sqlite3_busy_timeout(pdb->db, 5000);
+
+    // Create schema
     rc = sqlite3_exec(pdb->db, SCHEMA_SQL, NULL, NULL, &err_msg);
     if (rc != SQLITE_OK) {
         LOG_ERROR("Failed to create schema: %s", err_msg);

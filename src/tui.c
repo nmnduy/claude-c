@@ -438,7 +438,7 @@ static int add_conversation_entry(TUIState *tui, const char *prefix, const char 
         int new_capacity = tui->entries_capacity == 0 ? INITIAL_CONV_CAPACITY : tui->entries_capacity * 2;
         void *entries_ptr = (void *)tui->entries;
         size_t capacity = (size_t)tui->entries_capacity;
-        if (array_ensure_capacity(&entries_ptr, &capacity, (size_t)new_capacity, 
+        if (array_ensure_capacity(&entries_ptr, &capacity, (size_t)new_capacity,
                                   sizeof(ConversationEntry), NULL) != 0) {
             LOG_ERROR("[TUI] Failed to allocate memory for conversation entries");
             return -1;
@@ -1543,7 +1543,7 @@ void tui_handle_resize(TUIState *tui) {
     if (calculated_max_height < INPUT_WIN_MIN_HEIGHT) {
         calculated_max_height = INPUT_WIN_MIN_HEIGHT;
     }
-    
+
     // Update window manager config with new max height
     tui->wm.config.max_input_height = calculated_max_height;
 
@@ -1580,15 +1580,15 @@ void tui_handle_resize(TUIState *tui) {
     werase(tui->wm.conv_pad);
     int pad_height, pad_width;
     getmaxyx(tui->wm.conv_pad, pad_height, pad_width);
-    
+
     for (int i = 0; i < tui->entries_count; i++) {
         ConversationEntry *entry = &tui->entries[i];
-        
+
         // Safety check: ensure we're not writing beyond pad capacity
         int cur_y, cur_x;
         getyx(tui->wm.conv_pad, cur_y, cur_x);
         (void)cur_x;
-        
+
         if (cur_y >= pad_height - 1) {
             LOG_WARN("[TUI] Pad capacity exceeded during resize rebuild at entry %d/%d (cur_y=%d, pad_height=%d)",
                      i, tui->entries_count, cur_y, pad_height);
@@ -2730,14 +2730,14 @@ int tui_event_loop(TUIState *tui, const char *prompt,
         if (g_resize_flag) {
             g_resize_flag = 0;
             tui_handle_resize(tui);
-            
+
             // Verify windows are still valid after resize
             if (!tui->wm.conv_pad || !tui->wm.input_win) {
                 LOG_ERROR("[TUI] Windows invalid after resize, exiting event loop");
                 running = 0;
                 break;
             }
-            
+
             refresh_conversation_viewport(tui);
             render_status_window(tui);
             tui_redraw_input(tui, prompt);

@@ -5380,10 +5380,10 @@ static int submit_input_callback(const char *input, void *user_data) {
             const char *cmd_line = input_copy + 1;
             const char *space = strchr(cmd_line, ' ');
             size_t cmd_len = space ? (size_t)(space - cmd_line) : strlen(cmd_line);
-            
+
             char error_msg[256];
-            snprintf(error_msg, sizeof(error_msg), 
-                     "Unknown command: /%.*s (type /help for available commands)", 
+            snprintf(error_msg, sizeof(error_msg),
+                     "Unknown command: /%.*s (type /help for available commands)",
                      (int)cmd_len, cmd_line);
             ui_show_error(tui, queue, error_msg);
             free(input_copy);
@@ -5610,7 +5610,7 @@ static int process_single_command_response(ConversationState *state, ApiResponse
 
                 // Print tool name header with details
                 char *tool_details = get_tool_details(tool->name, input);
-                
+
                 // Print opening HTML-style tag with tool name and optional details
                 printf("<tool name=\"%s\"", tool->name);
                 if (tool_details && strlen(tool_details) > 0) {

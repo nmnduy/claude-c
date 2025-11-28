@@ -95,7 +95,7 @@ int calculate_capacity(size_t current_capacity,
 
             calculated_capacity = current_capacity;
             if (calculated_capacity == 0) {
-                calculated_capacity = (config->min_capacity > 0) ? 
+                calculated_capacity = (config->min_capacity > 0) ?
                                      config->min_capacity : increment;
             }
 
@@ -120,7 +120,7 @@ int calculate_capacity(size_t current_capacity,
                 // Can't double, try adding
                 size_t increment = config->growth_amount;
                 if (increment == 0) increment = 4096;
-                
+
                 if (check_add_overflow(current_capacity, increment)) {
                     LOG_ERROR("[array_resize] hybrid growth would overflow");
                     return -1;
@@ -220,7 +220,7 @@ int array_ensure_capacity(void **ptr,
     *current_capacity = new_capacity;
 
     LOG_DEBUG("[array_resize] resized array: capacity %zu -> %zu (%zu bytes)",
-             *current_capacity - new_capacity + *current_capacity, 
+             *current_capacity - new_capacity + *current_capacity,
              new_capacity, new_size);
 
     return 0;
