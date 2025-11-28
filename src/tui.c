@@ -62,57 +62,6 @@ static volatile sig_atomic_t g_resize_flag = 0;
 #define NCURSES_PAIR_TODO_PENDING 9
 // Dedicated tool color pair (separate from STATUS)
 #define NCURSES_PAIR_TOOL 10
-// Visual mode selection highlight (reversed colors)
-#define NCURSES_PAIR_VISUAL 11
-
-// ============================================================================
-// Clipboard Support (OSC 52)
-// ============================================================================
-
-// Copy text to system clipboard using OSC 52 escape sequence
-// This works on most modern terminals (iTerm2, kitty, xterm, tmux, etc.)
-// Returns: 0 on success, -1 on failure
-static int copy_to_clipboard(const char *text) {
-    if (!text || text[0] == '\0') {
-        return -1;
-    }
-
-    size_t text_len = strlen(text);
-
-    // Base64 encode the text
-    // Base64 output is approximately 4/3 of input size + padding
-    size_t b64_size = ((text_len + 2) / 3) * 4 + 1;
-    char *b64_text = malloc(b64_size);
-    if (!b64_text) {
-        LOG_ERROR("[TUI] Failed to allocate base64 buffer for clipboard");
-        return -1;
-    }
-
-    // Simple base64 encoding
-    static const char b64_chars[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    size_t out_idx = 0;
-    for (size_t i = 0; i < text_len; i += 3) {
-        unsigned int n = ((unsigned int)(unsigned char)text[i]) << 16;
-        if (i + 1 < text_len) n |= ((unsigned int)(unsigned char)text[i + 1]) << 8;
-        if (i + 2 < text_len) n |= (unsigned int)(unsigned char)text[i + 2];
-
-        b64_text[out_idx++] = b64_chars[(n >> 18) & 0x3F];
-        b64_text[out_idx++] = b64_chars[(n >> 12) & 0x3F];
-        b64_text[out_idx++] = (i + 1 < text_len) ? b64_chars[(n >> 6) & 0x3F] : '=';
-        b64_text[out_idx++] = (i + 2 < text_len) ? b64_chars[n & 0x3F] : '=';
-    }
-    b64_text[out_idx] = '\0';
-
-    // Send OSC 52 escape sequence to terminal
-    // Format: ESC ] 52 ; c ; <base64-data> ESC \
-    // 'c' means clipboard (vs 'p' for primary selection)
-    printf("\033]52;c;%s\033\\", b64_text);
-    fflush(stdout);
-
-    LOG_DEBUG("[TUI] Copied %zu bytes to clipboard via OSC 52", text_len);
-    free(b64_text);
-    return 0;
-}
 
 // Validate TUI window state (debug builds)
 // Uses ncurses is_pad() function to check window types
@@ -173,16 +122,33 @@ static void render_status_window(TUIState *tui) {
 
     int col = 0;
 
-    // MODE INDICATOR - Show only for VISUAL mode (useful for selection feedback)
-    const char *mode_str = NULL;
-    int mode_color = NCURSES_PAIR_FOREGROUND;
-    int mode_len = 0;
-
-    if (tui->mode == TUI_MODE_VISUAL) {
-        mode_str = "-- VISUAL --";
-        mode_color = NCURSES_PAIR_VISUAL;
-        mode_len = (int)strlen(mode_str);
+    // MODE INDICATOR - Commented out (hiding input box in normal mode instead)
+    // If we want to restore mode indicator, uncomment this section:
+    /*
+    const char *mode_str;
+    int mode_color;
+    switch (tui->mode) {
+        case TUI_MODE_NORMAL:
+            mode_str = "-- NORMAL --";
+            mode_color = NCURSES_PAIR_ASSISTANT;
+            break;
+        case TUI_MODE_INSERT:
+            mode_str = "-- INSERT --";
+            mode_color = NCURSES_PAIR_PROMPT;
+            break;
+        case TUI_MODE_COMMAND:
+            mode_str = "-- COMMAND --";
+            mode_color = NCURSES_PAIR_STATUS;
+            break;
+        default:
+            mode_str = "-- UNKNOWN --";
+            mode_color = NCURSES_PAIR_ERROR;
+            break;
     }
+    int mode_len = (int)strlen(mode_str);
+    int mode_col = width - mode_len - 1;
+    if (mode_col < 0) mode_col = 0;
+    */
 
     // Render token usage on the right side (only in NORMAL mode, if any tokens used)
     char token_str[64] = {0};
@@ -259,25 +225,22 @@ static void render_status_window(TUIState *tui) {
         }
     }
 
-    // MODE INDICATOR RENDERING - Show only for VISUAL mode
-    if (mode_str && mode_len > 0) {
-        int mode_col = width - mode_len - 1;
-        if (mode_col < 0) mode_col = 0;
-
-        if (mode_col < width) {
-            if (has_colors()) {
-                wattron(tui->wm.status_win, COLOR_PAIR(mode_color) | A_BOLD);
-            } else {
-                wattron(tui->wm.status_win, A_BOLD);
-            }
-            mvwaddnstr(tui->wm.status_win, 0, mode_col, mode_str, width - mode_col);
-            if (has_colors()) {
-                wattroff(tui->wm.status_win, COLOR_PAIR(mode_color) | A_BOLD);
-            } else {
-                wattroff(tui->wm.status_win, A_BOLD);
-            }
+    // MODE INDICATOR RENDERING - Commented out (hiding input box in normal mode instead)
+    /*
+    if (mode_col < width) {
+        if (has_colors()) {
+            wattron(tui->status_win, COLOR_PAIR(mode_color) | A_BOLD);
+        } else {
+            wattron(tui->status_win, A_BOLD);
+        }
+        mvwaddnstr(tui->status_win, 0, mode_col, mode_str, width - mode_col);
+        if (has_colors()) {
+            wattroff(tui->status_win, COLOR_PAIR(mode_color) | A_BOLD);
+        } else {
+            wattroff(tui->status_win, A_BOLD);
         }
     }
+    */
 
     wrefresh(tui->wm.status_win);
 }
@@ -423,8 +386,6 @@ static void init_ncurses_colors(void) {
             init_pair(NCURSES_PAIR_TODO_COMPLETED, 17, -1);    // Green (same as USER)
             init_pair(NCURSES_PAIR_TODO_IN_PROGRESS, 19, -1);  // Yellow (same as STATUS)
             init_pair(NCURSES_PAIR_TODO_PENDING, 18, -1);      // Cyan (same as ASSISTANT)
-            // Visual mode selection (reversed - white on blue for visibility)
-            init_pair(NCURSES_PAIR_VISUAL, COLOR_WHITE, COLOR_BLUE);
 
             LOG_DEBUG("[TUI] Custom colors initialized successfully");
         } else {
@@ -443,8 +404,6 @@ static void init_ncurses_colors(void) {
             init_pair(NCURSES_PAIR_TODO_COMPLETED, COLOR_GREEN, -1);
             init_pair(NCURSES_PAIR_TODO_IN_PROGRESS, COLOR_YELLOW, -1);
             init_pair(NCURSES_PAIR_TODO_PENDING, COLOR_CYAN, -1);
-            // Visual mode selection (reversed - white on blue for visibility)
-            init_pair(NCURSES_PAIR_VISUAL, COLOR_WHITE, COLOR_BLUE);
         }
     } else {
         LOG_DEBUG("[TUI] No theme loaded, using standard ncurses colors");
@@ -462,8 +421,6 @@ static void init_ncurses_colors(void) {
         init_pair(NCURSES_PAIR_TODO_COMPLETED, COLOR_GREEN, -1);
         init_pair(NCURSES_PAIR_TODO_IN_PROGRESS, COLOR_YELLOW, -1);
         init_pair(NCURSES_PAIR_TODO_PENDING, COLOR_CYAN, -1);
-        // Visual mode selection (reversed - white on blue for visibility)
-        init_pair(NCURSES_PAIR_VISUAL, COLOR_WHITE, COLOR_BLUE);
     }
 }
 
@@ -1230,12 +1187,6 @@ int tui_init(TUIState *tui) {
     tui->mode = TUI_MODE_INSERT;
     tui->normal_mode_last_key = 0;
 
-    // Initialize visual mode state
-    tui->visual_anchor_line = 0;
-    tui->visual_anchor_col = 0;
-    tui->visual_cursor_line = 0;
-    tui->visual_cursor_col = 0;
-
     // Initialize command mode buffer
     tui->command_buffer = NULL;
     tui->command_buffer_len = 0;
@@ -1944,480 +1895,6 @@ static int handle_command_mode_input(TUIState *tui, int ch, const char *prompt) 
     return 0;
 }
 
-// ============================================================================
-// Visual Mode Support
-// ============================================================================
-
-// Extract text from conversation entries between start and end line/column
-// Returns: allocated string with selected text, or NULL on failure
-// Caller must free the returned string
-static char *extract_selected_text(TUIState *tui, int start_line, int start_col,
-                                    int end_line, int end_col) {
-    if (!tui || !tui->entries || tui->entries_count == 0) {
-        return NULL;
-    }
-
-    // Normalize selection (start should be before end)
-    if (start_line > end_line || (start_line == end_line && start_col > end_col)) {
-        int tmp_line = start_line;
-        int tmp_col = start_col;
-        start_line = end_line;
-        start_col = end_col;
-        end_line = tmp_line;
-        end_col = tmp_col;
-    }
-
-    // Calculate approximate buffer size needed
-    size_t estimated_size = 0;
-    for (int i = 0; i < tui->entries_count; i++) {
-        if (tui->entries[i].prefix) {
-            estimated_size += strlen(tui->entries[i].prefix) + 1;  // +1 for space
-        }
-        if (tui->entries[i].text) {
-            estimated_size += strlen(tui->entries[i].text);
-        }
-        estimated_size += 1;  // newline
-    }
-
-    char *result = malloc(estimated_size + 1);
-    if (!result) {
-        LOG_ERROR("[TUI] Failed to allocate buffer for selected text");
-        return NULL;
-    }
-
-    size_t result_len = 0;
-    int current_line = 0;
-
-    // Iterate through conversation entries
-    for (int entry_idx = 0; entry_idx < tui->entries_count; entry_idx++) {
-        ConversationEntry *entry = &tui->entries[entry_idx];
-        char line_buffer[4096];
-        int line_len = 0;
-
-        // Build the line content
-        if (entry->prefix && entry->prefix[0] != '\0') {
-            int prefix_len = snprintf(line_buffer, sizeof(line_buffer), "%s ", entry->prefix);
-            if (prefix_len > 0) {
-                line_len = prefix_len;
-            }
-        }
-
-        if (entry->text && entry->text[0] != '\0') {
-            int text_added = snprintf(line_buffer + line_len,
-                                       sizeof(line_buffer) - (size_t)line_len,
-                                       "%s", entry->text);
-            if (text_added > 0) {
-                line_len += text_added;
-            }
-        }
-
-        // Check if this line is within selection range
-        if (current_line >= start_line && current_line <= end_line) {
-            int copy_start = 0;
-            int copy_end = line_len;
-
-            // Adjust for partial line at start
-            if (current_line == start_line) {
-                copy_start = start_col;
-                if (copy_start > line_len) {
-                    copy_start = line_len;
-                }
-            }
-
-            // Adjust for partial line at end
-            if (current_line == end_line) {
-                copy_end = end_col + 1;  // +1 because end_col is inclusive
-                if (copy_end > line_len) {
-                    copy_end = line_len;
-                }
-            }
-
-            // Copy the selected portion
-            int copy_len = copy_end - copy_start;
-            if (copy_len > 0 && copy_start >= 0 && copy_start < line_len) {
-                memcpy(result + result_len, line_buffer + copy_start, (size_t)copy_len);
-                result_len += (size_t)copy_len;
-            }
-
-            // Add newline between lines (not after last line)
-            if (current_line < end_line) {
-                result[result_len++] = '\n';
-            }
-        }
-
-        current_line++;
-    }
-
-    result[result_len] = '\0';
-    return result;
-}
-
-// Render conversation pad with visual selection highlighting
-static void render_conversation_with_selection(TUIState *tui) {
-    if (!tui || !tui->wm.conv_pad || tui->mode != TUI_MODE_VISUAL) {
-        return;
-    }
-
-    // Get selection bounds (normalize so start <= end)
-    int start_line = tui->visual_anchor_line;
-    int start_col = tui->visual_anchor_col;
-    int end_line = tui->visual_cursor_line;
-    int end_col = tui->visual_cursor_col;
-
-    if (start_line > end_line || (start_line == end_line && start_col > end_col)) {
-        int tmp_line = start_line;
-        int tmp_col = start_col;
-        start_line = end_line;
-        start_col = end_col;
-        end_line = tmp_line;
-        end_col = tmp_col;
-    }
-
-    int pad_width;
-    int pad_height_unused;
-    getmaxyx(tui->wm.conv_pad, pad_height_unused, pad_width);
-    (void)pad_height_unused;
-
-    // Rebuild pad content with selection highlighting
-    werase(tui->wm.conv_pad);
-    int current_line = 0;
-
-    for (int entry_idx = 0; entry_idx < tui->entries_count; entry_idx++) {
-        ConversationEntry *entry = &tui->entries[entry_idx];
-
-        // Map color pair
-        int mapped_pair = NCURSES_PAIR_FOREGROUND;
-        switch (entry->color_pair) {
-            case COLOR_PAIR_DEFAULT:
-            case COLOR_PAIR_FOREGROUND: mapped_pair = NCURSES_PAIR_FOREGROUND; break;
-            case COLOR_PAIR_USER: mapped_pair = NCURSES_PAIR_USER; break;
-            case COLOR_PAIR_ASSISTANT: mapped_pair = NCURSES_PAIR_ASSISTANT; break;
-            case COLOR_PAIR_TOOL:
-            case COLOR_PAIR_STATUS: mapped_pair = NCURSES_PAIR_STATUS; break;
-            case COLOR_PAIR_ERROR: mapped_pair = NCURSES_PAIR_ERROR; break;
-            case COLOR_PAIR_PROMPT: mapped_pair = NCURSES_PAIR_PROMPT; break;
-            case COLOR_PAIR_TODO_COMPLETED: mapped_pair = NCURSES_PAIR_TODO_COMPLETED; break;
-            case COLOR_PAIR_TODO_IN_PROGRESS: mapped_pair = NCURSES_PAIR_TODO_IN_PROGRESS; break;
-            case COLOR_PAIR_TODO_PENDING: mapped_pair = NCURSES_PAIR_TODO_PENDING; break;
-            default: break;  // Keep NCURSES_PAIR_FOREGROUND
-        }
-
-        // Build the full line content
-        char line_buffer[4096];
-        int line_len = 0;
-
-        if (entry->prefix && entry->prefix[0] != '\0') {
-            int prefix_len = snprintf(line_buffer, sizeof(line_buffer), "%s ", entry->prefix);
-            if (prefix_len > 0) {
-                line_len = prefix_len;
-            }
-        }
-
-        if (entry->text && entry->text[0] != '\0') {
-            int text_added = snprintf(line_buffer + line_len,
-                                       sizeof(line_buffer) - (size_t)line_len,
-                                       "%s", entry->text);
-            if (text_added > 0) {
-                line_len += text_added;
-            }
-        }
-
-        // Render character by character with selection highlighting
-        wmove(tui->wm.conv_pad, current_line, 0);
-
-        for (int col = 0; col < line_len && col < pad_width - 1; col++) {
-            int in_selection = 0;
-
-            // Check if this position is within the selection
-            if (current_line > start_line && current_line < end_line) {
-                in_selection = 1;  // Entire line selected
-            } else if (current_line == start_line && current_line == end_line) {
-                // Single line selection
-                if (col >= start_col && col <= end_col) {
-                    in_selection = 1;
-                }
-            } else if (current_line == start_line) {
-                // Start of multi-line selection
-                if (col >= start_col) {
-                    in_selection = 1;
-                }
-            } else if (current_line == end_line) {
-                // End of multi-line selection
-                if (col <= end_col) {
-                    in_selection = 1;
-                }
-            }
-
-            if (in_selection && has_colors()) {
-                wattron(tui->wm.conv_pad, COLOR_PAIR(NCURSES_PAIR_VISUAL) | A_REVERSE);
-            } else if (has_colors()) {
-                // Use the appropriate color for prefix vs text
-                int use_pair = mapped_pair;
-                if (entry->prefix && col < (int)strlen(entry->prefix)) {
-                    wattron(tui->wm.conv_pad, COLOR_PAIR(use_pair) | A_BOLD);
-                } else {
-                    wattron(tui->wm.conv_pad, COLOR_PAIR(NCURSES_PAIR_FOREGROUND));
-                }
-            }
-
-            waddch(tui->wm.conv_pad, (chtype)(unsigned char)line_buffer[col]);
-
-            if (in_selection && has_colors()) {
-                wattroff(tui->wm.conv_pad, COLOR_PAIR(NCURSES_PAIR_VISUAL) | A_REVERSE);
-            } else if (has_colors()) {
-                int use_pair = mapped_pair;
-                if (entry->prefix && col < (int)strlen(entry->prefix)) {
-                    wattroff(tui->wm.conv_pad, COLOR_PAIR(use_pair) | A_BOLD);
-                } else {
-                    wattroff(tui->wm.conv_pad, COLOR_PAIR(NCURSES_PAIR_FOREGROUND));
-                }
-            }
-        }
-
-        waddch(tui->wm.conv_pad, '\n');
-        current_line++;
-    }
-
-    window_manager_set_content_lines(&tui->wm, current_line);
-    window_manager_refresh_conversation(&tui->wm);
-}
-
-// Handle visual mode input
-// Returns: 0 to continue, -1 on error/quit
-static int handle_visual_mode_input(TUIState *tui, int ch, const char *prompt) {
-    if (!tui || !tui->wm.conv_pad) {
-        return 0;
-    }
-
-    int viewport_h = tui->wm.conv_viewport_height;
-    if (viewport_h <= 0) {
-        viewport_h = 10;  // Fallback
-    }
-
-    int half_page = viewport_h / 2;
-    int max_line = tui->entries_count - 1;
-    if (max_line < 0) max_line = 0;
-
-    // Get max column for current cursor line
-    int max_col = 0;
-    if (tui->visual_cursor_line >= 0 && tui->visual_cursor_line < tui->entries_count) {
-        ConversationEntry *entry = &tui->entries[tui->visual_cursor_line];
-        if (entry->prefix) {
-            max_col += (int)strlen(entry->prefix) + 1;  // +1 for space
-        }
-        if (entry->text) {
-            max_col += (int)strlen(entry->text);
-        }
-        if (max_col > 0) max_col--;  // Make it 0-indexed
-    }
-
-    // Handle 'gg' sequence in visual mode
-    if (tui->normal_mode_last_key == 'g' && ch == 'g') {
-        // gg: Go to top, extending selection
-        tui->visual_cursor_line = 0;
-        tui->visual_cursor_col = 0;
-        tui->normal_mode_last_key = 0;
-        window_manager_scroll_to_top(&tui->wm);
-        render_conversation_with_selection(tui);
-        input_redraw(tui, prompt);
-        return 0;
-    }
-
-    // Reset last key for non-g keys
-    if (ch != 'g') {
-        tui->normal_mode_last_key = 0;
-    }
-
-    switch (ch) {
-        case 27:  // ESC - exit visual mode, return to normal mode
-            tui->mode = TUI_MODE_NORMAL;
-            tui_handle_resize(tui);  // Force re-render without selection
-            if (tui->wm.status_height > 0) {
-                render_status_window(tui);
-            }
-            input_redraw(tui, prompt);
-            break;
-
-        case 'v':  // Toggle off visual mode
-            tui->mode = TUI_MODE_NORMAL;
-            tui_handle_resize(tui);  // Force re-render without selection
-            if (tui->wm.status_height > 0) {
-                render_status_window(tui);
-            }
-            input_redraw(tui, prompt);
-            break;
-
-        case 'y':  // Yank (copy) selected text
-        case 'Y': {
-            char *selected = extract_selected_text(tui,
-                tui->visual_anchor_line, tui->visual_anchor_col,
-                tui->visual_cursor_line, tui->visual_cursor_col);
-            if (selected) {
-                if (copy_to_clipboard(selected) == 0) {
-                    // Show brief feedback
-                    size_t len = strlen(selected);
-                    char msg[128];
-                    snprintf(msg, sizeof(msg), "%zu characters yanked to clipboard", len);
-                    tui_update_status(tui, msg);
-                } else {
-                    tui_update_status(tui, "Failed to copy to clipboard");
-                }
-                free(selected);
-            }
-            // Exit visual mode after yank
-            tui->mode = TUI_MODE_NORMAL;
-            tui_handle_resize(tui);  // Force re-render without selection
-            if (tui->wm.status_height > 0) {
-                render_status_window(tui);
-            }
-            input_redraw(tui, prompt);
-            break;
-        }
-
-        case 'j':  // Move cursor down
-        case KEY_DOWN:
-            if (tui->visual_cursor_line < max_line) {
-                tui->visual_cursor_line++;
-                // Update max_col for new line
-                max_col = 0;
-                if (tui->visual_cursor_line < tui->entries_count) {
-                    ConversationEntry *entry = &tui->entries[tui->visual_cursor_line];
-                    if (entry->prefix) max_col += (int)strlen(entry->prefix) + 1;
-                    if (entry->text) max_col += (int)strlen(entry->text);
-                    if (max_col > 0) max_col--;
-                }
-                // Clamp column to new line length
-                if (tui->visual_cursor_col > max_col) {
-                    tui->visual_cursor_col = max_col;
-                }
-                // Auto-scroll if cursor goes below viewport
-                int visible_start = tui->wm.conv_scroll_offset;
-                int visible_end = visible_start + viewport_h - 1;
-                if (tui->visual_cursor_line > visible_end) {
-                    window_manager_scroll(&tui->wm, 1);
-                }
-                render_conversation_with_selection(tui);
-                input_redraw(tui, prompt);
-            }
-            break;
-
-        case 'k':  // Move cursor up
-        case KEY_UP:
-            if (tui->visual_cursor_line > 0) {
-                tui->visual_cursor_line--;
-                // Update max_col for new line
-                max_col = 0;
-                if (tui->visual_cursor_line < tui->entries_count) {
-                    ConversationEntry *entry = &tui->entries[tui->visual_cursor_line];
-                    if (entry->prefix) max_col += (int)strlen(entry->prefix) + 1;
-                    if (entry->text) max_col += (int)strlen(entry->text);
-                    if (max_col > 0) max_col--;
-                }
-                // Clamp column to new line length
-                if (tui->visual_cursor_col > max_col) {
-                    tui->visual_cursor_col = max_col;
-                }
-                // Auto-scroll if cursor goes above viewport
-                int visible_start = tui->wm.conv_scroll_offset;
-                if (tui->visual_cursor_line < visible_start) {
-                    window_manager_scroll(&tui->wm, -1);
-                }
-                render_conversation_with_selection(tui);
-                input_redraw(tui, prompt);
-            }
-            break;
-
-        case 'h':  // Move cursor left
-        case KEY_LEFT:
-            if (tui->visual_cursor_col > 0) {
-                tui->visual_cursor_col--;
-                render_conversation_with_selection(tui);
-                input_redraw(tui, prompt);
-            }
-            break;
-
-        case 'l':  // Move cursor right
-        case KEY_RIGHT:
-            if (tui->visual_cursor_col < max_col) {
-                tui->visual_cursor_col++;
-                render_conversation_with_selection(tui);
-                input_redraw(tui, prompt);
-            }
-            break;
-
-        case '0':  // Beginning of line
-        case KEY_HOME:
-            tui->visual_cursor_col = 0;
-            render_conversation_with_selection(tui);
-            input_redraw(tui, prompt);
-            break;
-
-        case '$':  // End of line
-        case KEY_END:
-            tui->visual_cursor_col = max_col;
-            render_conversation_with_selection(tui);
-            input_redraw(tui, prompt);
-            break;
-
-        case 'g':  // First 'g' in 'gg' sequence
-            tui->normal_mode_last_key = 'g';
-            break;
-
-        case 'G':  // Go to last line
-            tui->visual_cursor_line = max_line;
-            // Update max_col for new line
-            max_col = 0;
-            if (tui->visual_cursor_line < tui->entries_count) {
-                ConversationEntry *entry = &tui->entries[tui->visual_cursor_line];
-                if (entry->prefix) max_col += (int)strlen(entry->prefix) + 1;
-                if (entry->text) max_col += (int)strlen(entry->text);
-                if (max_col > 0) max_col--;
-            }
-            if (tui->visual_cursor_col > max_col) {
-                tui->visual_cursor_col = max_col;
-            }
-            window_manager_scroll_to_bottom(&tui->wm);
-            render_conversation_with_selection(tui);
-            input_redraw(tui, prompt);
-            break;
-
-        case 4:  // Ctrl+D: scroll down half page
-            if (tui->visual_cursor_line + half_page <= max_line) {
-                tui->visual_cursor_line += half_page;
-            } else {
-                tui->visual_cursor_line = max_line;
-            }
-            window_manager_scroll(&tui->wm, half_page);
-            render_conversation_with_selection(tui);
-            input_redraw(tui, prompt);
-            break;
-
-        case 21:  // Ctrl+U: scroll up half page
-            if (tui->visual_cursor_line - half_page >= 0) {
-                tui->visual_cursor_line -= half_page;
-            } else {
-                tui->visual_cursor_line = 0;
-            }
-            window_manager_scroll(&tui->wm, -half_page);
-            render_conversation_with_selection(tui);
-            input_redraw(tui, prompt);
-            break;
-
-        case KEY_RESIZE:
-            tui_handle_resize(tui);
-            render_conversation_with_selection(tui);
-            render_status_window(tui);
-            input_redraw(tui, prompt);
-            break;
-
-        default:
-            /* Unhandled key in visual mode */
-            break;
-    }
-
-    return 0;
-}
-
 // Handle normal mode input
 // Returns: 0 to continue, 1 to switch to insert mode, -1 on error/quit
 static int handle_normal_mode_input(TUIState *tui, int ch, const char *prompt) {
@@ -2543,66 +2020,6 @@ static int handle_normal_mode_input(TUIState *tui, int ch, const char *prompt) {
             }
             break;
 
-        case 'v':  // Enter visual mode
-            if (tui->entries_count > 0) {
-                tui->mode = TUI_MODE_VISUAL;
-                // Initialize selection at current scroll position (visible top)
-                tui->visual_anchor_line = tui->wm.conv_scroll_offset;
-                tui->visual_anchor_col = 0;
-                tui->visual_cursor_line = tui->wm.conv_scroll_offset;
-                tui->visual_cursor_col = 0;
-
-                // Clamp to valid range
-                if (tui->visual_anchor_line >= tui->entries_count) {
-                    tui->visual_anchor_line = tui->entries_count - 1;
-                }
-                if (tui->visual_cursor_line >= tui->entries_count) {
-                    tui->visual_cursor_line = tui->entries_count - 1;
-                }
-
-                LOG_DEBUG("[TUI] Entering visual mode at line %d", tui->visual_cursor_line);
-                render_conversation_with_selection(tui);
-                if (tui->wm.status_height > 0) {
-                    render_status_window(tui);
-                }
-                input_redraw(tui, prompt);
-            }
-            break;
-
-        case 'V':  // Enter visual line mode (select entire lines)
-            if (tui->entries_count > 0) {
-                tui->mode = TUI_MODE_VISUAL;
-                // Initialize selection for whole line
-                tui->visual_anchor_line = tui->wm.conv_scroll_offset;
-                tui->visual_anchor_col = 0;
-                tui->visual_cursor_line = tui->wm.conv_scroll_offset;
-
-                // Set cursor column to end of line
-                if (tui->visual_cursor_line < tui->entries_count) {
-                    ConversationEntry *entry = &tui->entries[tui->visual_cursor_line];
-                    int line_len = 0;
-                    if (entry->prefix) line_len += (int)strlen(entry->prefix) + 1;
-                    if (entry->text) line_len += (int)strlen(entry->text);
-                    tui->visual_cursor_col = (line_len > 0) ? line_len - 1 : 0;
-                }
-
-                // Clamp to valid range
-                if (tui->visual_anchor_line >= tui->entries_count) {
-                    tui->visual_anchor_line = tui->entries_count - 1;
-                }
-                if (tui->visual_cursor_line >= tui->entries_count) {
-                    tui->visual_cursor_line = tui->entries_count - 1;
-                }
-
-                LOG_DEBUG("[TUI] Entering visual line mode at line %d", tui->visual_cursor_line);
-                render_conversation_with_selection(tui);
-                if (tui->wm.status_height > 0) {
-                    render_status_window(tui);
-                }
-                input_redraw(tui, prompt);
-            }
-            break;
-
         case KEY_RESIZE:
             tui_handle_resize(tui);
             refresh_conversation_viewport(tui);
@@ -2691,16 +2108,6 @@ int tui_process_input_char(TUIState *tui, int ch, const char *prompt) {
         }
         // After handling normal mode input, always return
         // We don't want to process the mode-switching key as text
-        return 0;
-    }
-
-    // Handle visual mode separately
-    if (tui->mode == TUI_MODE_VISUAL) {
-        int result = handle_visual_mode_input(tui, ch, prompt);
-        if (result == -1) {
-            return -1;  // Quit signal
-        }
-        // After handling visual mode input, always return
         return 0;
     }
 

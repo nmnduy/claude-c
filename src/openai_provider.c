@@ -94,15 +94,15 @@ static char* headers_to_json(struct curl_slist *headers) {
                     *colon = '\0';  // Split the string
                     char *header_name = current->data;
                     char *header_value = colon + 1;
-
+                    
                     // Skip leading whitespace in value
                     while (*header_value == ' ' || *header_value == '\t') {
                         header_value++;
                     }
-
+                    
                     cJSON_AddStringToObject(header_obj, "name", header_name);
                     cJSON_AddStringToObject(header_obj, "value", header_value);
-
+                    
                     *colon = ':';  // Restore the colon
                 } else {
                     // If no colon, treat the whole line as a header line
@@ -176,7 +176,7 @@ static ApiCallResult openai_call_api(Provider *self, ConversationState *state) {
             size_t prefix_len = (size_t)(percent_s - config->auth_header_template);
             size_t api_key_len = strlen(config->api_key);
             size_t suffix_len = strlen(percent_s + 2); // +2 to skip "%s"
-
+            
             // Build auth header manually
             if (prefix_len + api_key_len + suffix_len + 1 < sizeof(auth_header)) {
                 strncpy(auth_header, config->auth_header_template, prefix_len);
@@ -254,11 +254,11 @@ static ApiCallResult openai_call_api(Provider *self, ConversationState *state) {
                          (end.tv_nsec - start.tv_nsec) / 1000000;
 
     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &result.http_status);
-
+    
     // Convert headers to JSON for logging before freeing them
     char *headers_json = headers_to_json(headers);
     result.headers_json = headers_json;  // Store for logging (caller must free)
-
+    
     curl_slist_free_all(headers);
     curl_easy_cleanup(curl);
 
@@ -471,7 +471,7 @@ static void openai_cleanup(Provider *self) {
         free(config->api_key);
         free(config->base_url);
         free(config->auth_header_template);
-
+        
         // Free extra headers
         if (config->extra_headers) {
             for (int i = 0; i < config->extra_headers_count; i++) {
@@ -479,7 +479,7 @@ static void openai_cleanup(Provider *self) {
             }
             free(config->extra_headers);
         }
-
+        
         free(config);
     }
 
@@ -621,7 +621,7 @@ Provider* openai_provider_create(const char *api_key, const char *base_url) {
             char *end = token + strlen(token) - 1;
             while (end > token && (*end == ' ' || *end == '\t')) end--;
             *(end + 1) = '\0';
-
+            
             config->extra_headers[i] = strdup(token);
             if (!config->extra_headers[i]) {
                 LOG_ERROR("OpenAI provider: failed to duplicate extra header");
@@ -641,7 +641,7 @@ Provider* openai_provider_create(const char *api_key, const char *base_url) {
             token = strtok(NULL, ",");
         }
         config->extra_headers[config->extra_headers_count] = NULL;  // NULL-terminate
-
+        
         LOG_INFO("OpenAI provider: loaded %d extra headers", config->extra_headers_count);
         free(extra_headers_copy);
     } else {

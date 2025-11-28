@@ -78,15 +78,15 @@ static char* headers_to_json(struct curl_slist *headers) {
                     *colon = '\0';  // Split the string
                     char *header_name = current->data;
                     char *header_value = colon + 1;
-
+                    
                     // Skip leading whitespace in value
                     while (*header_value == ' ' || *header_value == '\t') {
                         header_value++;
                     }
-
+                    
                     cJSON_AddStringToObject(header_obj, "name", header_name);
                     cJSON_AddStringToObject(header_obj, "value", header_value);
-
+                    
                     *colon = ':';  // Restore the colon
                 } else {
                     // If no colon, treat the whole line as a header line
@@ -171,11 +171,11 @@ static ApiCallResult bedrock_execute_request(BedrockConfig *config, const char *
                          (end.tv_nsec - start.tv_nsec) / 1000000;
 
     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &result.http_status);
-
+    
     // Convert headers to JSON for logging before freeing them
     char *headers_json = headers_to_json(headers);
     result.headers_json = headers_json;  // Store for logging (caller must free)
-
+    
     curl_slist_free_all(headers);
     curl_easy_cleanup(curl);
 
