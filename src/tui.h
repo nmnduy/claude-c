@@ -47,7 +47,8 @@ typedef struct {
 typedef enum {
     TUI_MODE_NORMAL,   // Normal mode (vim-like navigation, default for conversation viewing)
     TUI_MODE_INSERT,   // Insert mode (text input for sending messages)
-    TUI_MODE_COMMAND   // Command mode (entered with ':' from normal mode)
+    TUI_MODE_COMMAND,  // Command mode (entered with ':' from normal mode)
+    TUI_MODE_VISUAL    // Visual mode (text selection for copying)
 } TUIMode;
 
 // TUI State
@@ -76,11 +77,17 @@ typedef struct {
     int total_cached_tokens;      // Total cached tokens
 
     // Modes
-    TUIMode mode;            // Current input mode (NORMAL, INSERT, or COMMAND)
+    TUIMode mode;            // Current input mode (NORMAL, INSERT, COMMAND, or VISUAL)
     int normal_mode_last_key; // Previous key in normal mode (for gg, G combos)
     char *command_buffer;    // Buffer for command mode input (starts with ':')
     int command_buffer_len;  // Length of command buffer
     int command_buffer_capacity; // Capacity of command buffer
+
+    // Visual mode state
+    int visual_anchor_line;  // Line where visual selection started (anchor)
+    int visual_anchor_col;   // Column where visual selection started
+    int visual_cursor_line;  // Current cursor line (selection extends from anchor to cursor)
+    int visual_cursor_col;   // Current cursor column
 
     int is_initialized;      // Whether TUI has been set up
 
