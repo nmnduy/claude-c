@@ -53,6 +53,7 @@ static void persistence_log_api_call(
     const char *session_id,
     const char *url,
     const char *request,
+    const char *headers,
     const char *response,
     const char *model,
     const char *status,
@@ -60,7 +61,7 @@ static void persistence_log_api_call(
     const char *error_msg,
     long duration_ms,
     int tool_count
-) { (void)db; (void)session_id; (void)url; (void)request; (void)response; (void)model; (void)status; (void)code; (void)error_msg; (void)duration_ms; (void)tool_count; }
+) { (void)db; (void)session_id; (void)url; (void)request; (void)headers; (void)response; (void)model; (void)status; (void)code; (void)error_msg; (void)duration_ms; (void)tool_count; }
 
 // Stub Bedrock types and functions
 typedef struct {
@@ -4032,6 +4033,7 @@ static ApiResponse* call_api_with_retries(ConversationState *state) {
                     state->session_id,
                     state->api_url,
                     result.request_json ? result.request_json : "(request not available)",
+                    result.headers_json,
                     result.raw_response,
                     state->model,
                     "success",
@@ -4063,6 +4065,7 @@ static ApiResponse* call_api_with_retries(ConversationState *state) {
                 state->session_id,
                 state->api_url,
                 result.request_json ? result.request_json : "(request not available)",
+                result.headers_json,
                 result.raw_response,
                 state->model,
                 "error",

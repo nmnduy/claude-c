@@ -126,6 +126,7 @@ static const char *SCHEMA_SQL =
     "    session_id TEXT,"
     "    api_base_url TEXT NOT NULL,"
     "    request_json TEXT NOT NULL,"
+    "    headers_json TEXT,"
     "    response_json TEXT,"
     "    model TEXT NOT NULL,"
     "    status TEXT NOT NULL,"
@@ -354,6 +355,7 @@ int persistence_log_api_call(
     const char *session_id,
     const char *api_base_url,
     const char *request_json,
+    const char *headers_json,
     const char *response_json,
     const char *model,
     const char *status,
@@ -377,9 +379,9 @@ int persistence_log_api_call(
     // Prepare SQL statement
     const char *sql =
         "INSERT INTO api_calls "
-        "(timestamp, session_id, api_base_url, request_json, response_json, model, status, "
+        "(timestamp, session_id, api_base_url, request_json, headers_json, response_json, model, status, "
         "http_status, error_message, duration_ms, tool_count, created_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);";
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);";
 
     sqlite3_stmt *stmt;
     int rc = sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL);
@@ -402,25 +404,31 @@ int persistence_log_api_call(
     sqlite3_bind_text(stmt, 3, api_base_url, -1, SQLITE_TRANSIENT);
     sqlite3_bind_text(stmt, 4, request_json, -1, SQLITE_TRANSIENT);
 
-    if (response_json) {
-        sqlite3_bind_text(stmt, 5, response_json, -1, SQLITE_TRANSIENT);
+    if (headers_json) {
+        sqlite3_bind_text(stmt, 5, headers_json, -1, SQLITE_TRANSIENT);
     } else {
         sqlite3_bind_null(stmt, 5);
     }
 
-    sqlite3_bind_text(stmt, 6, model, -1, SQLITE_TRANSIENT);
-    sqlite3_bind_text(stmt, 7, status, -1, SQLITE_TRANSIENT);
-    sqlite3_bind_int(stmt, 8, http_status);
-
-    if (error_message) {
-        sqlite3_bind_text(stmt, 9, error_message, -1, SQLITE_TRANSIENT);
+    if (response_json) {
+        sqlite3_bind_text(stmt, 6, response_json, -1, SQLITE_TRANSIENT);
     } else {
-        sqlite3_bind_null(stmt, 9);
+        sqlite3_bind_null(stmt, 6);
     }
 
-    sqlite3_bind_int64(stmt, 10, duration_ms);
-    sqlite3_bind_int(stmt, 11, tool_count);
-    sqlite3_bind_int64(stmt, 12, now);
+    sqlite3_bind_text(stmt, 7, model, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 8, status, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int(stmt, 9, http_status);
+
+    if (error_message) {
+        sqlite3_bind_text(stmt, 10, error_message, -1, SQLITE_TRANSIENT);
+    } else {
+        sqlite3_bind_null(stmt, 10);
+    }
+
+    sqlite3_bind_int64(stmt, 11, duration_ms);
+    sqlite3_bind_int(stmt, 12, tool_count);
+    sqlite3_bind_int64(stmt, 13, now);
 
     // Execute
     rc = sqlite3_step(stmt);

@@ -25,6 +25,7 @@ typedef struct {
     ApiResponse *response;   // Parsed vendor-agnostic response (NULL on error, caller must free)
     char *raw_response;      // Raw response body (for logging, caller must free)
     char *request_json;      // Raw request JSON (for logging, caller must free)
+    char *headers_json;      // JSON representation of request headers (for logging, caller must free)
     long http_status;        // HTTP status code (0 if network error before response)
     char *error_message;     // Error message if call failed (caller must free)
     long duration_ms;        // Request duration in milliseconds
