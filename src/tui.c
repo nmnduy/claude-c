@@ -692,6 +692,13 @@ static int input_insert_char(TUIInputBuffer *input, const unsigned char *utf8_ch
         return 0;
     }
 
+    // User is typing normally (not in paste mode) - invalidate any previous paste tracking
+    if (input->paste_content_len > 0 || input->paste_placeholder_len > 0) {
+        LOG_DEBUG("[TUI] Invalidating paste tracking due to character insertion");
+        input->paste_content_len = 0;
+        input->paste_placeholder_len = 0;
+    }
+
     if (input->length + char_bytes >= (int)input->capacity - 1) {
         return -1;  // Buffer full
     }
@@ -717,6 +724,13 @@ static int input_delete_char(TUIInputBuffer *input) {
         return 0;  // Nothing to delete
     }
 
+    // Invalidate paste tracking if any edit is made
+    if (input->paste_content_len > 0 || input->paste_placeholder_len > 0) {
+        LOG_DEBUG("[TUI] Invalidating paste tracking due to character deletion");
+        input->paste_content_len = 0;
+        input->paste_placeholder_len = 0;
+    }
+
     // Find the length of the UTF-8 character at cursor
     int char_len = utf8_char_length((unsigned char)input->buffer[input->cursor]);
 
@@ -735,6 +749,13 @@ static int input_backspace(TUIInputBuffer *input) {
         return 0;  // Nothing to delete
     }
 
+    // Invalidate paste tracking if any edit is made
+    if (input->paste_content_len > 0 || input->paste_placeholder_len > 0) {
+        LOG_DEBUG("[TUI] Invalidating paste tracking due to backspace");
+        input->paste_content_len = 0;
+        input->paste_placeholder_len = 0;
+    }
+
     memmove(&input->buffer[input->cursor - 1],
             &input->buffer[input->cursor],
             (size_t)(input->length - input->cursor + 1));
@@ -747,6 +768,13 @@ static int input_backspace(TUIInputBuffer *input) {
 static int input_delete_word_backward(TUIInputBuffer *input) {
     if (!input || input->cursor <= 0) {
         return 0;
+    }
+
+    // Invalidate paste tracking if any edit is made
+    if (input->paste_content_len > 0 || input->paste_placeholder_len > 0) {
+        LOG_DEBUG("[TUI] Invalidating paste tracking due to word deletion backward");
+        input->paste_content_len = 0;
+        input->paste_placeholder_len = 0;
     }
 
     int word_start = input->cursor - 1;
@@ -776,6 +804,13 @@ static int input_delete_word_backward(TUIInputBuffer *input) {
 static int input_delete_word_forward(TUIInputBuffer *input) {
     if (!input || input->cursor >= input->length) {
         return 0;
+    }
+
+    // Invalidate paste tracking if any edit is made
+    if (input->paste_content_len > 0 || input->paste_placeholder_len > 0) {
+        LOG_DEBUG("[TUI] Invalidating paste tracking due to word deletion forward");
+        input->paste_content_len = 0;
+        input->paste_placeholder_len = 0;
     }
 
     int word_end = move_forward_word(input->buffer, input->cursor, input->length);
@@ -2450,9 +2485,13 @@ const char* tui_get_input_buffer(TUIState *tui) {
 
     TUIInputBuffer *input = tui->input_buffer;
 
+    LOG_DEBUG("[TUI] get_input_buffer: paste_content=%p, paste_content_len=%zu, paste_placeholder_len=%d",
+              (void*)input->paste_content, input->paste_content_len, input->paste_placeholder_len);
+
     // If there's no paste content, return buffer as-is
     if (!input->paste_content || input->paste_content_len == 0 ||
         input->paste_placeholder_len == 0) {
+        LOG_DEBUG("[TUI] get_input_buffer: returning buffer as-is (no reconstruction needed)");
         return input->buffer;
     }
 
