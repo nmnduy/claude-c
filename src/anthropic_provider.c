@@ -104,7 +104,9 @@ static char* openai_to_anthropic_request(const char *openai_req) {
 
     // Separate system and content messages
     cJSON *anth_msgs = cJSON_CreateArray();
-    cJSON *system_prompt = NULL;
+    // Preserve system as content array if provided (to keep cache_control)
+    cJSON *system_blocks = NULL;   // array of content blocks
+    cJSON *system_string = NULL;   // fallback plain string
 
     if (messages && cJSON_IsArray(messages)) {
         cJSON *m = NULL;
@@ -114,16 +116,11 @@ static char* openai_to_anthropic_request(const char *openai_req) {
             if (!role || !cJSON_IsString(role)) continue;
             const char *r = role->valuestring;
             if (strcmp(r, "system") == 0) {
-                if (cJSON_IsString(content)) {
-                    system_prompt = cJSON_CreateString(content->valuestring);
-                } else if (cJSON_IsArray(content)) {
-                    cJSON *first = cJSON_GetArrayItem(content, 0);
-                    if (first) {
-                        cJSON *text = cJSON_GetObjectItem(first, "text");
-                        if (text && cJSON_IsString(text)) {
-                            system_prompt = cJSON_CreateString(text->valuestring);
-                        }
-                    }
+                if (cJSON_IsArray(content)) {
+                    // Duplicate as-is to preserve any cache_control markers
+                    system_blocks = cJSON_Duplicate(content, 1);
+                } else if (cJSON_IsString(content)) {
+                    system_string = cJSON_CreateString(content->valuestring);
                 }
                 continue;
             }
@@ -212,7 +209,12 @@ static char* openai_to_anthropic_request(const char *openai_req) {
     }
 
     cJSON_AddItemToObject(anth, "messages", anth_msgs);
-    if (system_prompt) cJSON_AddItemToObject(anth, "system", system_prompt);
+    if (system_blocks) {
+        // Anthropic supports system as either string or array of content blocks
+        cJSON_AddItemToObject(anth, "system", system_blocks);
+    } else if (system_string) {
+        cJSON_AddItemToObject(anth, "system", system_string);
+    }
 
     // Tools
     if (tools && cJSON_IsArray(tools)) {
@@ -228,6 +230,11 @@ static char* openai_to_anthropic_request(const char *openai_req) {
             if (name && cJSON_IsString(name)) cJSON_AddStringToObject(obj, "name", name->valuestring);
             if (desc && cJSON_IsString(desc)) cJSON_AddStringToObject(obj, "description", desc->valuestring);
             if (params) cJSON_AddItemToObject(obj, "input_schema", cJSON_Duplicate(params, 1));
+            // Preserve cache_control on tool definitions to create checkpoint after tools
+            cJSON *cache_ctrl = cJSON_GetObjectItem(t, "cache_control");
+            if (cache_ctrl) {
+                cJSON_AddItemToObject(obj, "cache_control", cJSON_Duplicate(cache_ctrl, 1));
+            }
             cJSON_AddItemToArray(anth_tools, obj);
         }
         if (cJSON_GetArraySize(anth_tools) > 0) {

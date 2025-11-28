@@ -3906,6 +3906,14 @@ void accumulate_token_usage(ConversationState *state, const char *raw_response) 
         }
     }
 
+    // Anthropic-specific: cache_read_input_tokens indicates cache hits
+    if (cached_tokens == 0) {
+        cJSON *anth_cache_read = cJSON_GetObjectItem(usage, "cache_read_input_tokens");
+        if (anth_cache_read && cJSON_IsNumber(anth_cache_read)) {
+            cached_tokens = anth_cache_read->valueint;
+        }
+    }
+
     cJSON_Delete(json);
 
     // Accumulate tokens in state (thread-safe)

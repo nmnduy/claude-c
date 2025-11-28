@@ -110,6 +110,15 @@ static int extract_token_usage(
         LOG_DEBUG("extract_token_usage: found prompt_cache_miss_tokens = %d", *prompt_cache_miss_tokens);
     }
 
+    // Anthropic-specific metric: cache_read_input_tokens (counts cache hits)
+    if (*cached_tokens == 0) {
+        cJSON *cache_read_input_tokens = cJSON_GetObjectItem(usage, "cache_read_input_tokens");
+        if (cache_read_input_tokens && cJSON_IsNumber(cache_read_input_tokens)) {
+            *cached_tokens = cache_read_input_tokens->valueint;
+            LOG_DEBUG("extract_token_usage: using cache_read_input_tokens as cached_tokens = %d", *cached_tokens);
+        }
+    }
+
     cJSON_Delete(json);
 
     // Return success even if some fields were missing - we got what we could
