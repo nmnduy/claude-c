@@ -114,13 +114,53 @@ static ApiCallResult openai_call_api(Provider *self, ConversationState *state) {
     // For simplicity, just use base_url directly - it should be pre-configured correctly
     const char *url = config->base_url;
 
-    // Set up headers with Bearer token
+    // Set up headers
     struct curl_slist *headers = NULL;
     headers = curl_slist_append(headers, "Content-Type: application/json");
 
+    // Add authentication header (custom format or default Bearer token)
     char auth_header[512];
-    snprintf(auth_header, sizeof(auth_header), "Authorization: Bearer %s", config->api_key);
+    if (config->auth_header_template) {
+        // Use custom auth header template (should contain %s for API key)
+        // Find %s in the template and replace it with the API key
+        const char *percent_s = strstr(config->auth_header_template, "%s");
+        if (percent_s) {
+            // Calculate lengths
+            size_t prefix_len = (size_t)(percent_s - config->auth_header_template);
+            size_t api_key_len = strlen(config->api_key);
+            size_t suffix_len = strlen(percent_s + 2); // +2 to skip "%s"
+            
+            // Build auth header manually
+            if (prefix_len + api_key_len + suffix_len + 1 < sizeof(auth_header)) {
+                strncpy(auth_header, config->auth_header_template, prefix_len);
+                auth_header[prefix_len] = '\0';
+                strcat(auth_header, config->api_key);
+                strcat(auth_header, percent_s + 2);
+            } else {
+                // Fallback if template is too long
+                strncpy(auth_header, config->auth_header_template, sizeof(auth_header) - 1);
+                auth_header[sizeof(auth_header) - 1] = '\0';
+                LOG_WARN("Auth header template too long, truncated");
+            }
+        } else {
+            // No %s found, use template as-is
+            strncpy(auth_header, config->auth_header_template, sizeof(auth_header) - 1);
+            auth_header[sizeof(auth_header) - 1] = '\0';
+        }
+    } else {
+        // Default Bearer token format
+        snprintf(auth_header, sizeof(auth_header), "Authorization: Bearer %s", config->api_key);
+    }
     headers = curl_slist_append(headers, auth_header);
+
+    // Add extra headers from environment
+    if (config->extra_headers) {
+        for (int i = 0; i < config->extra_headers_count; i++) {
+            if (config->extra_headers[i]) {
+                headers = curl_slist_append(headers, config->extra_headers[i]);
+            }
+        }
+    }
 
     if (!headers) {
         result.error_message = strdup("Failed to setup HTTP headers");
@@ -369,6 +409,16 @@ static void openai_cleanup(Provider *self) {
         OpenAIConfig *config = (OpenAIConfig*)self->config;
         free(config->api_key);
         free(config->base_url);
+        free(config->auth_header_template);
+        
+        // Free extra headers
+        if (config->extra_headers) {
+            for (int i = 0; i < config->extra_headers_count; i++) {
+                free(config->extra_headers[i]);
+            }
+            free(config->extra_headers);
+        }
+        
         free(config);
     }
 
@@ -446,6 +496,96 @@ Provider* openai_provider_create(const char *api_key, const char *base_url) {
             free(provider);
             return NULL;
         }
+    }
+
+    // Read custom auth header template from environment
+    const char *auth_header_env = getenv("OPENAI_AUTH_HEADER");
+    if (auth_header_env && auth_header_env[0] != '\0') {
+        config->auth_header_template = strdup(auth_header_env);
+        if (!config->auth_header_template) {
+            LOG_ERROR("OpenAI provider: failed to duplicate auth header template");
+            free(config->base_url);
+            free(config->api_key);
+            free(config);
+            free(provider);
+            return NULL;
+        }
+        LOG_INFO("OpenAI provider: using custom auth header template: %s", config->auth_header_template);
+    } else {
+        config->auth_header_template = NULL;  // Use default Bearer token format
+    }
+
+    // Read extra headers from environment
+    const char *extra_headers_env = getenv("OPENAI_EXTRA_HEADERS");
+    if (extra_headers_env && extra_headers_env[0] != '\0') {
+        // Parse comma-separated headers
+        char *extra_headers_copy = strdup(extra_headers_env);
+        if (!extra_headers_copy) {
+            LOG_ERROR("OpenAI provider: failed to duplicate extra headers string");
+            free(config->auth_header_template);
+            free(config->base_url);
+            free(config->api_key);
+            free(config);
+            free(provider);
+            return NULL;
+        }
+
+        // Count headers
+        char *token = strtok(extra_headers_copy, ",");
+        config->extra_headers_count = 0;
+        while (token) {
+            config->extra_headers_count++;
+            token = strtok(NULL, ",");
+        }
+
+        // Allocate array
+        config->extra_headers = calloc((size_t)config->extra_headers_count + 1, sizeof(char*));
+        if (!config->extra_headers) {
+            LOG_ERROR("OpenAI provider: failed to allocate extra headers array");
+            free(extra_headers_copy);
+            free(config->auth_header_template);
+            free(config->base_url);
+            free(config->api_key);
+            free(config);
+            free(provider);
+            return NULL;
+        }
+
+        // Copy headers
+        strcpy(extra_headers_copy, extra_headers_env);  // Reset copy
+        token = strtok(extra_headers_copy, ",");
+        for (int i = 0; i < config->extra_headers_count && token; i++) {
+            // Trim whitespace
+            while (*token == ' ' || *token == '\t') token++;
+            char *end = token + strlen(token) - 1;
+            while (end > token && (*end == ' ' || *end == '\t')) end--;
+            *(end + 1) = '\0';
+            
+            config->extra_headers[i] = strdup(token);
+            if (!config->extra_headers[i]) {
+                LOG_ERROR("OpenAI provider: failed to duplicate extra header");
+                // Cleanup allocated headers
+                for (int j = 0; j < i; j++) {
+                    free(config->extra_headers[j]);
+                }
+                free(config->extra_headers);
+                free(extra_headers_copy);
+                free(config->auth_header_template);
+                free(config->base_url);
+                free(config->api_key);
+                free(config);
+                free(provider);
+                return NULL;
+            }
+            token = strtok(NULL, ",");
+        }
+        config->extra_headers[config->extra_headers_count] = NULL;  // NULL-terminate
+        
+        LOG_INFO("OpenAI provider: loaded %d extra headers", config->extra_headers_count);
+        free(extra_headers_copy);
+    } else {
+        config->extra_headers = NULL;
+        config->extra_headers_count = 0;
     }
 
     // Set up provider interface

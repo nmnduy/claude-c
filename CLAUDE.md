@@ -82,6 +82,8 @@ export OPENAI_API_KEY="your-api-key"
 
 **Environment variables:**
 - **API**: `OPENAI_API_KEY` (required), `OPENAI_MODEL`, `OPENAI_API_BASE`
+- **OpenAI Authentication**: `OPENAI_AUTH_HEADER` - Custom auth header template (e.g., "x-api-key: %s" or "Authorization: Bearer %s")
+- **Extra Headers**: `OPENAI_EXTRA_HEADERS` - Comma-separated list of additional headers (e.g., "anthropic-version: 2023-06-01, User-Agent: my-app")
 - **Caching**: `DISABLE_PROMPT_CACHING=1` to disable
 - **Logging**: `CLAUDE_LOG_LEVEL` (DEBUG/INFO/WARN/ERROR), `CLAUDE_C_LOG_PATH`
 - **Database**: `CLAUDE_C_DB_PATH` for API call history (SQLite)
