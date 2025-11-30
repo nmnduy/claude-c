@@ -3889,28 +3889,36 @@ void accumulate_token_usage(ConversationState *state, const char *raw_response) 
         completion_tokens = completion_tokens_json->valueint;
     }
 
-    // Try to extract cached tokens from prompt_tokens_details
-    cJSON *prompt_tokens_details = cJSON_GetObjectItem(usage, "prompt_tokens_details");
-    if (prompt_tokens_details) {
-        cJSON *cached_tokens_json = cJSON_GetObjectItem(prompt_tokens_details, "cached_tokens");
-        if (cached_tokens_json && cJSON_IsNumber(cached_tokens_json)) {
-            cached_tokens = cached_tokens_json->valueint;
+    // Extract cache-related token counts with provider-specific detection
+    // Priority order: Moonshot > DeepSeek > Anthropic > General
+    
+    // 1. Moonshot-style: direct cached_tokens field
+    if (cached_tokens == 0) {
+        cJSON *direct_cached_tokens = cJSON_GetObjectItem(usage, "cached_tokens");
+        if (direct_cached_tokens && cJSON_IsNumber(direct_cached_tokens)) {
+            cached_tokens = direct_cached_tokens->valueint;
+            LOG_DEBUG("accumulate_token_usage: found Moonshot-style cached_tokens = %d", cached_tokens);
         }
     }
-
-    // Also check for direct cache metrics (some providers use this format)
+    
+    // 2. DeepSeek-style: cached_tokens inside prompt_tokens_details
     if (cached_tokens == 0) {
-        cJSON *cache_hit_tokens = cJSON_GetObjectItem(usage, "prompt_cache_hit_tokens");
-        if (cache_hit_tokens && cJSON_IsNumber(cache_hit_tokens)) {
-            cached_tokens = cache_hit_tokens->valueint;
+        cJSON *prompt_tokens_details = cJSON_GetObjectItem(usage, "prompt_tokens_details");
+        if (prompt_tokens_details) {
+            cJSON *cached_tokens_json = cJSON_GetObjectItem(prompt_tokens_details, "cached_tokens");
+            if (cached_tokens_json && cJSON_IsNumber(cached_tokens_json)) {
+                cached_tokens = cached_tokens_json->valueint;
+                LOG_DEBUG("accumulate_token_usage: found DeepSeek-style cached_tokens in prompt_tokens_details = %d", cached_tokens);
+            }
         }
     }
-
-    // Anthropic-specific: cache_read_input_tokens indicates cache hits
+    
+    // 3. Anthropic-style: cache_read_input_tokens (counts cache hits)
     if (cached_tokens == 0) {
-        cJSON *anth_cache_read = cJSON_GetObjectItem(usage, "cache_read_input_tokens");
-        if (anth_cache_read && cJSON_IsNumber(anth_cache_read)) {
-            cached_tokens = anth_cache_read->valueint;
+        cJSON *cache_read_input_tokens = cJSON_GetObjectItem(usage, "cache_read_input_tokens");
+        if (cache_read_input_tokens && cJSON_IsNumber(cache_read_input_tokens)) {
+            cached_tokens = cache_read_input_tokens->valueint;
+            LOG_DEBUG("accumulate_token_usage: using Anthropic-style cache_read_input_tokens as cached_tokens = %d", cached_tokens);
         }
     }
 
