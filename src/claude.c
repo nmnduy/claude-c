@@ -3145,6 +3145,7 @@ static cJSON* execute_tool(const char *tool_name, cJSON *input, ConversationStat
 
 cJSON* get_tool_definitions(ConversationState *state, int enable_caching) {
     cJSON *tool_array = cJSON_CreateArray();
+    int plan_mode = state ? state->plan_mode : 0;
     // Sleep tool
     cJSON *sleep_tool = cJSON_CreateObject();
     cJSON_AddStringToObject(sleep_tool, "type", "function");
@@ -3235,8 +3236,10 @@ cJSON* get_tool_definitions(ConversationState *state, int enable_caching) {
     cJSON_AddItemToObject(read, "function", read_func);
     cJSON_AddItemToArray(tool_array, read);
 
-    // Write tool
-    cJSON *write = cJSON_CreateObject();
+    // Write and Edit tools - excluded in plan mode
+    if (!plan_mode) {
+        // Write tool
+        cJSON *write = cJSON_CreateObject();
     cJSON_AddStringToObject(write, "type", "function");
     cJSON *write_func = cJSON_CreateObject();
     cJSON_AddStringToObject(write_func, "name", "Write");
@@ -3303,6 +3306,7 @@ cJSON* get_tool_definitions(ConversationState *state, int enable_caching) {
     cJSON_AddItemToObject(edit_func, "parameters", edit_params);
     cJSON_AddItemToObject(edit, "function", edit_func);
     cJSON_AddItemToArray(tool_array, edit);
+    }
 
     // Glob tool
     cJSON *glob_tool = cJSON_CreateObject();
@@ -3790,6 +3794,7 @@ char* build_request_json_from_state(ConversationState *state) {
     cJSON_AddItemToObject(request, "messages", messages_array);
 
     // Add tools with cache_control support (including MCP tools if available)
+    // In plan mode, exclude editing/writing tools
     cJSON *tool_defs = get_tool_definitions(state, enable_caching);
     cJSON_AddItemToObject(request, "tools", tool_defs);
 
@@ -4389,8 +4394,10 @@ char* build_system_prompt(ConversationState *state) {
     int offset = snprintf(prompt, prompt_size,
         "Here is useful information about the environment you are running in:\n"
         "<env>\n"
+        "Planning mode: %s\n"
         "Working directory: %s\n"
         "Additional working directories: ",
+        state->plan_mode ? "ENABLED (read-only tools only)" : "disabled",
         working_dir);
 
     // Add additional directories
