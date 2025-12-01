@@ -120,6 +120,9 @@ int post_token_update(TUIMessageQueue *queue, int prompt_tokens, int completion_
     msg->completion_tokens = completion_tokens;
     msg->cached_tokens = cached_tokens;
 
+    LOG_DEBUG("[TUI] Posting token update: prompt=%d, completion=%d, cached=%d (queue count=%zu)",
+             prompt_tokens, completion_tokens, cached_tokens, queue->count);
+
     queue->head = (queue->head + 1) % queue->capacity;
     queue->count++;
 

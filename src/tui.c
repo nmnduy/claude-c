@@ -187,6 +187,13 @@ static void render_status_window(TUIState *tui) {
             snprintf(token_str, sizeof(token_str), "Tokens: %d ", total_tokens);
         }
         token_str_len = (int)strlen(token_str);
+        LOG_DEBUG("[TUI] Rendering token display: %s (mode=NORMAL, prompt=%d, completion=%d, cached=%d)",
+                 token_str, tui->total_prompt_tokens, tui->total_completion_tokens, tui->total_cached_tokens);
+        
+        // Debug: warn if token counts are 0 in Normal mode (might indicate a bug)
+        if (total_tokens == 0) {
+            LOG_DEBUG("[TUI] Warning: Token counts are 0 in NORMAL mode");
+        }
     }
 
     // Calculate how much space we have for the status message
@@ -1528,6 +1535,9 @@ void tui_update_token_usage(TUIState *tui, int prompt_tokens, int completion_tok
     tui->total_prompt_tokens = prompt_tokens;
     tui->total_completion_tokens = completion_tokens;
     tui->total_cached_tokens = cached_tokens;
+
+    LOG_DEBUG("[TUI] Token usage updated: prompt=%d, completion=%d, cached=%d",
+             prompt_tokens, completion_tokens, cached_tokens);
 
     // Refresh status bar to show updated token counts
     if (tui->wm.status_height > 0) {

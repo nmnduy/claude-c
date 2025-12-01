@@ -484,6 +484,8 @@ int persistence_log_api_call(
                                                &prompt_cache_hit_tokens,
                                                &prompt_cache_miss_tokens);
 
+        LOG_DEBUG("Token extraction result: %d (0=success, -1=no usage field)", extract_result);
+        
         if (extract_result == 0) {
             LOG_DEBUG("Token usage extracted: prompt=%d, completion=%d, total=%d, cached=%d, cache_hit=%d, cache_miss=%d",
                      prompt_tokens, completion_tokens, total_tokens, cached_tokens,
@@ -491,6 +493,7 @@ int persistence_log_api_call(
 
             // Get the last inserted API call ID
             sqlite3_int64 api_call_id = sqlite3_last_insert_rowid(db->db);
+            LOG_DEBUG("Token usage: api_call_id = %lld (last_insert_rowid)", (long long)api_call_id);
 
             // Prepare token usage insert statement
             const char *token_sql =
