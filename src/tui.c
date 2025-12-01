@@ -150,6 +150,31 @@ static void render_status_window(TUIState *tui) {
     if (mode_col < 0) mode_col = 0;
     */
 
+    // Render scroll percentage in NORMAL mode (between status message and token usage)
+    char scroll_str[32] = {0};
+    int scroll_str_len = 0;
+    if (tui->mode == TUI_MODE_NORMAL) {
+        int scroll_offset = window_manager_get_scroll_offset(&tui->wm);
+        int max_scroll = window_manager_get_max_scroll(&tui->wm);
+        int content_lines = window_manager_get_content_lines(&tui->wm);
+
+        // Calculate percentage
+        int percentage;
+        if (content_lines == 0 || max_scroll <= 0) {
+            // No content or everything fits in viewport
+            percentage = 100;
+        } else if (scroll_offset <= 0) {
+            percentage = 0;
+        } else if (scroll_offset >= max_scroll) {
+            percentage = 100;
+        } else {
+            percentage = (scroll_offset * 100) / max_scroll;
+        }
+
+        snprintf(scroll_str, sizeof(scroll_str), " %d%% ", percentage);
+        scroll_str_len = (int)strlen(scroll_str);
+    }
+
     // Render token usage on the right side (only in NORMAL mode, if any tokens used)
     char token_str[64] = {0};
     int token_str_len = 0;
@@ -166,7 +191,7 @@ static void render_status_window(TUIState *tui) {
     }
 
     // Calculate how much space we have for the status message
-    int max_status_len = width - token_str_len - 1;
+    int max_status_len = width - scroll_str_len - token_str_len - 1;
 
     // Render status message on the left (if visible)
     if (tui->status_visible && tui->status_message && tui->status_message[0] != '\0') {
@@ -208,6 +233,20 @@ static void render_status_window(TUIState *tui) {
             wattroff(tui->wm.status_win, COLOR_PAIR(NCURSES_PAIR_STATUS) | A_BOLD);
         } else {
             wattroff(tui->wm.status_win, A_BOLD);
+        }
+    }
+
+    // Render scroll percentage (right-aligned, before token usage)
+    if (scroll_str_len > 0 && scroll_str_len < width) {
+        int scroll_col = width - scroll_str_len - token_str_len;
+        if (scroll_col < 0) scroll_col = 0;
+
+        if (has_colors()) {
+            wattron(tui->wm.status_win, COLOR_PAIR(NCURSES_PAIR_STATUS));
+        }
+        mvwaddnstr(tui->wm.status_win, 0, scroll_col, scroll_str, scroll_str_len);
+        if (has_colors()) {
+            wattroff(tui->wm.status_win, COLOR_PAIR(NCURSES_PAIR_STATUS));
         }
     }
 
@@ -1759,6 +1798,11 @@ void tui_scroll_conversation(TUIState *tui, int direction) {
     if (!tui || !tui->is_initialized || !tui->wm.conv_pad) return;
     window_manager_scroll(&tui->wm, direction);
     window_manager_refresh_conversation(&tui->wm);
+
+    // Update status bar (to show new scroll percentage in NORMAL mode)
+    if (tui->mode == TUI_MODE_NORMAL && tui->wm.status_height > 0) {
+        render_status_window(tui);
+    }
 
     // Refresh input window to keep cursor visible
     if (tui->wm.input_win) {
