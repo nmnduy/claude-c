@@ -2748,9 +2748,9 @@ int tui_event_loop(TUIState *tui, const char *prompt,
 
         // 3. Poll for input (non-blocking)
         // If in paste mode, drain all available input quickly
-    int chars_processed = 0;
-    // Drain more than 1 char per frame to avoid artificial delays/lag on quick typing
-    int max_chars_per_frame = (tui->input_buffer && tui->input_buffer->paste_mode) ? 10000 : 32;
+        int chars_processed = 0;
+        // Drain more than 1 char per frame to avoid artificial delays/lag on quick typing
+        int max_chars_per_frame = (tui->input_buffer && tui->input_buffer->paste_mode) ? 10000 : 32;
 
         while (chars_processed < max_chars_per_frame) {
             int ch = tui_poll_input(tui);
@@ -2861,7 +2861,7 @@ int tui_event_loop(TUIState *tui, const char *prompt,
 
         if (elapsed_us < frame_time_us) {
             usleep((useconds_t)(frame_time_us - elapsed_us));
-        }
+      }
     }
 
     return 0;
