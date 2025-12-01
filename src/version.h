@@ -9,20 +9,20 @@
 #define VERSION_H
 
 // Version string (e.g., "0.0.2", "1.0.0", "1.2.3-beta.1")
-#define CLAUDE_C_VERSION "0.1.11"
+#define CLAUDE_C_VERSION "0.1.12"
 
 // Version components for programmatic use
 #define CLAUDE_C_VERSION_MAJOR 0
 #define CLAUDE_C_VERSION_MINOR 1
-#define CLAUDE_C_VERSION_PATCH 11
+#define CLAUDE_C_VERSION_PATCH 12
 
 // Version as numeric value for comparisons (e.g., 0x000002)
-#define CLAUDE_C_VERSION_NUMBER 0x00010b
+#define CLAUDE_C_VERSION_NUMBER 0x00010c
 
 // Build timestamp (automatically generated)
 #define CLAUDE_C_BUILD_TIMESTAMP "2025-11-30"
 
 // Full version string with build info
-#define CLAUDE_C_VERSION_FULL "0.1.11 (built 2025-11-30)"
+#define CLAUDE_C_VERSION_FULL "0.1.12 (built 2025-11-30)"
 
 #endif // VERSION_H
