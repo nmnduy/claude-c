@@ -6,13 +6,13 @@
 
 /**
  * array_resize.h - Array and buffer resizing utilities
- * 
+ *
  * This module provides overflow-safe array and buffer operations with:
  * - Integer overflow checking
  * - Standardized growth strategies
  * - Consistent error handling
  * - NULL pointer safety
- * 
+ *
  * All functions return 0 on success, -1 on failure.
  * On failure, the original pointer is NOT freed (caller must handle cleanup).
  */
@@ -72,34 +72,34 @@ static inline int safe_add(size_t a, size_t b, size_t *result) {
 
 /**
  * Calculate next capacity using specified growth strategy
- * 
+ *
  * @param current_capacity Current capacity
  * @param needed_capacity Minimum capacity required
  * @param config Configuration (can be NULL for defaults)
  * @param new_capacity Output: calculated new capacity
  * @return 0 on success, -1 on overflow or invalid input
  */
-int calculate_capacity(size_t current_capacity, 
+int calculate_capacity(size_t current_capacity,
                       size_t needed_capacity,
                       const ArrayResizeConfig *config,
                       size_t *new_capacity);
 
 /**
  * Ensure an array has capacity for at least N elements
- * 
+ *
  * This function handles:
  * - Integer overflow in capacity calculation
  * - Integer overflow in size calculation (capacity * element_size)
  * - Growth strategy application
  * - NULL pointer safety
- * 
+ *
  * @param ptr Pointer to array pointer (will be updated on success)
  * @param current_capacity Pointer to current capacity (will be updated)
  * @param needed_capacity Minimum capacity needed
  * @param element_size Size of each element (e.g., sizeof(Type))
  * @param config Configuration (NULL = use CONFIG_ARRAY)
  * @return 0 on success, -1 on failure (original pointer unchanged)
- * 
+ *
  * Example:
  *   int *array = NULL;
  *   size_t capacity = 0;
@@ -107,7 +107,7 @@ int calculate_capacity(size_t current_capacity,
  *       // array now has capacity for at least 10 ints
  *   }
  */
-int array_ensure_capacity(void **ptr, 
+int array_ensure_capacity(void **ptr,
                          size_t *current_capacity,
                          size_t needed_capacity,
                          size_t element_size,
@@ -115,13 +115,13 @@ int array_ensure_capacity(void **ptr,
 
 /**
  * Append data to a growing buffer
- * 
+ *
  * This function handles:
  * - Integer overflow in size calculations
  * - Automatic capacity management
  * - NULL terminator space (for strings)
  * - Exponential growth for efficiency
- * 
+ *
  * @param buffer Pointer to buffer pointer (will be updated on resize)
  * @param current_capacity Pointer to current capacity (will be updated)
  * @param current_size Current used size (not including null terminator)
@@ -130,7 +130,7 @@ int array_ensure_capacity(void **ptr,
  * @param null_terminate If 1, ensure space for '\0' after data
  * @param config Configuration (NULL = use CONFIG_BUFFER)
  * @return 0 on success, -1 on failure
- * 
+ *
  * Example:
  *   char *buf = NULL;
  *   size_t capacity = 0, size = 0;
@@ -149,10 +149,10 @@ int buffer_append(void **buffer,
 
 /**
  * Reserve specific buffer capacity
- * 
+ *
  * This is a lower-level function for cases where you need exact control.
  * Most code should use array_ensure_capacity() or buffer_append() instead.
- * 
+ *
  * @param ptr Pointer to buffer pointer (will be updated on success)
  * @param current_capacity Pointer to current capacity (will be updated)
  * @param new_capacity New capacity to allocate

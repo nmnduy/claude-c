@@ -95,7 +95,7 @@ static int copy_pad_content(WINDOW *old_pad, WINDOW *new_pad,
     int old_h, old_w, new_h, new_w;
     getmaxyx(old_pad, old_h, old_w);
     getmaxyx(new_pad, new_h, new_w);
-    
+
     // Clamp copy dimensions to actual pad sizes
     if (lines_to_copy > old_h) lines_to_copy = old_h;
     if (lines_to_copy > new_h) lines_to_copy = new_h;
@@ -274,9 +274,9 @@ int window_manager_resize_screen(WindowManager *wm) {
     int lines_to_copy = old_content_lines;
     if (lines_to_copy > old_capacity) lines_to_copy = old_capacity;
     if (lines_to_copy > wm->conv_pad_capacity) lines_to_copy = wm->conv_pad_capacity;
-    
+
     int width_to_copy = old_width < wm->screen_width ? old_width : wm->screen_width;
-    
+
     // Additional safety: verify old_pad is still valid before copying
     if (old_pad && lines_to_copy > 0 && width_to_copy > 0) {
         copy_pad_content(old_pad, wm->conv_pad, lines_to_copy, width_to_copy);

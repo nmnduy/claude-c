@@ -41,7 +41,7 @@ static void print_status(const char *text) {
         LOG_DEBUG("Status (TUI): %s", text);
         return;
     }
-    
+
     char color_buf[32];
     const char *status_color;
     if (get_colorscheme_color(COLORSCHEME_STATUS, color_buf, sizeof(color_buf)) == 0) {
@@ -61,7 +61,7 @@ static void print_error(const char *text) {
         LOG_DEBUG("Error (TUI): %s", text);
         return;
     }
-    
+
     char color_buf[32];
     const char *error_color;
     if (get_colorscheme_color(COLORSCHEME_ERROR, color_buf, sizeof(color_buf)) == 0) {

@@ -5193,6 +5193,11 @@ static void process_response(ConversationState *state,
         if (next_response) {
             process_response(state, next_response, tui, queue, worker_ctx);
             api_response_free(next_response);
+        } else if (state->interrupt_requested) {
+            // User interrupted the tool results processing
+            LOG_INFO("Tool results processing interrupted by user");
+            state->interrupt_requested = 0;  // Clear for next operation
+            return;  // Exit gracefully without error
         } else if (!interrupted) {
             const char *error_msg = "API call failed after executing tools. Check logs for details.";
             ui_show_error(tui, queue, error_msg);
@@ -5380,10 +5385,10 @@ static int submit_input_callback(const char *input, void *user_data) {
             const char *cmd_line = input_copy + 1;
             const char *space = strchr(cmd_line, ' ');
             size_t cmd_len = space ? (size_t)(space - cmd_line) : strlen(cmd_line);
-            
+
             char error_msg[256];
-            snprintf(error_msg, sizeof(error_msg), 
-                     "Unknown command: /%.*s (type /help for available commands)", 
+            snprintf(error_msg, sizeof(error_msg),
+                     "Unknown command: /%.*s (type /help for available commands)",
                      (int)cmd_len, cmd_line);
             ui_show_error(tui, queue, error_msg);
             free(input_copy);
@@ -5610,7 +5615,7 @@ static int process_single_command_response(ConversationState *state, ApiResponse
 
                 // Print tool name header with details
                 char *tool_details = get_tool_details(tool->name, input);
-                
+
                 // Print opening HTML-style tag with tool name and optional details
                 printf("<tool name=\"%s\"", tool->name);
                 if (tool_details && strlen(tool_details) > 0) {

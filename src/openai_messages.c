@@ -24,15 +24,15 @@ void ensure_tool_results(ConversationState *state) {
         char *tool_name;
         int has_result;
     } ToolCallInfo;
-    
+
     ToolCallInfo *tool_calls = NULL;
     int tool_call_count = 0;
     int tool_call_capacity = 0;
-    
+
     // Scan messages to collect tool calls and check for results
     for (int i = 0; i < state->count; i++) {
         InternalMessage *msg = &state->messages[i];
-        
+
         if (msg->role == MSG_ASSISTANT) {
             // Collect tool calls from assistant messages
             for (int j = 0; j < msg->content_count; j++) {
@@ -49,7 +49,7 @@ void ensure_tool_results(ConversationState *state) {
                         }
                         tool_calls = new_calls;
                     }
-                    
+
                     tool_calls[tool_call_count].id = c->tool_id;
                     tool_calls[tool_call_count].tool_name = c->tool_name;
                     tool_calls[tool_call_count].has_result = 0;
@@ -72,7 +72,7 @@ void ensure_tool_results(ConversationState *state) {
             }
         }
     }
-    
+
     // Find missing results and inject synthetic ones
     int missing_count = 0;
     for (int i = 0; i < tool_call_count; i++) {
@@ -80,17 +80,17 @@ void ensure_tool_results(ConversationState *state) {
             missing_count++;
         }
     }
-    
+
     if (missing_count > 0) {
         LOG_WARN("Found %d tool call(s) without matching results - injecting synthetic results", missing_count);
-        
+
         // Check if we have space for a new message
         if (state->count >= MAX_MESSAGES) {
             LOG_ERROR("Cannot inject tool results - maximum message count reached");
             free(tool_calls);
             return;
         }
-        
+
         // Create synthetic tool results
         InternalContent *synthetic_results = calloc((size_t)missing_count, sizeof(InternalContent));
         if (!synthetic_results) {
@@ -98,7 +98,7 @@ void ensure_tool_results(ConversationState *state) {
             free(tool_calls);
             return;
         }
-        
+
         int result_idx = 0;
         for (int i = 0; i < tool_call_count; i++) {
             if (!tool_calls[i].has_result) {
@@ -106,26 +106,26 @@ void ensure_tool_results(ConversationState *state) {
                 synthetic_results[result_idx].tool_id = strdup(tool_calls[i].id);
                 synthetic_results[result_idx].tool_name = strdup(tool_calls[i].tool_name ? tool_calls[i].tool_name : "unknown");
                 synthetic_results[result_idx].is_error = 1;
-                
+
                 // Create error output JSON
                 cJSON *error_output = cJSON_CreateObject();
                 cJSON_AddStringToObject(error_output, "error", "Tool execution was interrupted");
                 synthetic_results[result_idx].tool_output = error_output;
-                
-                LOG_INFO("Injected synthetic result for tool_call_id=%s, tool=%s", 
-                         tool_calls[i].id, 
+
+                LOG_INFO("Injected synthetic result for tool_call_id=%s, tool=%s",
+                         tool_calls[i].id,
                          tool_calls[i].tool_name ? tool_calls[i].tool_name : "unknown");
                 result_idx++;
             }
         }
-        
+
         // Add as a new user message
         InternalMessage *msg = &state->messages[state->count++];
         msg->role = MSG_USER;
         msg->contents = synthetic_results;
         msg->content_count = missing_count;
     }
-    
+
     free(tool_calls);
 }
 

@@ -92,7 +92,7 @@ static void test_calculate_capacity_additive(void) {
     // Adding increments
     assert(calculate_capacity(10000, 20000, &config, &new_cap) == 0);
     assert(new_cap >= 20000);
-    printf("  10000 -> %zu (needed 20000, increment %zu)\n", 
+    printf("  10000 -> %zu (needed 20000, increment %zu)\n",
            new_cap, config.growth_amount);
 
     printf("  ✓ GROWTH_ADDITIVE strategy works correctly\n");
@@ -193,7 +193,7 @@ static void test_resize_array_overflow(void) {
     // Try to allocate array that would overflow in size calculation
     // SIZE_MAX / sizeof(int) is the maximum number of ints we can allocate
     size_t max_count = SIZE_MAX / sizeof(int);
-    
+
     // This should fail due to overflow
     assert(array_ensure_capacity(&array, &capacity, max_count + 1, sizeof(int), NULL) == -1);
     assert(array == NULL);
@@ -368,7 +368,7 @@ static void test_edge_cases(void) {
     // NULL pointer checks
     size_t capacity = 0;
     assert(array_ensure_capacity(NULL, &capacity, 10, sizeof(int), NULL) == -1);
-    
+
     void *ptr = NULL;
     assert(array_ensure_capacity(&ptr, NULL, 10, sizeof(int), NULL) == -1);
 
@@ -449,13 +449,13 @@ static void test_real_world_pattern_buffer(void) {
 
     for (size_t i = 0; i < sizeof(chunks) / sizeof(chunks[0]); i++) {
         size_t len = strlen(chunks[i]);
-        
+
         // Append chunk
         if (buffer_append((void**)&output, &capacity, total_size, chunks[i], len, 1, NULL) != 0) {
             fprintf(stderr, "Failed to append chunk %zu\n", i);
             break;
         }
-        
+
         total_size += len;
         output[total_size] = '\0';
     }
