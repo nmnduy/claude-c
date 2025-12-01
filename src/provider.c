@@ -7,6 +7,7 @@
 #include "provider.h"
 #include "openai_provider.h"
 #include "bedrock_provider.h"
+#include "anthropic_provider.h"
 #include "logger.h"
 
 #include <stdlib.h>
@@ -119,22 +120,58 @@ void provider_init(const char *model,
         return;
     }
 
-    // OpenAI-compatible default provider
-    LOG_INFO("Using OpenAI-compatible provider...");
+    // Non-Bedrock: pick provider based on API URL
     if (!api_key || api_key[0] == '\0') {
-        result->error_message = strdup(
-            "API key is required for OpenAI provider");
+        result->error_message = strdup("API key is required for API provider");
         LOG_ERROR("Provider init failed: %s", result->error_message);
         return;
     }
 
     char *base_url = get_api_url_from_env();
     if (!base_url) {
-        result->error_message = strdup(
-            "Failed to allocate memory for API URL");
+        result->error_message = strdup("Failed to allocate memory for API URL");
         LOG_ERROR("Provider init failed: %s", result->error_message);
         return;
     }
+
+    int use_anthropic = 0;
+    const char *anth_env = getenv("ANTHROPIC_API_URL");
+    if (anth_env && anth_env[0] != '\0') {
+        use_anthropic = 1;
+    }
+    if (strstr(base_url, "anthropic.com") != NULL) {
+        use_anthropic = 1;
+    }
+
+    if (use_anthropic) {
+        LOG_INFO("Using Anthropic provider (direct API)...");
+        Provider *prov = anthropic_provider_create(api_key, base_url);
+        free(base_url);
+        if (!prov) {
+            result->error_message = strdup("Failed to initialize Anthropic provider (check logs for details)");
+            LOG_ERROR("Provider init failed: %s", result->error_message);
+            return;
+        }
+        AnthropicConfig *cfg = (AnthropicConfig *)prov->config;
+        if (!cfg || !cfg->base_url) {
+            result->error_message = strdup("Anthropic provider initialized but base URL is missing");
+            LOG_ERROR("Provider init failed: %s", result->error_message);
+            prov->cleanup(prov);
+            return;
+        }
+        result->provider = prov;
+        result->api_url = strdup(cfg->base_url);
+        if (!result->api_url) {
+            result->error_message = strdup("Failed to allocate memory for API URL");
+            LOG_ERROR("Provider init failed: %s", result->error_message);
+            prov->cleanup(prov);
+            return;
+        }
+        LOG_INFO("Provider initialization successful: Anthropic (endpoint: %s)", result->api_url);
+        return;
+    }
+
+    LOG_INFO("Using OpenAI-compatible provider...");
 
     Provider *prov = openai_provider_create(api_key, base_url);
     free(base_url);  // openai_provider_create made its own copy

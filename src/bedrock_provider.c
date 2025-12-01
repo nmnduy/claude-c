@@ -56,6 +56,53 @@ static int progress_callback(void *clientp, curl_off_t dltotal, curl_off_t dlnow
     return 0;  // Continue transfer
 }
 
+// Convert curl_slist headers to JSON string for logging
+static char* headers_to_json(struct curl_slist *headers) {
+    if (!headers) {
+        return NULL;
+    }
+
+    cJSON *headers_array = cJSON_CreateArray();
+    if (!headers_array) {
+        return NULL;
+    }
+
+    struct curl_slist *current = headers;
+    while (current) {
+        if (current->data) {
+            cJSON *header_obj = cJSON_CreateObject();
+            if (header_obj) {
+                // Parse header line into name and value
+                char *colon = strchr(current->data, ':');
+                if (colon) {
+                    *colon = '\0';  // Split the string
+                    char *header_name = current->data;
+                    char *header_value = colon + 1;
+                    
+                    // Skip leading whitespace in value
+                    while (*header_value == ' ' || *header_value == '\t') {
+                        header_value++;
+                    }
+                    
+                    cJSON_AddStringToObject(header_obj, "name", header_name);
+                    cJSON_AddStringToObject(header_obj, "value", header_value);
+                    
+                    *colon = ':';  // Restore the colon
+                } else {
+                    // If no colon, treat the whole line as a header line
+                    cJSON_AddStringToObject(header_obj, "line", current->data);
+                }
+                cJSON_AddItemToArray(headers_array, header_obj);
+            }
+        }
+        current = current->next;
+    }
+
+    char *json_string = cJSON_PrintUnformatted(headers_array);
+    cJSON_Delete(headers_array);
+    return json_string;
+}
+
 // ============================================================================
 // Request Building (from ConversationState)
 // ============================================================================
@@ -84,6 +131,7 @@ static ApiCallResult bedrock_execute_request(BedrockConfig *config, const char *
     if (!headers) {
         result.error_message = strdup("Failed to sign request with AWS SigV4");
         result.is_retryable = 0;
+        result.headers_json = NULL;  // No headers to log
         return result;
     }
 
@@ -93,6 +141,7 @@ static ApiCallResult bedrock_execute_request(BedrockConfig *config, const char *
         result.error_message = strdup("Failed to initialize CURL");
         result.is_retryable = 0;
         curl_slist_free_all(headers);
+        result.headers_json = NULL;  // Headers freed before we could capture them
         return result;
     }
 
@@ -122,6 +171,11 @@ static ApiCallResult bedrock_execute_request(BedrockConfig *config, const char *
                          (end.tv_nsec - start.tv_nsec) / 1000000;
 
     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &result.http_status);
+    
+    // Convert headers to JSON for logging before freeing them
+    char *headers_json = headers_to_json(headers);
+    result.headers_json = headers_json;  // Store for logging (caller must free)
+    
     curl_slist_free_all(headers);
     curl_easy_cleanup(curl);
 
@@ -141,6 +195,7 @@ static ApiCallResult bedrock_execute_request(BedrockConfig *config, const char *
                                    res == CURLE_GOT_NOTHING);
         }
         free(response.output);
+        free(result.headers_json);  // Clean up headers JSON if captured
         return result;
     }
 
@@ -153,6 +208,7 @@ static ApiCallResult bedrock_execute_request(BedrockConfig *config, const char *
         if (!openai_json) {
             result.error_message = strdup("Failed to parse Bedrock response");
             result.is_retryable = 0;
+            free(result.headers_json);  // Clean up headers JSON in error paths
             return result;
         }
 
@@ -162,6 +218,7 @@ static ApiCallResult bedrock_execute_request(BedrockConfig *config, const char *
             result.error_message = strdup("Failed to allocate ApiResponse");
             result.is_retryable = 0;
             cJSON_Delete(openai_json);
+            free(result.headers_json);  // Clean up headers JSON in error paths
             return result;
         }
 
@@ -174,6 +231,7 @@ static ApiCallResult bedrock_execute_request(BedrockConfig *config, const char *
             result.error_message = strdup("Invalid response format: no choices");
             result.is_retryable = 0;
             api_response_free(api_response);
+            free(result.headers_json);  // Clean up headers JSON in error paths
             return result;
         }
 
@@ -183,6 +241,7 @@ static ApiCallResult bedrock_execute_request(BedrockConfig *config, const char *
             result.error_message = strdup("Invalid response format: no message");
             result.is_retryable = 0;
             api_response_free(api_response);
+            free(result.headers_json);  // Clean up headers JSON in error paths
             return result;
         }
 
@@ -215,6 +274,7 @@ static ApiCallResult bedrock_execute_request(BedrockConfig *config, const char *
                     result.error_message = strdup("Failed to allocate tool calls");
                     result.is_retryable = 0;
                     api_response_free(api_response);
+                    free(result.headers_json);  // Clean up headers JSON in error paths
                     return result;
                 }
 
@@ -297,6 +357,7 @@ static ApiCallResult bedrock_execute_request(BedrockConfig *config, const char *
         result.error_message = strdup(buf);
     }
 
+    free(result.headers_json);  // Clean up headers JSON in error paths
     return result;
 }
 

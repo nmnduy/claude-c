@@ -72,6 +72,53 @@ static int is_prompt_caching_enabled(void) {
                              strcmp(disable_env, "TRUE") == 0));
 }
 
+// Convert curl_slist headers to JSON string for logging
+static char* headers_to_json(struct curl_slist *headers) {
+    if (!headers) {
+        return NULL;
+    }
+
+    cJSON *headers_array = cJSON_CreateArray();
+    if (!headers_array) {
+        return NULL;
+    }
+
+    struct curl_slist *current = headers;
+    while (current) {
+        if (current->data) {
+            cJSON *header_obj = cJSON_CreateObject();
+            if (header_obj) {
+                // Parse header line into name and value
+                char *colon = strchr(current->data, ':');
+                if (colon) {
+                    *colon = '\0';  // Split the string
+                    char *header_name = current->data;
+                    char *header_value = colon + 1;
+                    
+                    // Skip leading whitespace in value
+                    while (*header_value == ' ' || *header_value == '\t') {
+                        header_value++;
+                    }
+                    
+                    cJSON_AddStringToObject(header_obj, "name", header_name);
+                    cJSON_AddStringToObject(header_obj, "value", header_value);
+                    
+                    *colon = ':';  // Restore the colon
+                } else {
+                    // If no colon, treat the whole line as a header line
+                    cJSON_AddStringToObject(header_obj, "line", current->data);
+                }
+                cJSON_AddItemToArray(headers_array, header_obj);
+            }
+        }
+        current = current->next;
+    }
+
+    char *json_string = cJSON_PrintUnformatted(headers_array);
+    cJSON_Delete(headers_array);
+    return json_string;
+}
+
 // ============================================================================
 // OpenAI Provider Implementation
 // ============================================================================
@@ -114,18 +161,59 @@ static ApiCallResult openai_call_api(Provider *self, ConversationState *state) {
     // For simplicity, just use base_url directly - it should be pre-configured correctly
     const char *url = config->base_url;
 
-    // Set up headers with Bearer token
+    // Set up headers
     struct curl_slist *headers = NULL;
     headers = curl_slist_append(headers, "Content-Type: application/json");
 
+    // Add authentication header (custom format or default Bearer token)
     char auth_header[512];
-    snprintf(auth_header, sizeof(auth_header), "Authorization: Bearer %s", config->api_key);
+    if (config->auth_header_template) {
+        // Use custom auth header template (should contain %s for API key)
+        // Find %s in the template and replace it with the API key
+        const char *percent_s = strstr(config->auth_header_template, "%s");
+        if (percent_s) {
+            // Calculate lengths
+            size_t prefix_len = (size_t)(percent_s - config->auth_header_template);
+            size_t api_key_len = strlen(config->api_key);
+            size_t suffix_len = strlen(percent_s + 2); // +2 to skip "%s"
+            
+            // Build auth header manually
+            if (prefix_len + api_key_len + suffix_len + 1 < sizeof(auth_header)) {
+                strncpy(auth_header, config->auth_header_template, prefix_len);
+                auth_header[prefix_len] = '\0';
+                strcat(auth_header, config->api_key);
+                strcat(auth_header, percent_s + 2);
+            } else {
+                // Fallback if template is too long
+                strncpy(auth_header, config->auth_header_template, sizeof(auth_header) - 1);
+                auth_header[sizeof(auth_header) - 1] = '\0';
+                LOG_WARN("Auth header template too long, truncated");
+            }
+        } else {
+            // No %s found, use template as-is
+            strncpy(auth_header, config->auth_header_template, sizeof(auth_header) - 1);
+            auth_header[sizeof(auth_header) - 1] = '\0';
+        }
+    } else {
+        // Default Bearer token format
+        snprintf(auth_header, sizeof(auth_header), "Authorization: Bearer %s", config->api_key);
+    }
     headers = curl_slist_append(headers, auth_header);
+
+    // Add extra headers from environment
+    if (config->extra_headers) {
+        for (int i = 0; i < config->extra_headers_count; i++) {
+            if (config->extra_headers[i]) {
+                headers = curl_slist_append(headers, config->extra_headers[i]);
+            }
+        }
+    }
 
     if (!headers) {
         result.error_message = strdup("Failed to setup HTTP headers");
         result.is_retryable = 0;
         result.request_json = openai_json;  // Store for logging
+        result.headers_json = NULL;  // No headers to log
         return result;
     }
 
@@ -136,6 +224,7 @@ static ApiCallResult openai_call_api(Provider *self, ConversationState *state) {
         result.is_retryable = 0;
         curl_slist_free_all(headers);
         result.request_json = openai_json;  // Store for logging
+        result.headers_json = NULL;  // Headers freed before we could capture them
         return result;
     }
 
@@ -165,6 +254,11 @@ static ApiCallResult openai_call_api(Provider *self, ConversationState *state) {
                          (end.tv_nsec - start.tv_nsec) / 1000000;
 
     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &result.http_status);
+    
+    // Convert headers to JSON for logging before freeing them
+    char *headers_json = headers_to_json(headers);
+    result.headers_json = headers_json;  // Store for logging (caller must free)
+    
     curl_slist_free_all(headers);
     curl_easy_cleanup(curl);
 
@@ -187,6 +281,7 @@ static ApiCallResult openai_call_api(Provider *self, ConversationState *state) {
                                    res == CURLE_GOT_NOTHING);
         }
         free(response.output);
+        free(result.headers_json);  // Clean up headers JSON if captured
         return result;
     }
 
@@ -199,6 +294,7 @@ static ApiCallResult openai_call_api(Provider *self, ConversationState *state) {
         if (!raw_json) {
             result.error_message = strdup("Failed to parse JSON response");
             result.is_retryable = 0;
+            free(result.headers_json);  // Clean up headers JSON in error paths
             return result;
         }
 
@@ -208,6 +304,7 @@ static ApiCallResult openai_call_api(Provider *self, ConversationState *state) {
             result.error_message = strdup("Failed to allocate ApiResponse");
             result.is_retryable = 0;
             cJSON_Delete(raw_json);
+            free(result.headers_json);  // Clean up headers JSON in error paths
             return result;
         }
 
@@ -223,6 +320,7 @@ static ApiCallResult openai_call_api(Provider *self, ConversationState *state) {
             result.error_message = strdup("Invalid response format: no choices");
             result.is_retryable = 0;
             api_response_free(api_response);
+            free(result.headers_json);  // Clean up headers JSON in error paths
             return result;
         }
 
@@ -232,6 +330,7 @@ static ApiCallResult openai_call_api(Provider *self, ConversationState *state) {
             result.error_message = strdup("Invalid response format: no message");
             result.is_retryable = 0;
             api_response_free(api_response);
+            free(result.headers_json);  // Clean up headers JSON in error paths
             return result;
         }
 
@@ -264,6 +363,7 @@ static ApiCallResult openai_call_api(Provider *self, ConversationState *state) {
                     result.error_message = strdup("Failed to allocate tool calls");
                     result.is_retryable = 0;
                     api_response_free(api_response);
+                    free(result.headers_json);  // Clean up headers JSON in error paths
                     return result;
                 }
 
@@ -354,6 +454,7 @@ static ApiCallResult openai_call_api(Provider *self, ConversationState *state) {
         result.error_message = strdup(buf);
     }
 
+    free(result.headers_json);  // Clean up headers JSON in error paths
     return result;
 }
 
@@ -369,6 +470,16 @@ static void openai_cleanup(Provider *self) {
         OpenAIConfig *config = (OpenAIConfig*)self->config;
         free(config->api_key);
         free(config->base_url);
+        free(config->auth_header_template);
+        
+        // Free extra headers
+        if (config->extra_headers) {
+            for (int i = 0; i < config->extra_headers_count; i++) {
+                free(config->extra_headers[i]);
+            }
+            free(config->extra_headers);
+        }
+        
         free(config);
     }
 
@@ -446,6 +557,96 @@ Provider* openai_provider_create(const char *api_key, const char *base_url) {
             free(provider);
             return NULL;
         }
+    }
+
+    // Read custom auth header template from environment
+    const char *auth_header_env = getenv("OPENAI_AUTH_HEADER");
+    if (auth_header_env && auth_header_env[0] != '\0') {
+        config->auth_header_template = strdup(auth_header_env);
+        if (!config->auth_header_template) {
+            LOG_ERROR("OpenAI provider: failed to duplicate auth header template");
+            free(config->base_url);
+            free(config->api_key);
+            free(config);
+            free(provider);
+            return NULL;
+        }
+        LOG_INFO("OpenAI provider: using custom auth header template: %s", config->auth_header_template);
+    } else {
+        config->auth_header_template = NULL;  // Use default Bearer token format
+    }
+
+    // Read extra headers from environment
+    const char *extra_headers_env = getenv("OPENAI_EXTRA_HEADERS");
+    if (extra_headers_env && extra_headers_env[0] != '\0') {
+        // Parse comma-separated headers
+        char *extra_headers_copy = strdup(extra_headers_env);
+        if (!extra_headers_copy) {
+            LOG_ERROR("OpenAI provider: failed to duplicate extra headers string");
+            free(config->auth_header_template);
+            free(config->base_url);
+            free(config->api_key);
+            free(config);
+            free(provider);
+            return NULL;
+        }
+
+        // Count headers
+        char *token = strtok(extra_headers_copy, ",");
+        config->extra_headers_count = 0;
+        while (token) {
+            config->extra_headers_count++;
+            token = strtok(NULL, ",");
+        }
+
+        // Allocate array
+        config->extra_headers = calloc((size_t)config->extra_headers_count + 1, sizeof(char*));
+        if (!config->extra_headers) {
+            LOG_ERROR("OpenAI provider: failed to allocate extra headers array");
+            free(extra_headers_copy);
+            free(config->auth_header_template);
+            free(config->base_url);
+            free(config->api_key);
+            free(config);
+            free(provider);
+            return NULL;
+        }
+
+        // Copy headers
+        strcpy(extra_headers_copy, extra_headers_env);  // Reset copy
+        token = strtok(extra_headers_copy, ",");
+        for (int i = 0; i < config->extra_headers_count && token; i++) {
+            // Trim whitespace
+            while (*token == ' ' || *token == '\t') token++;
+            char *end = token + strlen(token) - 1;
+            while (end > token && (*end == ' ' || *end == '\t')) end--;
+            *(end + 1) = '\0';
+            
+            config->extra_headers[i] = strdup(token);
+            if (!config->extra_headers[i]) {
+                LOG_ERROR("OpenAI provider: failed to duplicate extra header");
+                // Cleanup allocated headers
+                for (int j = 0; j < i; j++) {
+                    free(config->extra_headers[j]);
+                }
+                free(config->extra_headers);
+                free(extra_headers_copy);
+                free(config->auth_header_template);
+                free(config->base_url);
+                free(config->api_key);
+                free(config);
+                free(provider);
+                return NULL;
+            }
+            token = strtok(NULL, ",");
+        }
+        config->extra_headers[config->extra_headers_count] = NULL;  // NULL-terminate
+        
+        LOG_INFO("OpenAI provider: loaded %d extra headers", config->extra_headers_count);
+        free(extra_headers_copy);
+    } else {
+        config->extra_headers = NULL;
+        config->extra_headers_count = 0;
     }
 
     // Set up provider interface

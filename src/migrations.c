@@ -45,6 +45,28 @@ static int migration_001_add_session_id(sqlite3 *db) {
     return 0;
 }
 
+// Migration 2: Add headers_json column to api_calls table
+static int migration_002_add_headers_json(sqlite3 *db) {
+    const char *sql =
+        "ALTER TABLE api_calls ADD COLUMN headers_json TEXT;";
+
+    char *err_msg = NULL;
+    int rc = sqlite3_exec(db, sql, NULL, NULL, &err_msg);
+
+    if (rc != SQLITE_OK) {
+        // Check if column already exists (idempotent migration)
+        if (strstr(err_msg, "duplicate column name")) {
+            sqlite3_free(err_msg);
+            return 0;  // Column already exists, consider it success
+        }
+        LOG_ERROR("Migration 002 failed: %s", err_msg);
+        sqlite3_free(err_msg);
+        return -1;
+    }
+
+    return 0;
+}
+
 // ============================================================================
 // Migration Registry
 // ============================================================================
@@ -54,6 +76,11 @@ static const Migration MIGRATIONS[] = {
         .version = 1,
         .description = "Add session_id column to api_calls table",
         .up = migration_001_add_session_id
+    },
+    {
+        .version = 2,
+        .description = "Add headers_json column to api_calls table",
+        .up = migration_002_add_headers_json
     },
     // Add new migrations here with incrementing version numbers
 };

@@ -175,11 +175,10 @@ static void render_status_window(TUIState *tui) {
         scroll_str_len = (int)strlen(scroll_str);
     }
 
-    // Render token usage on the right side (only in NORMAL mode, if any tokens used)
+    // Render token usage on the right side (only in NORMAL mode)
     char token_str[64] = {0};
     int token_str_len = 0;
-    if (tui->mode == TUI_MODE_NORMAL &&
-        (tui->total_prompt_tokens > 0 || tui->total_completion_tokens > 0)) {
+    if (tui->mode == TUI_MODE_NORMAL) {
         int total_tokens = tui->total_prompt_tokens + tui->total_completion_tokens;
         if (tui->total_cached_tokens > 0) {
             snprintf(token_str, sizeof(token_str), "Tokens: %d (%d cached) ",

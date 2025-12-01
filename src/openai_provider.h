@@ -16,6 +16,9 @@
 typedef struct {
     char *api_key;        // API key for Bearer token authentication
     char *base_url;       // Base API URL (e.g., "https://api.anthropic.com/v1/messages")
+    char *auth_header_template;  // Custom auth header template (e.g., "Authorization: Bearer %s" or "x-api-key: %s")
+    char **extra_headers;  // Additional curl headers (NULL-terminated array)
+    int extra_headers_count;  // Number of extra headers
 } OpenAIConfig;
 
 /**

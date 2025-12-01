@@ -20,6 +20,7 @@
 //     session_id TEXT,                   -- Unique session identifier for grouping related API calls
 //     api_base_url TEXT NOT NULL,        -- API endpoint URL (e.g., "https://api.openai.com/v1/chat/completions")
 //     request_json TEXT NOT NULL,        -- Full JSON request sent to API
+//     headers_json TEXT,                 -- JSON representation of request headers
 //     response_json TEXT,                -- Full JSON response received (NULL if error)
 //     model TEXT NOT NULL,               -- Model name (e.g., "claude-sonnet-4-20250514")
 //     status TEXT NOT NULL,              -- 'success' or 'error'
@@ -74,6 +75,7 @@ PersistenceDB* persistence_init(const char *db_path);
 //   session_id: Unique session identifier (NULL if not available)
 //   api_base_url: API endpoint URL (e.g., "https://api.openai.com/v1/chat/completions")
 //   request_json: Raw JSON request string (must not be NULL)
+//   headers_json: Raw JSON string of request headers (NULL if not available)
 //   response_json: Raw JSON response string (NULL if error occurred)
 //   model: Model name used for the request
 //   status: "success" or "error"
@@ -89,6 +91,7 @@ int persistence_log_api_call(
     const char *session_id,
     const char *api_base_url,
     const char *request_json,
+    const char *headers_json,
     const char *response_json,
     const char *model,
     const char *status,

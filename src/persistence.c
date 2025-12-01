@@ -86,17 +86,38 @@ static int extract_token_usage(
         LOG_DEBUG("extract_token_usage: found total_tokens = %d", *total_tokens);
     }
 
-    // Extract cache-related token counts - optional fields
-    cJSON *prompt_tokens_details = cJSON_GetObjectItem(usage, "prompt_tokens_details");
-    if (prompt_tokens_details) {
-        cJSON *cached_tokens_json = cJSON_GetObjectItem(prompt_tokens_details, "cached_tokens");
-        if (cached_tokens_json && cJSON_IsNumber(cached_tokens_json)) {
-            *cached_tokens = cached_tokens_json->valueint;
-            LOG_DEBUG("extract_token_usage: found cached_tokens = %d", *cached_tokens);
+    // Extract cache-related token counts with provider-specific detection
+    // Priority order: Moonshot > DeepSeek > Anthropic > General
+    
+    // 1. Moonshot-style: direct cached_tokens field
+    cJSON *direct_cached_tokens = cJSON_GetObjectItem(usage, "cached_tokens");
+    if (direct_cached_tokens && cJSON_IsNumber(direct_cached_tokens)) {
+        *cached_tokens = direct_cached_tokens->valueint;
+        LOG_DEBUG("extract_token_usage: found Moonshot-style cached_tokens = %d", *cached_tokens);
+    }
+    
+    // 2. DeepSeek-style: cached_tokens inside prompt_tokens_details
+    if (*cached_tokens == 0) {
+        cJSON *prompt_tokens_details = cJSON_GetObjectItem(usage, "prompt_tokens_details");
+        if (prompt_tokens_details) {
+            cJSON *cached_tokens_json = cJSON_GetObjectItem(prompt_tokens_details, "cached_tokens");
+            if (cached_tokens_json && cJSON_IsNumber(cached_tokens_json)) {
+                *cached_tokens = cached_tokens_json->valueint;
+                LOG_DEBUG("extract_token_usage: found DeepSeek-style cached_tokens in prompt_tokens_details = %d", *cached_tokens);
+            }
+        }
+    }
+    
+    // 3. Anthropic-style: cache_read_input_tokens (counts cache hits)
+    if (*cached_tokens == 0) {
+        cJSON *cache_read_input_tokens = cJSON_GetObjectItem(usage, "cache_read_input_tokens");
+        if (cache_read_input_tokens && cJSON_IsNumber(cache_read_input_tokens)) {
+            *cached_tokens = cache_read_input_tokens->valueint;
+            LOG_DEBUG("extract_token_usage: using Anthropic-style cache_read_input_tokens as cached_tokens = %d", *cached_tokens);
         }
     }
 
-    // Extract direct cache metrics - optional fields
+    // Extract detailed cache metrics (DeepSeek-style)
     cJSON *cache_hit_tokens_json = cJSON_GetObjectItem(usage, "prompt_cache_hit_tokens");
     cJSON *cache_miss_tokens_json = cJSON_GetObjectItem(usage, "prompt_cache_miss_tokens");
 
@@ -126,6 +147,7 @@ static const char *SCHEMA_SQL =
     "    session_id TEXT,"
     "    api_base_url TEXT NOT NULL,"
     "    request_json TEXT NOT NULL,"
+    "    headers_json TEXT,"
     "    response_json TEXT,"
     "    model TEXT NOT NULL,"
     "    status TEXT NOT NULL,"
@@ -278,8 +300,31 @@ PersistenceDB* persistence_init(const char *db_path) {
         return NULL;
     }
 
-    // Create schema
+    // Configure database for better concurrency and performance
     char *err_msg = NULL;
+
+    // Enable WAL mode for better concurrency
+    rc = sqlite3_exec(pdb->db, "PRAGMA journal_mode=WAL;", NULL, NULL, &err_msg);
+    if (rc != SQLITE_OK) {
+        LOG_WARN("Failed to enable WAL mode: %s", err_msg);
+        sqlite3_free(err_msg);
+        err_msg = NULL;
+        // Non-fatal, continue anyway
+    }
+
+    // Set synchronous mode to NORMAL for better performance
+    rc = sqlite3_exec(pdb->db, "PRAGMA synchronous=NORMAL;", NULL, NULL, &err_msg);
+    if (rc != SQLITE_OK) {
+        LOG_WARN("Failed to set synchronous mode: %s", err_msg);
+        sqlite3_free(err_msg);
+        err_msg = NULL;
+        // Non-fatal, continue anyway
+    }
+
+    // Set busy timeout to 5 seconds
+    sqlite3_busy_timeout(pdb->db, 5000);
+
+    // Create schema
     rc = sqlite3_exec(pdb->db, SCHEMA_SQL, NULL, NULL, &err_msg);
     if (rc != SQLITE_OK) {
         LOG_ERROR("Failed to create schema: %s", err_msg);
@@ -331,6 +376,7 @@ int persistence_log_api_call(
     const char *session_id,
     const char *api_base_url,
     const char *request_json,
+    const char *headers_json,
     const char *response_json,
     const char *model,
     const char *status,
@@ -354,9 +400,9 @@ int persistence_log_api_call(
     // Prepare SQL statement
     const char *sql =
         "INSERT INTO api_calls "
-        "(timestamp, session_id, api_base_url, request_json, response_json, model, status, "
+        "(timestamp, session_id, api_base_url, request_json, headers_json, response_json, model, status, "
         "http_status, error_message, duration_ms, tool_count, created_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);";
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);";
 
     sqlite3_stmt *stmt;
     int rc = sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL);
@@ -379,25 +425,31 @@ int persistence_log_api_call(
     sqlite3_bind_text(stmt, 3, api_base_url, -1, SQLITE_TRANSIENT);
     sqlite3_bind_text(stmt, 4, request_json, -1, SQLITE_TRANSIENT);
 
-    if (response_json) {
-        sqlite3_bind_text(stmt, 5, response_json, -1, SQLITE_TRANSIENT);
+    if (headers_json) {
+        sqlite3_bind_text(stmt, 5, headers_json, -1, SQLITE_TRANSIENT);
     } else {
         sqlite3_bind_null(stmt, 5);
     }
 
-    sqlite3_bind_text(stmt, 6, model, -1, SQLITE_TRANSIENT);
-    sqlite3_bind_text(stmt, 7, status, -1, SQLITE_TRANSIENT);
-    sqlite3_bind_int(stmt, 8, http_status);
-
-    if (error_message) {
-        sqlite3_bind_text(stmt, 9, error_message, -1, SQLITE_TRANSIENT);
+    if (response_json) {
+        sqlite3_bind_text(stmt, 6, response_json, -1, SQLITE_TRANSIENT);
     } else {
-        sqlite3_bind_null(stmt, 9);
+        sqlite3_bind_null(stmt, 6);
     }
 
-    sqlite3_bind_int64(stmt, 10, duration_ms);
-    sqlite3_bind_int(stmt, 11, tool_count);
-    sqlite3_bind_int64(stmt, 12, now);
+    sqlite3_bind_text(stmt, 7, model, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 8, status, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int(stmt, 9, http_status);
+
+    if (error_message) {
+        sqlite3_bind_text(stmt, 10, error_message, -1, SQLITE_TRANSIENT);
+    } else {
+        sqlite3_bind_null(stmt, 10);
+    }
+
+    sqlite3_bind_int64(stmt, 11, duration_ms);
+    sqlite3_bind_int(stmt, 12, tool_count);
+    sqlite3_bind_int64(stmt, 13, now);
 
     // Execute
     rc = sqlite3_step(stmt);

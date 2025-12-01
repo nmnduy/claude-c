@@ -47,6 +47,27 @@ Pure C implementation of a coding agent using Anthropic's Claude API.
 - Zero-initialize structs with `= {0}`
 - Check all malloc/calloc returns
 
+**libbsd for safer C code:**
+
+libbsd is a newly introduced to this codebase. We will slowly transition to it. New code should use this library. It is to replace risky libc functions and add overflow-safe allocation and secure memory wiping.
+- **Install**: `apt install libbsd-dev` and link with `-lbsd`
+- **Functions to use**:
+  - `strlcpy(dst, src, size)` - safe string copy with guaranteed NUL termination
+  - `strlcat(dst, src, size)` - safe concatenation
+  - `strnlen(buf, max)` - bounded length check
+  - `reallocarray(ptr, nmemb, size)` - detects integer overflow during allocations and returns NULL safely
+  - `explicit_bzero(buf, len)` - securely erase memory without optimizer removal
+  - `arc4random()` / `arc4random_buf()` - strong randomness with no manual seeding
+- **Project rules**:
+  - Never use `strcpy`, `strcat`, or unchecked `strlen`. Replace with `strlcpy`, `strlcat`, `strnlen`
+  - For all resizable buffers and arrays, use `reallocarray` instead of `malloc(n*m)` or `realloc` to avoid overflow bugs
+  - When wiping secrets (passwords, tokens), use `explicit_bzero`
+  - Always check return values: `strlcpy`/`strlcat` return full source length; detect truncation when >= size. `reallocarray` returns NULL on overflow or OOM
+  - **Recommended dynamic buffer pattern**:
+    - Grow capacity using `reallocarray`
+    - Append using `strlcpy(dst + len, src, cap - len)`
+    - Update length safely
+
 **Required compilation:**
 - Flags: `-Wall -Wextra -Werror`
 - Sanitizers: `-fsanitize=address,undefined` for testing
@@ -82,6 +103,8 @@ export OPENAI_API_KEY="your-api-key"
 
 **Environment variables:**
 - **API**: `OPENAI_API_KEY` (required), `OPENAI_MODEL`, `OPENAI_API_BASE`
+- **OpenAI Authentication**: `OPENAI_AUTH_HEADER` - Custom auth header template (e.g., "x-api-key: %s" or "Authorization: Bearer %s")
+- **Extra Headers**: `OPENAI_EXTRA_HEADERS` - Comma-separated list of additional headers (e.g., "anthropic-version: 2023-06-01, User-Agent: my-app")
 - **Caching**: `DISABLE_PROMPT_CACHING=1` to disable
 - **Logging**: `CLAUDE_LOG_LEVEL` (DEBUG/INFO/WARN/ERROR), `CLAUDE_C_LOG_PATH`
 - **Database**: `CLAUDE_C_DB_PATH` for API call history (SQLite)
@@ -216,6 +239,7 @@ cp examples/mcp_servers.json ~/.config/claude-c/
 - **cJSON** - JSON parsing
 - **pthread** - Thread support
 - **ncurses** - Terminal UI (scrolling, mouse support)
+- **libbsd** - Safe string functions and overflow-safe allocation (strlcpy, strlcat, reallocarray, etc.)
 - **POSIX** - File ops, glob, process management
 
 Verify: `make check-deps`
