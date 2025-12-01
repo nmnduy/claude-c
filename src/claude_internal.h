@@ -198,6 +198,9 @@ typedef struct ConversationState {
     int total_prompt_tokens;        // Total input tokens used
     int total_completion_tokens;    // Total output tokens used
     int total_cached_tokens;        // Total cached tokens
+
+    // Planning mode flag
+    int plan_mode;                  // Whether planning mode is enabled
 } ConversationState;
 
 // ============================================================================

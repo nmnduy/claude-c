@@ -75,6 +75,9 @@ typedef struct {
     int total_completion_tokens;  // Total output tokens used
     int total_cached_tokens;      // Total cached tokens
 
+    // Plan mode flag (displayed in status bar)
+    int plan_mode;           // Whether planning mode is enabled
+
     // Modes
     TUIMode mode;            // Current input mode (NORMAL, INSERT, or COMMAND)
     int normal_mode_last_key; // Previous key in normal mode (for gg, G combos)
@@ -148,7 +151,7 @@ int tui_poll_input(TUIState *tui);
 
 // Process a single input character
 // Returns: 0 if handled, 1 if Enter pressed (submit), -1 on EOF/quit
-int tui_process_input_char(TUIState *tui, int ch, const char *prompt);
+int tui_process_input_char(TUIState *tui, int ch, const char *prompt, void *user_data);
 
 // Get the current input buffer content
 // Returns: Pointer to internal buffer (do NOT free), or NULL if empty
@@ -205,5 +208,7 @@ void tui_render_todo_list(TUIState *tui, const TodoList *list);
 // completion_tokens: Total output tokens used
 // cached_tokens: Total cached tokens
 void tui_update_token_usage(TUIState *tui, int prompt_tokens, int completion_tokens, int cached_tokens);
+
+
 
 #endif // TUI_H

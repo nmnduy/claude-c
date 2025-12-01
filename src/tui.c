@@ -16,6 +16,7 @@
 #include "fallback_colors.h"
 #include "logger.h"
 #include "indicators.h"
+#include "claude_internal.h"
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
@@ -242,9 +243,17 @@ static void render_status_window(TUIState *tui) {
         }
     }
 
-    // Render scroll percentage (right-aligned, before token usage)
+    // Render plan mode indicator (if enabled) - always visible regardless of mode
+    char plan_str[16] = {0};
+    int plan_str_len = 0;
+    if (tui->plan_mode) {
+        snprintf(plan_str, sizeof(plan_str), " ● Plan ");
+        plan_str_len = (int)strlen(plan_str);
+    }
+
+    // Render scroll percentage (right-aligned, before plan mode and token usage)
     if (scroll_str_len > 0 && scroll_str_len < width) {
-        int scroll_col = width - scroll_str_len - token_str_len;
+        int scroll_col = width - scroll_str_len - plan_str_len - token_str_len;
         if (scroll_col < 0) scroll_col = 0;
 
         if (has_colors()) {
@@ -253,6 +262,32 @@ static void render_status_window(TUIState *tui) {
         mvwaddnstr(tui->wm.status_win, 0, scroll_col, scroll_str, scroll_str_len);
         if (has_colors()) {
             wattroff(tui->wm.status_win, COLOR_PAIR(NCURSES_PAIR_STATUS));
+        }
+    }
+
+    // Render plan mode indicator (visible in all modes)
+    // Position depends on whether we're showing token usage (NORMAL mode only)
+    if (plan_str_len > 0 && plan_str_len < width) {
+        int plan_col;
+        if (tui->mode == TUI_MODE_NORMAL) {
+            // In NORMAL mode: place before token usage
+            plan_col = width - plan_str_len - token_str_len;
+        } else {
+            // In INSERT/COMMAND mode: place at right edge (no tokens shown)
+            plan_col = width - plan_str_len;
+        }
+        if (plan_col < 0) plan_col = 0;
+
+        if (has_colors()) {
+            wattron(tui->wm.status_win, COLOR_PAIR(NCURSES_PAIR_PROMPT) | A_BOLD);
+        } else {
+            wattron(tui->wm.status_win, A_BOLD);
+        }
+        mvwaddnstr(tui->wm.status_win, 0, plan_col, plan_str, plan_str_len);
+        if (has_colors()) {
+            wattroff(tui->wm.status_win, COLOR_PAIR(NCURSES_PAIR_PROMPT) | A_BOLD);
+        } else {
+            wattroff(tui->wm.status_win, A_BOLD);
         }
     }
 
@@ -1197,6 +1232,9 @@ int tui_init(TUIState *tui) {
     tui->mode = TUI_MODE_INSERT;
     tui->normal_mode_last_key = 0;
 
+    // Initialize plan mode (start disabled)
+    tui->plan_mode = 0;
+
     // Initialize command mode buffer
     tui->command_buffer = NULL;
     tui->command_buffer_len = 0;
@@ -1544,6 +1582,8 @@ void tui_update_token_usage(TUIState *tui, int prompt_tokens, int completion_tok
         render_status_window(tui);
     }
 }
+
+
 
 void tui_refresh(TUIState *tui) {
     if (!tui || !tui->is_initialized) return;
@@ -2104,7 +2144,7 @@ static int check_paste_timeout(TUIState *tui, const char *prompt) {
     return 0;
 }
 
-int tui_process_input_char(TUIState *tui, int ch, const char *prompt) {
+int tui_process_input_char(TUIState *tui, int ch, const char *prompt, void *user_data) {
     if (!tui || !tui->is_initialized || !tui->wm.input_win) {
         return -1;
     }
@@ -2196,6 +2236,43 @@ int tui_process_input_char(TUIState *tui, int ch, const char *prompt) {
         refresh_conversation_viewport(tui);
         render_status_window(tui);
         input_redraw(tui, prompt);
+        return 0;
+    } else if (ch == KEY_BTAB) {  // Shift+Tab: toggle plan_mode
+        // Extract InteractiveContext from user_data
+        // Structure matches InteractiveContext in claude.c
+        typedef struct {
+            ConversationState *state;
+            TUIState *tui;
+            void *worker;
+            void *instruction_queue;
+            TUIMessageQueue *tui_queue;
+            int instruction_queue_capacity;
+        } InteractiveContextView;
+
+        if (user_data) {
+            InteractiveContextView *ctx = (InteractiveContextView *)user_data;
+            ConversationState *state = ctx->state;
+
+            if (state) {
+                // Lock the conversation state
+                if (conversation_state_lock(state) == 0) {
+                    // Toggle plan_mode in state
+                    state->plan_mode = state->plan_mode ? 0 : 1;
+                    int new_plan_mode = state->plan_mode;
+
+                    // Update TUI directly
+                    tui->plan_mode = new_plan_mode;
+
+                    conversation_state_unlock(state);
+
+                    // Log the toggle
+                    LOG_INFO("[TUI] Plan mode toggled: %s", new_plan_mode ? "ON" : "OFF");
+
+                    // Refresh status bar to show change
+                    render_status_window(tui);
+                }
+            }
+        }
         return 0;
     } else if (ch == 1) {  // Ctrl+A: beginning of line
         input->cursor = 0;
@@ -2773,6 +2850,27 @@ int tui_event_loop(TUIState *tui, const char *prompt,
     int running = 1;
     const long frame_time_us = 16667;  // ~60 FPS (1/60 second in microseconds)
 
+    // Initialize plan_mode from state (if available)
+    if (user_data) {
+        typedef struct {
+            ConversationState *state;
+            TUIState *tui;
+            void *worker;
+            void *instruction_queue;
+            TUIMessageQueue *tui_queue;
+            int instruction_queue_capacity;
+        } InteractiveContextView;
+
+        InteractiveContextView *ctx = (InteractiveContextView *)user_data;
+        if (ctx->state) {
+            if (conversation_state_lock(ctx->state) == 0) {
+                tui->plan_mode = ctx->state->plan_mode;
+                conversation_state_unlock(ctx->state);
+                LOG_DEBUG("[TUI] Initialized plan_mode from state: %s", tui->plan_mode ? "ON" : "OFF");
+            }
+        }
+    }
+
     // Clear input buffer at start
     tui_clear_input_buffer(tui);
 
@@ -2819,7 +2917,7 @@ int tui_event_loop(TUIState *tui, const char *prompt,
 
             chars_processed++;
 
-            int result = tui_process_input_char(tui, ch, prompt);
+            int result = tui_process_input_char(tui, ch, prompt, user_data);
 
             // Notify about keypress (after processing, and only for normal input)
             // Skip for Ctrl+C (result==2) since interrupt callback handles that
