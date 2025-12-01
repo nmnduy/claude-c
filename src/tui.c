@@ -1942,6 +1942,9 @@ static int handle_normal_mode_input(TUIState *tui, int ch, const char *prompt) {
         window_manager_scroll_to_top(&tui->wm);
         tui->normal_mode_last_key = 0;
         refresh_conversation_viewport(tui);
+        if (tui->wm.status_height > 0) {
+            render_status_window(tui);
+        }
         input_redraw(tui, prompt);
         return 0;
     }
@@ -2029,6 +2032,9 @@ static int handle_normal_mode_input(TUIState *tui, int ch, const char *prompt) {
         case 'G':  // Go to bottom
             window_manager_scroll_to_bottom(&tui->wm);
             refresh_conversation_viewport(tui);
+            if (tui->wm.status_height > 0) {
+                render_status_window(tui);
+            }
             input_redraw(tui, prompt);
             break;
 
