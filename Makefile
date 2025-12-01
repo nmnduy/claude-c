@@ -190,8 +190,10 @@ TEST_TOOL_DETAILS_SRC = tests/test_tool_details_simple.c
 TEST_ARRAY_RESIZE_SRC = tests/test_array_resize.c
 TEST_TOKEN_USAGE_SRC = tests/test_token_usage.c
 
-.PHONY: all clean check-deps install test test-edit test-read test-todo test-todo-write test-paste test-retry-jitter test-openai-format test-write-diff-integration test-rotation test-patch-parser test-thread-cancel test-aws-cred-rotation test-message-queue test-event-loop test-wrap test-mcp test-mcp-image test-bash-summary test-bash-timeout test-bash-stderr test-bash-truncation test-tool-results-regression test-tool-details test-array-resize test-token-usage query-tool debug analyze sanitize-ub sanitize-all sanitize-leak valgrind memscan comprehensive-scan clang-tidy cppcheck flawfinder version show-version update-version bump-version bump-patch build clang ci-test ci-gcc ci-clang ci-gcc-sanitize ci-clang-sanitize ci-all fmt-whitespace
+.PHONY: all clean check-deps install test test-edit test-read test-todo test-todo-write test-paste test-retry-jitter test-openai-format test-write-diff-integration test-rotation test-patch-parser test-thread-cancel test-aws-cred-rotation test-message-queue test-event-loop test-wrap test-mcp test-mcp-image test-bash-summary test-bash-timeout test-bash-stderr test-bash-truncation test-tool-results-regression test-tool-details test-array-resize test-token-usage test-token-usage-comprehensive query-tool debug analyze sanitize-ub sanitize-all sanitize-leak valgrind memscan comprehensive-scan clang-tidy cppcheck flawfinder version show-version update-version bump-version bump-patch build clang ci-test ci-gcc ci-clang ci-gcc-sanitize ci-clang-sanitize ci-all fmt-whitespace
 
+all: check-deps $(TARGET)
+TEST_TOKEN_USAGE_COMPREHENSIVE_SRC = tests/test_token_usage_comprehensive.c
 all: check-deps $(TARGET)
 
 build: check-deps $(TARGET)
@@ -1387,3 +1389,14 @@ $(TEST_TUI_INPUT_BUFFER_TARGET): $(TEST_TUI_INPUT_BUFFER_SRC)
 
 # Test target for Bash command summarization
 # Note: test_bash_summary.c file does not exist, so test-bash-summary target is removed
+
+TEST_TOKEN_USAGE_COMPREHENSIVE_TARGET = $(BUILD_DIR)/test_token_usage_comprehensive
+
+test-token-usage-comprehensive: check-deps $(TEST_TOKEN_USAGE_COMPREHENSIVE_TARGET)
+	@echo ""
+	@echo "Running Comprehensive Token Usage tests..."
+	@echo ""
+	@./$(TEST_TOKEN_USAGE_COMPREHENSIVE_TARGET)
+
+$(TEST_TOKEN_USAGE_COMPREHENSIVE_TARGET): $(TEST_TOKEN_USAGE_COMPREHENSIVE_SRC)
+	@$(CC) $(CFLAGS) -o $(TEST_TOKEN_USAGE_COMPREHENSIVE_TARGET) $(TEST_TOKEN_USAGE_COMPREHENSIVE_SRC) $(LDFLAGS)

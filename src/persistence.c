@@ -67,8 +67,21 @@ static int extract_token_usage(
     *prompt_cache_miss_tokens = 0;
 
     // Extract basic token counts - these are lenient and won't fail if fields are missing
-    cJSON *prompt_tokens_json = cJSON_GetObjectItem(usage, "prompt_tokens");
-    cJSON *completion_tokens_json = cJSON_GetObjectItem(usage, "completion_tokens");
+    // Try both OpenAI/Anthropic style (input_tokens/output_tokens) and generic style (prompt_tokens/completion_tokens)
+    
+    // Try input_tokens first (Anthropic style)
+    cJSON *prompt_tokens_json = cJSON_GetObjectItem(usage, "input_tokens");
+    if (!prompt_tokens_json) {
+        // Fall back to generic prompt_tokens
+        prompt_tokens_json = cJSON_GetObjectItem(usage, "prompt_tokens");
+    }
+    
+    cJSON *completion_tokens_json = cJSON_GetObjectItem(usage, "output_tokens");
+    if (!completion_tokens_json) {
+        // Fall back to generic completion_tokens
+        completion_tokens_json = cJSON_GetObjectItem(usage, "completion_tokens");
+    }
+    
     cJSON *total_tokens_json = cJSON_GetObjectItem(usage, "total_tokens");
 
     if (prompt_tokens_json && cJSON_IsNumber(prompt_tokens_json)) {
