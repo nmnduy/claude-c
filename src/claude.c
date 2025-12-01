@@ -3891,7 +3891,7 @@ void accumulate_token_usage(ConversationState *state, const char *raw_response) 
 
     // Extract cache-related token counts with provider-specific detection
     // Priority order: Moonshot > DeepSeek > Anthropic > General
-    
+
     // 1. Moonshot-style: direct cached_tokens field
     if (cached_tokens == 0) {
         cJSON *direct_cached_tokens = cJSON_GetObjectItem(usage, "cached_tokens");
@@ -3900,7 +3900,7 @@ void accumulate_token_usage(ConversationState *state, const char *raw_response) 
             LOG_DEBUG("accumulate_token_usage: found Moonshot-style cached_tokens = %d", cached_tokens);
         }
     }
-    
+
     // 2. DeepSeek-style: cached_tokens inside prompt_tokens_details
     if (cached_tokens == 0) {
         cJSON *prompt_tokens_details = cJSON_GetObjectItem(usage, "prompt_tokens_details");
@@ -3912,7 +3912,7 @@ void accumulate_token_usage(ConversationState *state, const char *raw_response) 
             }
         }
     }
-    
+
     // 3. Anthropic-style: cache_read_input_tokens (counts cache hits)
     if (cached_tokens == 0) {
         cJSON *cache_read_input_tokens = cJSON_GetObjectItem(usage, "cache_read_input_tokens");

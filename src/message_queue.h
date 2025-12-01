@@ -92,6 +92,8 @@ int post_tui_message(TUIMessageQueue *queue, TUIMessageType type, const char *te
  */
 int post_token_update(TUIMessageQueue *queue, int prompt_tokens, int completion_tokens, int cached_tokens);
 
+
+
 /**
  * Poll for a message from the TUI queue (non-blocking)
  *

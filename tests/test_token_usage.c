@@ -14,23 +14,23 @@ static void test_token_extraction(const char *provider_name, const char *respons
                                   int expected_prompt, int expected_completion, int expected_cached) {
     int prompt_tokens = 0, completion_tokens = 0, total_tokens = 0;
     int cached_tokens = 0;
-    
+
     // This would normally be static, so we need to expose it for testing
     // For now, let's simulate what the function should do
     printf("Testing %s provider response...\n", provider_name);
-    
+
     // Parse JSON
     cJSON *json = cJSON_Parse(response_json);
     assert(json != NULL);
-    
+
     cJSON *usage = cJSON_GetObjectItem(json, "usage");
     assert(usage != NULL);
-    
+
     // Extract basic tokens
     cJSON *prompt_json = cJSON_GetObjectItem(usage, "prompt_tokens");
     cJSON *completion_json = cJSON_GetObjectItem(usage, "completion_tokens");
     cJSON *total_json = cJSON_GetObjectItem(usage, "total_tokens");
-    
+
     if (prompt_json && cJSON_IsNumber(prompt_json)) {
         prompt_tokens = prompt_json->valueint;
     }
@@ -40,7 +40,7 @@ static void test_token_extraction(const char *provider_name, const char *respons
     if (total_json && cJSON_IsNumber(total_json)) {
         total_tokens = total_json->valueint;
     }
-    
+
     // Extract cache tokens (provider-specific logic)
     // 1. Moonshot-style: direct cached_tokens
     cJSON *direct_cached = cJSON_GetObjectItem(usage, "cached_tokens");
@@ -48,7 +48,7 @@ static void test_token_extraction(const char *provider_name, const char *respons
         cached_tokens = direct_cached->valueint;
         printf("  Found Moonshot-style cached_tokens: %d\n", cached_tokens);
     }
-    
+
     // 2. DeepSeek-style: cached_tokens in prompt_tokens_details
     if (cached_tokens == 0) {
         cJSON *details = cJSON_GetObjectItem(usage, "prompt_tokens_details");
@@ -60,7 +60,7 @@ static void test_token_extraction(const char *provider_name, const char *respons
             }
         }
     }
-    
+
     // 3. Anthropic-style: cache_read_input_tokens
     if (cached_tokens == 0) {
         cJSON *cache_read = cJSON_GetObjectItem(usage, "cache_read_input_tokens");
@@ -69,23 +69,23 @@ static void test_token_extraction(const char *provider_name, const char *respons
             printf("  Found Anthropic-style cache_read_input_tokens: %d\n", cached_tokens);
         }
     }
-    
+
     printf("  Results: prompt=%d, completion=%d, total=%d, cached=%d\n",
            prompt_tokens, completion_tokens, total_tokens, cached_tokens);
-    
+
     // Verify expectations
     assert(prompt_tokens == expected_prompt);
     assert(completion_tokens == expected_completion);
     assert(cached_tokens == expected_cached);
-    
+
     printf("  ✓ %s test passed!\n\n", provider_name);
-    
+
     cJSON_Delete(json);
 }
 
 int main(void) {
     printf("=== Token Usage Extraction Test ===\n\n");
-    
+
     // Test DeepSeek response
     const char *deepseek_response = "{"
         "\"usage\": {"
@@ -99,9 +99,9 @@ int main(void) {
             "\"prompt_cache_miss_tokens\": 35"
         "}"
     "}";
-    
+
     test_token_extraction("DeepSeek", deepseek_response, 37667, 25, 37632);
-    
+
     // Test Moonshot response
     const char *moonshot_response = "{"
         "\"usage\": {"
@@ -111,9 +111,9 @@ int main(void) {
             "\"cached_tokens\": 768"
         "}"
     "}";
-    
+
     test_token_extraction("Moonshot", moonshot_response, 1551, 232, 768);
-    
+
     // Test OpenAI response (no cache)
     const char *openai_response = "{"
         "\"usage\": {"
@@ -122,9 +122,9 @@ int main(void) {
             "\"total_tokens\": 150"
         "}"
     "}";
-    
+
     test_token_extraction("OpenAI", openai_response, 100, 50, 0);
-    
+
     // Test Anthropic response (converted format)
     const char *anthropic_response = "{"
         "\"usage\": {"
@@ -134,9 +134,9 @@ int main(void) {
             "\"cache_read_input_tokens\": 150"
         "}"
     "}";
-    
+
     test_token_extraction("Anthropic", anthropic_response, 200, 75, 150);
-    
+
     printf("=== All tests passed! ===\n");
     return 0;
 }

@@ -38,10 +38,10 @@ static int test_extract_tokens(
     // Try input_tokens first (Anthropic style)
     cJSON *p = cJSON_GetObjectItem(usage, "input_tokens");
     if (!p) p = cJSON_GetObjectItem(usage, "prompt_tokens");
-    
+
     cJSON *c = cJSON_GetObjectItem(usage, "output_tokens");
     if (!c) c = cJSON_GetObjectItem(usage, "completion_tokens");
-    
+
     cJSON *t = cJSON_GetObjectItem(usage, "total_tokens");
 
     if (p && cJSON_IsNumber(p)) *prompt_tokens = p->valueint;
@@ -60,7 +60,7 @@ static int test_extract_tokens(
             if (dc2 && cJSON_IsNumber(dc2)) *cached_tokens = dc2->valueint;
         }
     }
-    
+
     // Try Anthropic-style: cache_read_input_tokens
     if (*cached_tokens == 0) {
         cJSON *cr = cJSON_GetObjectItem(usage, "cache_read_input_tokens");
@@ -121,7 +121,7 @@ int main(void) {
     test_response("Anthropic - No cache",
         "{\"input_tokens\": 34122, \"output_tokens\": 106}",
         34122, 106, 0, 0, 0, 0);
-    
+
     test_response("Anthropic - With cache",
         "{\"input_tokens\": 5454, \"cache_read_input_tokens\": 3000, \"output_tokens\": 69}",
         5454, 69, 0, 3000, 0, 0);
@@ -140,7 +140,7 @@ int main(void) {
     test_response("DeepSeek - With cache",
         "{\"prompt_tokens\": 37667, \"completion_tokens\": 25, \"total_tokens\": 37692, \"prompt_tokens_details\": {\"cached_tokens\": 37632}, \"prompt_cache_hit_tokens\": 37632, \"prompt_cache_miss_tokens\": 35}",
         37667, 25, 37692, 37632, 37632, 35);
-    
+
     test_response("DeepSeek - No cache",
         "{\"prompt_tokens\": 2000, \"completion_tokens\": 300, \"total_tokens\": 2300}",
         2000, 300, 2300, 0, 0, 0);
@@ -149,7 +149,7 @@ int main(void) {
     test_response("Moonshot - With cache",
         "{\"prompt_tokens\": 1551, \"completion_tokens\": 232, \"total_tokens\": 1783, \"cached_tokens\": 768}",
         1551, 232, 1783, 768, 0, 0);
-    
+
     test_response("Moonshot - No cache",
         "{\"prompt_tokens\": 500, \"completion_tokens\": 100, \"total_tokens\": 600}",
         500, 100, 600, 0, 0, 0);
@@ -158,7 +158,7 @@ int main(void) {
     test_response("Minimal response",
         "{\"prompt_tokens\": 10, \"completion_tokens\": 5}",
         10, 5, 0, 0, 0, 0);
-    
+
     test_response("Large numbers",
         "{\"prompt_tokens\": 1000000, \"completion_tokens\": 50000, \"total_tokens\": 1050000}",
         1000000, 50000, 1050000, 0, 0, 0);

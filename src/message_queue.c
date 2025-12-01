@@ -134,6 +134,8 @@ int post_token_update(TUIMessageQueue *queue, int prompt_tokens, int completion_
     return 0;
 }
 
+
+
 int poll_tui_message(TUIMessageQueue *queue, TUIMessage *msg) {
     if (!queue || !msg) {
         return -1;

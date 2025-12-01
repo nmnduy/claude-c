@@ -68,20 +68,20 @@ static int extract_token_usage(
 
     // Extract basic token counts - these are lenient and won't fail if fields are missing
     // Try both OpenAI/Anthropic style (input_tokens/output_tokens) and generic style (prompt_tokens/completion_tokens)
-    
+
     // Try input_tokens first (Anthropic style)
     cJSON *prompt_tokens_json = cJSON_GetObjectItem(usage, "input_tokens");
     if (!prompt_tokens_json) {
         // Fall back to generic prompt_tokens
         prompt_tokens_json = cJSON_GetObjectItem(usage, "prompt_tokens");
     }
-    
+
     cJSON *completion_tokens_json = cJSON_GetObjectItem(usage, "output_tokens");
     if (!completion_tokens_json) {
         // Fall back to generic completion_tokens
         completion_tokens_json = cJSON_GetObjectItem(usage, "completion_tokens");
     }
-    
+
     cJSON *total_tokens_json = cJSON_GetObjectItem(usage, "total_tokens");
 
     if (prompt_tokens_json && cJSON_IsNumber(prompt_tokens_json)) {
@@ -101,14 +101,14 @@ static int extract_token_usage(
 
     // Extract cache-related token counts with provider-specific detection
     // Priority order: Moonshot > DeepSeek > Anthropic > General
-    
+
     // 1. Moonshot-style: direct cached_tokens field
     cJSON *direct_cached_tokens = cJSON_GetObjectItem(usage, "cached_tokens");
     if (direct_cached_tokens && cJSON_IsNumber(direct_cached_tokens)) {
         *cached_tokens = direct_cached_tokens->valueint;
         LOG_DEBUG("extract_token_usage: found Moonshot-style cached_tokens = %d", *cached_tokens);
     }
-    
+
     // 2. DeepSeek-style: cached_tokens inside prompt_tokens_details
     if (*cached_tokens == 0) {
         cJSON *prompt_tokens_details = cJSON_GetObjectItem(usage, "prompt_tokens_details");
@@ -120,7 +120,7 @@ static int extract_token_usage(
             }
         }
     }
-    
+
     // 3. Anthropic-style: cache_read_input_tokens (counts cache hits)
     if (*cached_tokens == 0) {
         cJSON *cache_read_input_tokens = cJSON_GetObjectItem(usage, "cache_read_input_tokens");
@@ -498,7 +498,7 @@ int persistence_log_api_call(
                                                &prompt_cache_miss_tokens);
 
         LOG_DEBUG("Token extraction result: %d (0=success, -1=no usage field)", extract_result);
-        
+
         if (extract_result == 0) {
             LOG_DEBUG("Token usage extracted: prompt=%d, completion=%d, total=%d, cached=%d, cache_hit=%d, cache_miss=%d",
                      prompt_tokens, completion_tokens, total_tokens, cached_tokens,

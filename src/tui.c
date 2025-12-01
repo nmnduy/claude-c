@@ -189,7 +189,7 @@ static void render_status_window(TUIState *tui) {
         token_str_len = (int)strlen(token_str);
         LOG_DEBUG("[TUI] Rendering token display: %s (mode=NORMAL, prompt=%d, completion=%d, cached=%d)",
                  token_str, tui->total_prompt_tokens, tui->total_completion_tokens, tui->total_cached_tokens);
-        
+
         // Debug: warn if token counts are 0 in Normal mode (might indicate a bug)
         if (total_tokens == 0) {
             LOG_DEBUG("[TUI] Warning: Token counts are 0 in NORMAL mode");
