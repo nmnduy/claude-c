@@ -10,12 +10,12 @@ A lightweight, modular implementation of a coding agent that interacts with an O
 
 **macOS (Homebrew):**
 ```bash
-brew install curl cjson portaudio
+brew install curl cjson portaudio libbsd
 ```
 
 **Ubuntu/Debian:**
 ```bash
-sudo apt-get install libcurl4-openssl-dev libcjson-dev portaudio19-dev build-essential
+sudo apt-get install libcurl4-openssl-dev libcjson-dev portaudio19-dev build-essential libbsd-dev
 ```
 
 ## Building

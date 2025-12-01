@@ -38,7 +38,7 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libcurl4-openssl-dev libcjson-dev sqlite3 libsqlite3-dev libssl-dev build-essential
+          sudo apt-get install -y libcurl4-openssl-dev libcjson-dev sqlite3 libsqlite3-dev libssl-dev build-essential libbsd-dev
 
       - name: Build
         run: |

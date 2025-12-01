@@ -19,7 +19,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libcurl4-openssl-dev libcjson-dev sqlite3 libsqlite3-dev libssl-dev build-essential libncursesw6 libncurses-dev
+          sudo apt-get install -y libcurl4-openssl-dev libcjson-dev sqlite3 libsqlite3-dev libssl-dev build-essential libncursesw6 libncurses-dev libbsd-dev
 
       - name: Build with GCC
         run: |
@@ -55,7 +55,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libcurl4-openssl-dev libcjson-dev sqlite3 libsqlite3-dev libssl-dev build-essential libncursesw6 libncurses-dev
+          sudo apt-get install -y libcurl4-openssl-dev libcjson-dev sqlite3 libsqlite3-dev libssl-dev build-essential libncursesw6 libncurses-dev libbsd-dev
 
       - name: Build with Clang
         run: |
@@ -90,7 +90,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          brew install curl cjson sqlite3 openssl pkg-config ncurses
+          brew install curl cjson sqlite3 openssl pkg-config ncurses libbsd
 
       - name: Build with GCC
         run: |
@@ -125,7 +125,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          brew install curl cjson sqlite3 openssl pkg-config ncurses
+          brew install curl cjson sqlite3 openssl pkg-config ncurses libbsd
 
       - name: Build with Clang
         run: |
