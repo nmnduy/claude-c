@@ -5212,6 +5212,11 @@ static void process_response(ConversationState *state,
         if (next_response) {
             process_response(state, next_response, tui, queue, worker_ctx);
             api_response_free(next_response);
+        } else if (state->interrupt_requested) {
+            // User interrupted the tool results processing
+            LOG_INFO("Tool results processing interrupted by user");
+            state->interrupt_requested = 0;  // Clear for next operation
+            return;  // Exit gracefully without error
         } else if (!interrupted) {
             const char *error_msg = "API call failed after executing tools. Check logs for details.";
             ui_show_error(tui, queue, error_msg);
