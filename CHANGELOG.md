@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.1.11
+## v0.1.12
 
 - Added custom headers support for OpenAI provider
 - Added logging headers for better debugging
