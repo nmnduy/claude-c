@@ -179,4 +179,19 @@ int persistence_get_session_token_usage(
     int *cached_tokens
 );
 
+// Get prompt tokens from the most recent API call in the session
+//
+// Parameters:
+//   db: Persistence database handle
+//   session_id: Session identifier
+//   prompt_tokens: Output parameter for prompt tokens from last call
+//
+// Returns:
+//   0 on success, -1 on error or if no records found
+int persistence_get_last_prompt_tokens(
+    PersistenceDB *db,
+    const char *session_id,
+    int *prompt_tokens
+);
+
 #endif // PERSISTENCE_H

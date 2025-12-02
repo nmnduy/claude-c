@@ -3954,7 +3954,7 @@ static ApiResponse* call_api_with_retries(ConversationState *state) {
                      total_ms, result.duration_ms, attempt_num,
                      result.auth_refreshed ? "yes" : "no");
 
-            
+
 
             // Log success to persistence
             if (state->persistence_db && result.raw_response) {
@@ -5189,7 +5189,7 @@ static void ai_worker_handle_instruction(AIWorkerContext *ctx, const AIInstructi
         return;
     }
 
-    
+
 
     process_response(ctx->state, response, NULL, ctx->tui_queue, ctx);
     api_response_free(response);

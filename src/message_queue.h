@@ -36,7 +36,7 @@ typedef struct {
     char *text;             /* Owned by queue, freed after processing */
     int priority;           /* Higher = more urgent (reserved for future) */
 
-    
+
 } TUIMessage;
 
 /**

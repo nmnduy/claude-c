@@ -206,7 +206,7 @@ int persistence_get_session_token_usage(
         *prompt_tokens = sqlite3_column_int(stmt, 0);
         *completion_tokens = sqlite3_column_int(stmt, 1);
         *cached_tokens = sqlite3_column_int(stmt, 2);
-        
+
         LOG_DEBUG("Retrieved token usage for session %s: prompt=%d, completion=%d, cached=%d",
                  session_id ? session_id : "all", *prompt_tokens, *completion_tokens, *cached_tokens);
     } else if (rc != SQLITE_DONE) {
@@ -217,6 +217,69 @@ int persistence_get_session_token_usage(
 
     sqlite3_finalize(stmt);
     return 0;
+}
+
+// Get prompt tokens from the most recent API call in the session
+int persistence_get_last_prompt_tokens(
+    PersistenceDB *db,
+    const char *session_id,
+    int *prompt_tokens
+) {
+    if (!db || !db->db || !prompt_tokens) {
+        LOG_ERROR("Invalid parameters to persistence_get_last_prompt_tokens");
+        return -1;
+    }
+
+    // Initialize output parameter
+    *prompt_tokens = 0;
+
+    const char *sql;
+    sqlite3_stmt *stmt;
+    int rc;
+
+    if (session_id) {
+        // Get the most recent token usage for this session
+        sql = "SELECT prompt_tokens "
+              "FROM token_usage "
+              "WHERE session_id = ? "
+              "ORDER BY created_at DESC "
+              "LIMIT 1;";
+    } else {
+        // Get the most recent token usage overall
+        sql = "SELECT prompt_tokens "
+              "FROM token_usage "
+              "ORDER BY created_at DESC "
+              "LIMIT 1;";
+    }
+
+    rc = sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        LOG_ERROR("Failed to prepare token usage query: %s", sqlite3_errmsg(db->db));
+        return -1;
+    }
+
+    if (session_id) {
+        sqlite3_bind_text(stmt, 1, session_id, -1, SQLITE_TRANSIENT);
+    }
+
+    rc = sqlite3_step(stmt);
+    if (rc == SQLITE_ROW) {
+        *prompt_tokens = sqlite3_column_int(stmt, 0);
+        LOG_DEBUG("Retrieved last prompt tokens for session %s: %d",
+                 session_id ? session_id : "all", *prompt_tokens);
+        sqlite3_finalize(stmt);
+        return 0;
+    } else if (rc == SQLITE_DONE) {
+        // No records found - this is not an error, just no data yet
+        LOG_DEBUG("No token usage records found for session %s",
+                 session_id ? session_id : "all");
+        sqlite3_finalize(stmt);
+        return 0;
+    } else {
+        LOG_ERROR("Failed to execute token usage query: %s", sqlite3_errmsg(db->db));
+        sqlite3_finalize(stmt);
+        return -1;
+    }
 }
 
 // SQL schema for the api_calls table
@@ -577,6 +640,12 @@ int persistence_log_api_call(
             sqlite3_int64 api_call_id = sqlite3_last_insert_rowid(db->db);
             LOG_DEBUG("Token usage: api_call_id = %lld (last_insert_rowid)", (long long)api_call_id);
 
+            // Warn if session_id is NULL - this should not happen in normal operation
+            if (!session_id) {
+                LOG_WARN("Creating token usage record with NULL session_id for api_call_id=%lld. "
+                         "This indicates a potential bug in session tracking.", (long long)api_call_id);
+            }
+
             // Prepare token usage insert statement
             const char *token_sql =
                 "INSERT INTO token_usage "
@@ -592,7 +661,11 @@ int persistence_log_api_call(
             } else {
                 // Bind parameters
                 sqlite3_bind_int64(token_stmt, 1, api_call_id);
-                sqlite3_bind_text(token_stmt, 2, session_id, -1, SQLITE_TRANSIENT);
+                if (session_id) {
+                    sqlite3_bind_text(token_stmt, 2, session_id, -1, SQLITE_TRANSIENT);
+                } else {
+                    sqlite3_bind_null(token_stmt, 2);
+                }
                 sqlite3_bind_int(token_stmt, 3, prompt_tokens);
                 sqlite3_bind_int(token_stmt, 4, completion_tokens);
                 sqlite3_bind_int(token_stmt, 5, total_tokens);
