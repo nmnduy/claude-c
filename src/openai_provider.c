@@ -7,6 +7,7 @@
 #include "claude_internal.h"  // Must be first to get ApiResponse definition
 #include "openai_provider.h"
 #include "logger.h"
+#include "http_client.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -18,33 +19,10 @@
 #define DEFAULT_ANTHROPIC_URL "https://api.anthropic.com/v1/messages"
 
 // ============================================================================
-// CURL Helpers
+// HTTP Client Wrapper
 // ============================================================================
 
-typedef struct {
-    char *output;
-    size_t size;
-} MemoryBuffer;
-
-static size_t write_callback(void *contents, size_t size, size_t nmemb, void *userp) {
-    size_t realsize = size * nmemb;
-    MemoryBuffer *mem = (MemoryBuffer *)userp;
-
-    char *ptr = realloc(mem->output, mem->size + realsize + 1);
-    if (!ptr) {
-        LOG_ERROR("Not enough memory (realloc returned NULL)");
-        return 0;
-    }
-
-    mem->output = ptr;
-    memcpy(&(mem->output[mem->size]), contents, realsize);
-    mem->size += realsize;
-    mem->output[mem->size] = 0;
-
-    return realsize;
-}
-
-// Progress callback placeholder (Ctrl+C handled by TUI)
+// Progress callback for interrupt handling
 static int progress_callback(void *clientp, curl_off_t dltotal, curl_off_t dlnow,
                              curl_off_t ultotal, curl_off_t ulnow) {
     (void)clientp;  // Unused
@@ -73,51 +51,7 @@ static int is_prompt_caching_enabled(void) {
 }
 
 // Convert curl_slist headers to JSON string for logging
-static char* headers_to_json(struct curl_slist *headers) {
-    if (!headers) {
-        return NULL;
-    }
 
-    cJSON *headers_array = cJSON_CreateArray();
-    if (!headers_array) {
-        return NULL;
-    }
-
-    struct curl_slist *current = headers;
-    while (current) {
-        if (current->data) {
-            cJSON *header_obj = cJSON_CreateObject();
-            if (header_obj) {
-                // Parse header line into name and value
-                char *colon = strchr(current->data, ':');
-                if (colon) {
-                    *colon = '\0';  // Split the string
-                    char *header_name = current->data;
-                    char *header_value = colon + 1;
-
-                    // Skip leading whitespace in value
-                    while (*header_value == ' ' || *header_value == '\t') {
-                        header_value++;
-                    }
-
-                    cJSON_AddStringToObject(header_obj, "name", header_name);
-                    cJSON_AddStringToObject(header_obj, "value", header_value);
-
-                    *colon = ':';  // Restore the colon
-                } else {
-                    // If no colon, treat the whole line as a header line
-                    cJSON_AddStringToObject(header_obj, "line", current->data);
-                }
-                cJSON_AddItemToArray(headers_array, header_obj);
-            }
-        }
-        current = current->next;
-    }
-
-    char *json_string = cJSON_PrintUnformatted(headers_array);
-    cJSON_Delete(headers_array);
-    return json_string;
-}
 
 // ============================================================================
 // OpenAI Provider Implementation
@@ -217,80 +151,55 @@ static ApiCallResult openai_call_api(Provider *self, ConversationState *state) {
         return result;
     }
 
-    // Execute HTTP request
-    CURL *curl = curl_easy_init();
-    if (!curl) {
-        result.error_message = strdup("Failed to initialize CURL");
-        result.is_retryable = 0;
-        curl_slist_free_all(headers);
-        result.request_json = openai_json;  // Store for logging
-        result.headers_json = NULL;  // Headers freed before we could capture them
-        return result;
-    }
-
-    MemoryBuffer response = {NULL, 0};
-
-    curl_easy_setopt(curl, CURLOPT_URL, url);
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, openai_json);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
-
-    // Set timeouts to prevent indefinite hangs
-    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 30L);  // 30 seconds to connect
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 300L);         // 5 minutes total timeout
-
-    // Enable progress callback (not used for Ctrl+C interrupts)
-    curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
-    curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, progress_callback);
-    curl_easy_setopt(curl, CURLOPT_XFERINFODATA, NULL);
-
-    struct timespec start, end;
-    clock_gettime(CLOCK_MONOTONIC, &start);
-    CURLcode res = curl_easy_perform(curl);
-    clock_gettime(CLOCK_MONOTONIC, &end);
-
-    result.duration_ms = (end.tv_sec - start.tv_sec) * 1000 +
-                         (end.tv_nsec - start.tv_nsec) / 1000000;
-
-    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &result.http_status);
-
-    // Convert headers to JSON for logging before freeing them
-    char *headers_json = headers_to_json(headers);
-    result.headers_json = headers_json;  // Store for logging (caller must free)
-
-    curl_slist_free_all(headers);
-    curl_easy_cleanup(curl);
-
+    // Execute HTTP request using HTTP client
+    HttpRequest req = {0};
+    req.url = url;
+    req.method = "POST";
+    req.body = openai_json;
+    req.headers = headers;
+    req.connect_timeout_ms = 30000;  // 30 seconds
+    req.total_timeout_ms = 300000;   // 5 minutes
+    
+    HttpResponse *http_resp = http_client_execute(&req, progress_callback, NULL);
+    
     // Store request JSON for logging (caller must free)
     result.request_json = openai_json;
-
-    // Handle CURL errors
-    if (res != CURLE_OK) {
-        // Check if the error was due to user interruption (Ctrl+C)
-        if (res == CURLE_ABORTED_BY_CALLBACK) {
-            result.error_message = strdup("API call interrupted by user (Ctrl+C)");
-            result.is_retryable = 0;  // User interruption is not retryable
-        } else {
-            result.error_message = strdup(curl_easy_strerror(res));
-            result.is_retryable = (res == CURLE_COULDNT_CONNECT ||
-                                   res == CURLE_OPERATION_TIMEDOUT ||
-                                   res == CURLE_RECV_ERROR ||
-                                   res == CURLE_SEND_ERROR ||
-                                   res == CURLE_SSL_CONNECT_ERROR ||
-                                   res == CURLE_GOT_NOTHING);
-        }
-        free(response.output);
-        free(result.headers_json);  // Clean up headers JSON if captured
+    
+    if (!http_resp) {
+        result.error_message = strdup("Failed to execute HTTP request");
+        result.is_retryable = 0;
+        curl_slist_free_all(headers);
         return result;
     }
-
-    result.raw_response = response.output;
+    
+    // Copy results from HTTP response
+    result.duration_ms = http_resp->duration_ms;
+    result.http_status = http_resp->status_code;
+    result.raw_response = http_resp->body ? strdup(http_resp->body) : NULL;
+    result.headers_json = http_headers_to_json(http_resp->headers);
+    
+    // Handle HTTP errors
+    if (http_resp->error_message) {
+        result.error_message = strdup(http_resp->error_message);
+        result.is_retryable = http_resp->is_retryable;
+        http_response_free(http_resp);
+        curl_slist_free_all(headers);
+        return result;
+    }
+    
+    // Clean up HTTP response (but keep body since we duplicated it)
+    char *body_to_free = http_resp->body;
+    http_resp->body = NULL;  // Prevent double free
+    http_response_free(http_resp);
+    free(body_to_free);
+    
+    // Free headers (they were copied by http_client_execute)
+    curl_slist_free_all(headers);
 
     // Check HTTP status
     if (result.http_status >= 200 && result.http_status < 300) {
         // Success - parse response (already in OpenAI format)
-        cJSON *raw_json = cJSON_Parse(response.output);
+        cJSON *raw_json = cJSON_Parse(result.raw_response);
         if (!raw_json) {
             result.error_message = strdup("Failed to parse JSON response");
             result.is_retryable = 0;
@@ -415,7 +324,7 @@ static ApiCallResult openai_call_api(Provider *self, ConversationState *state) {
                            result.http_status >= 500);
 
     // Extract error message from response if JSON
-    cJSON *error_json = cJSON_Parse(response.output);
+    cJSON *error_json = cJSON_Parse(result.raw_response);
     if (error_json) {
         cJSON *error_obj = cJSON_GetObjectItem(error_json, "error");
         if (error_obj) {

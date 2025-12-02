@@ -7,6 +7,7 @@
 #include "claude_internal.h"  // Must be first to get ApiResponse definition
 #include "bedrock_provider.h"
 #include "logger.h"
+#include "http_client.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -57,51 +58,7 @@ static int progress_callback(void *clientp, curl_off_t dltotal, curl_off_t dlnow
 }
 
 // Convert curl_slist headers to JSON string for logging
-static char* headers_to_json(struct curl_slist *headers) {
-    if (!headers) {
-        return NULL;
-    }
 
-    cJSON *headers_array = cJSON_CreateArray();
-    if (!headers_array) {
-        return NULL;
-    }
-
-    struct curl_slist *current = headers;
-    while (current) {
-        if (current->data) {
-            cJSON *header_obj = cJSON_CreateObject();
-            if (header_obj) {
-                // Parse header line into name and value
-                char *colon = strchr(current->data, ':');
-                if (colon) {
-                    *colon = '\0';  // Split the string
-                    char *header_name = current->data;
-                    char *header_value = colon + 1;
-
-                    // Skip leading whitespace in value
-                    while (*header_value == ' ' || *header_value == '\t') {
-                        header_value++;
-                    }
-
-                    cJSON_AddStringToObject(header_obj, "name", header_name);
-                    cJSON_AddStringToObject(header_obj, "value", header_value);
-
-                    *colon = ':';  // Restore the colon
-                } else {
-                    // If no colon, treat the whole line as a header line
-                    cJSON_AddStringToObject(header_obj, "line", current->data);
-                }
-                cJSON_AddItemToArray(headers_array, header_obj);
-            }
-        }
-        current = current->next;
-    }
-
-    char *json_string = cJSON_PrintUnformatted(headers_array);
-    cJSON_Delete(headers_array);
-    return json_string;
-}
 
 // ============================================================================
 // Request Building (from ConversationState)
@@ -173,7 +130,7 @@ static ApiCallResult bedrock_execute_request(BedrockConfig *config, const char *
     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &result.http_status);
 
     // Convert headers to JSON for logging before freeing them
-    char *headers_json = headers_to_json(headers);
+    char *headers_json = http_headers_to_json(headers);
     result.headers_json = headers_json;  // Store for logging (caller must free)
 
     curl_slist_free_all(headers);
