@@ -8,6 +8,7 @@
 #include "anthropic_provider.h"
 #include "openai_messages.h"  // We reuse internal message building and parse into OpenAI-like intermediate
 #include "logger.h"
+#include "http_client.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -23,28 +24,7 @@
 // CURL Helpers
 // ============================================================================
 
-typedef struct {
-    char *output;
-    size_t size;
-} MemoryBuffer;
 
-static size_t write_callback(void *contents, size_t size, size_t nmemb, void *userp) {
-    size_t realsize = size * nmemb;
-    MemoryBuffer *mem = (MemoryBuffer *)userp;
-
-    char *ptr = realloc(mem->output, mem->size + realsize + 1);
-    if (!ptr) {
-        LOG_ERROR("Not enough memory (realloc returned NULL)");
-        return 0;
-    }
-
-    mem->output = ptr;
-    memcpy(&(mem->output[mem->size]), contents, realsize);
-    mem->size += realsize;
-    mem->output[mem->size] = 0;
-
-    return realsize;
-}
 
 static int progress_callback(void *clientp, curl_off_t dltotal, curl_off_t dlnow,
                              curl_off_t ultotal, curl_off_t ulnow) {
@@ -53,32 +33,7 @@ static int progress_callback(void *clientp, curl_off_t dltotal, curl_off_t dlnow
 }
 
 // Convert curl_slist headers to JSON string for logging
-static char* headers_to_json(struct curl_slist *headers) {
-    if (!headers) return NULL;
-    cJSON *arr = cJSON_CreateArray();
-    if (!arr) return NULL;
-    for (struct curl_slist *cur = headers; cur; cur = cur->next) {
-        if (!cur->data) continue;
-        cJSON *obj = cJSON_CreateObject();
-        if (!obj) continue;
-        char *colon = strchr(cur->data, ':');
-        if (colon) {
-            *colon = '\0';
-            char *name = cur->data;
-            char *val = colon + 1;
-            while (*val == ' ' || *val == '\t') val++;
-            cJSON_AddStringToObject(obj, "name", name);
-            cJSON_AddStringToObject(obj, "value", val);
-            *colon = ':';
-        } else {
-            cJSON_AddStringToObject(obj, "line", cur->data);
-        }
-        cJSON_AddItemToArray(arr, obj);
-    }
-    char *s = cJSON_PrintUnformatted(arr);
-    cJSON_Delete(arr);
-    return s;
-}
+// Note: Using http_headers_to_json from http_client.h instead
 
 // ============================================================================
 // Anthropic Request/Response Conversion
@@ -439,65 +394,56 @@ static ApiCallResult anthropic_call_api(Provider *self, ConversationState *state
         return result;
     }
 
-    // Execute HTTP request
-    CURL *curl = curl_easy_init();
-    if (!curl) {
-        result.error_message = strdup("Failed to initialize CURL");
-        result.is_retryable = 0;
-        curl_slist_free_all(headers);
-        result.request_json = anth_req;
-        result.headers_json = NULL;
-        free(openai_req);
-        return result;
-    }
+    // Build HTTP request using the new HTTP client
+    HttpRequest req = {0};
+    req.url = config->base_url;
+    req.method = "POST";
+    req.body = anth_req;
+    req.headers = headers;
+    req.connect_timeout_ms = 30000;  // 30 seconds
+    req.total_timeout_ms = 300000;   // 5 minutes
+    req.follow_redirects = 0;
+    req.verbose = 0;
 
-    MemoryBuffer response = {NULL, 0};
-
-    curl_easy_setopt(curl, CURLOPT_URL, config->base_url);
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, anth_req);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
-    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 30L);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 300L);
-    curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
-    curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, progress_callback);
-
-    struct timespec start, end;
-    clock_gettime(CLOCK_MONOTONIC, &start);
-    CURLcode rc = curl_easy_perform(curl);
-    clock_gettime(CLOCK_MONOTONIC, &end);
-
-    result.duration_ms = (end.tv_sec - start.tv_sec) * 1000 + (end.tv_nsec - start.tv_nsec) / 1000000;
-    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &result.http_status);
-
-    result.headers_json = headers_to_json(headers);
-
+    // Execute HTTP request using the unified HTTP client
+    HttpResponse *http_resp = http_client_execute(&req, progress_callback, NULL);
+    
+    // Convert headers to JSON for logging
+    result.headers_json = http_headers_to_json(headers);
+    
+    // Free the headers list (http_client_execute makes its own copy)
     curl_slist_free_all(headers);
-    curl_easy_cleanup(curl);
 
     // Keep request JSONs for logging
     result.request_json = anth_req;
 
-    if (rc != CURLE_OK) {
-        if (rc == CURLE_ABORTED_BY_CALLBACK) {
-            result.error_message = strdup("API call interrupted by user (Ctrl+C)");
-            result.is_retryable = 0;
-        } else {
-            result.error_message = strdup(curl_easy_strerror(rc));
-            result.is_retryable = (rc == CURLE_COULDNT_CONNECT || rc == CURLE_OPERATION_TIMEDOUT || rc == CURLE_RECV_ERROR || rc == CURLE_SEND_ERROR || rc == CURLE_SSL_CONNECT_ERROR || rc == CURLE_GOT_NOTHING);
-        }
-        free(response.output);
+    if (!http_resp) {
+        result.error_message = strdup("Failed to execute HTTP request (memory allocation failed)");
+        result.is_retryable = 0;
         free(result.headers_json);
         free(openai_req);
         return result;
     }
 
-    result.raw_response = response.output;
+    result.duration_ms = http_resp->duration_ms;
+    result.http_status = http_resp->status_code;
+
+    // Handle HTTP errors
+    if (http_resp->error_message) {
+        result.error_message = strdup(http_resp->error_message);
+        result.is_retryable = http_resp->is_retryable;
+        http_response_free(http_resp);
+        free(result.headers_json);
+        free(openai_req);
+        return result;
+    }
+
+    result.raw_response = http_resp->body ? strdup(http_resp->body) : NULL;
+    http_response_free(http_resp);
 
     if (result.http_status >= 200 && result.http_status < 300) {
         // Convert to OpenAI-like then parse as in other providers
-        cJSON *openai_like = anthropic_to_openai_response(response.output);
+        cJSON *openai_like = anthropic_to_openai_response(result.raw_response);
         if (!openai_like) {
             result.error_message = strdup("Failed to parse Anthropic response");
             result.is_retryable = 0;
@@ -592,7 +538,7 @@ static ApiCallResult anthropic_call_api(Provider *self, ConversationState *state
     result.is_retryable = (result.http_status == 429 || result.http_status == 408 || result.http_status >= 500);
 
     // Try to extract message
-    cJSON *err = cJSON_Parse(response.output);
+    cJSON *err = cJSON_Parse(result.raw_response);
     if (err) {
         // Anthropic error shape has error.message
         cJSON *error_obj = cJSON_GetObjectItem(err, "error");
