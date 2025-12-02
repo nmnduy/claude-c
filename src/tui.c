@@ -180,16 +180,33 @@ static void render_status_window(TUIState *tui) {
     char token_str[64] = {0};
     int token_str_len = 0;
     if (tui->mode == TUI_MODE_NORMAL) {
-        int total_tokens = tui->total_prompt_tokens + tui->total_completion_tokens;
-        if (tui->total_cached_tokens > 0) {
+        // Query token usage from database instead of using state
+        int prompt_tokens = 0, completion_tokens = 0, cached_tokens = 0;
+        if (tui->persistence_db) {
+            if (persistence_get_session_token_usage(tui->persistence_db, 
+                                                   tui->session_id, 
+                                                   &prompt_tokens, 
+                                                   &completion_tokens, 
+                                                   &cached_tokens) == 0) {
+                LOG_DEBUG("[TUI] Retrieved token usage from DB: prompt=%d, completion=%d, cached=%d",
+                         prompt_tokens, completion_tokens, cached_tokens);
+            } else {
+                LOG_DEBUG("[TUI] Failed to retrieve token usage from DB");
+            }
+        } else {
+            LOG_DEBUG("[TUI] No persistence database connection available");
+        }
+
+        int total_tokens = prompt_tokens + completion_tokens;
+        if (cached_tokens > 0) {
             snprintf(token_str, sizeof(token_str), "Tokens: %d (%d cached) ",
-                    total_tokens, tui->total_cached_tokens);
+                    total_tokens, cached_tokens);
         } else {
             snprintf(token_str, sizeof(token_str), "Tokens: %d ", total_tokens);
         }
         token_str_len = (int)strlen(token_str);
         LOG_DEBUG("[TUI] Rendering token display: %s (mode=NORMAL, prompt=%d, completion=%d, cached=%d)",
-                 token_str, tui->total_prompt_tokens, tui->total_completion_tokens, tui->total_cached_tokens);
+                 token_str, prompt_tokens, completion_tokens, cached_tokens);
 
         // Debug: warn if token counts are 0 in Normal mode (might indicate a bug)
         if (total_tokens == 0) {
@@ -1566,22 +1583,7 @@ void tui_update_status(TUIState *tui, const char *status_text) {
     }
 }
 
-void tui_update_token_usage(TUIState *tui, int prompt_tokens, int completion_tokens, int cached_tokens) {
-    if (!tui || !tui->is_initialized) return;
 
-    // Update token counts
-    tui->total_prompt_tokens = prompt_tokens;
-    tui->total_completion_tokens = completion_tokens;
-    tui->total_cached_tokens = cached_tokens;
-
-    LOG_DEBUG("[TUI] Token usage updated: prompt=%d, completion=%d, cached=%d",
-             prompt_tokens, completion_tokens, cached_tokens);
-
-    // Refresh status bar to show updated token counts
-    if (tui->wm.status_height > 0) {
-        render_status_window(tui);
-    }
-}
 
 
 
@@ -2798,9 +2800,7 @@ static void dispatch_tui_message(TUIState *tui, TUIMessage *msg) {
             // Placeholder for future TODO list integration
             break;
 
-        case TUI_MSG_TOKEN_UPDATE:
-            tui_update_token_usage(tui, msg->prompt_tokens, msg->completion_tokens, msg->cached_tokens);
-            break;
+        
 
         default:
             /* Unknown message type; ignore */

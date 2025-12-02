@@ -160,4 +160,23 @@ int persistence_vacuum(PersistenceDB *db);
 //   0 on success, -1 on error
 int persistence_auto_rotate(PersistenceDB *db);
 
+// Get total token usage for a session
+//
+// Parameters:
+//   db: Persistence database handle
+//   session_id: Session identifier (NULL = get totals for all sessions)
+//   prompt_tokens: Output parameter for total prompt tokens
+//   completion_tokens: Output parameter for total completion tokens
+//   cached_tokens: Output parameter for total cached tokens
+//
+// Returns:
+//   0 on success, -1 on error
+int persistence_get_session_token_usage(
+    PersistenceDB *db,
+    const char *session_id,
+    int *prompt_tokens,
+    int *completion_tokens,
+    int *cached_tokens
+);
+
 #endif // PERSISTENCE_H

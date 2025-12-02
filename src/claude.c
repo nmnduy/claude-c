@@ -3855,92 +3855,7 @@ void api_response_free(ApiResponse *response) {
 // API Call Logic
 // ============================================================================
 
-/**
- * Extract and accumulate token usage from API response
- * Updates the token counters in ConversationState
- */
-void accumulate_token_usage(ConversationState *state, const char *raw_response) {
-    if (!state || !raw_response) {
-        return;
-    }
 
-    cJSON *json = cJSON_Parse(raw_response);
-    if (!json) {
-        LOG_DEBUG("accumulate_token_usage: failed to parse JSON response");
-        return;
-    }
-
-    // Extract usage object
-    cJSON *usage = cJSON_GetObjectItem(json, "usage");
-    if (!usage) {
-        LOG_DEBUG("accumulate_token_usage: no 'usage' object found in response");
-        cJSON_Delete(json);
-        return;
-    }
-
-    // Extract token counts
-    cJSON *prompt_tokens_json = cJSON_GetObjectItem(usage, "prompt_tokens");
-    cJSON *completion_tokens_json = cJSON_GetObjectItem(usage, "completion_tokens");
-
-    int prompt_tokens = 0;
-    int completion_tokens = 0;
-    int cached_tokens = 0;
-
-    if (prompt_tokens_json && cJSON_IsNumber(prompt_tokens_json)) {
-        prompt_tokens = prompt_tokens_json->valueint;
-    }
-
-    if (completion_tokens_json && cJSON_IsNumber(completion_tokens_json)) {
-        completion_tokens = completion_tokens_json->valueint;
-    }
-
-    // Extract cache-related token counts with provider-specific detection
-    // Priority order: Moonshot > DeepSeek > Anthropic > General
-
-    // 1. Moonshot-style: direct cached_tokens field
-    if (cached_tokens == 0) {
-        cJSON *direct_cached_tokens = cJSON_GetObjectItem(usage, "cached_tokens");
-        if (direct_cached_tokens && cJSON_IsNumber(direct_cached_tokens)) {
-            cached_tokens = direct_cached_tokens->valueint;
-            LOG_DEBUG("accumulate_token_usage: found Moonshot-style cached_tokens = %d", cached_tokens);
-        }
-    }
-
-    // 2. DeepSeek-style: cached_tokens inside prompt_tokens_details
-    if (cached_tokens == 0) {
-        cJSON *prompt_tokens_details = cJSON_GetObjectItem(usage, "prompt_tokens_details");
-        if (prompt_tokens_details) {
-            cJSON *cached_tokens_json = cJSON_GetObjectItem(prompt_tokens_details, "cached_tokens");
-            if (cached_tokens_json && cJSON_IsNumber(cached_tokens_json)) {
-                cached_tokens = cached_tokens_json->valueint;
-                LOG_DEBUG("accumulate_token_usage: found DeepSeek-style cached_tokens in prompt_tokens_details = %d", cached_tokens);
-            }
-        }
-    }
-
-    // 3. Anthropic-style: cache_read_input_tokens (counts cache hits)
-    if (cached_tokens == 0) {
-        cJSON *cache_read_input_tokens = cJSON_GetObjectItem(usage, "cache_read_input_tokens");
-        if (cache_read_input_tokens && cJSON_IsNumber(cache_read_input_tokens)) {
-            cached_tokens = cache_read_input_tokens->valueint;
-            LOG_DEBUG("accumulate_token_usage: using Anthropic-style cache_read_input_tokens as cached_tokens = %d", cached_tokens);
-        }
-    }
-
-    cJSON_Delete(json);
-
-    // Accumulate tokens in state (thread-safe)
-    if (conversation_state_lock(state) == 0) {
-        state->total_prompt_tokens += prompt_tokens;
-        state->total_completion_tokens += completion_tokens;
-        state->total_cached_tokens += cached_tokens;
-        conversation_state_unlock(state);
-
-        LOG_DEBUG("Token usage accumulated: +%d prompt, +%d completion, +%d cached (totals: %d/%d/%d)",
-                 prompt_tokens, completion_tokens, cached_tokens,
-                 state->total_prompt_tokens, state->total_completion_tokens, state->total_cached_tokens);
-    }
-}
 
 /**
  * Call API with retry logic (generic wrapper around provider->call_api)
@@ -4039,10 +3954,7 @@ static ApiResponse* call_api_with_retries(ConversationState *state) {
                      total_ms, result.duration_ms, attempt_num,
                      result.auth_refreshed ? "yes" : "no");
 
-            // Accumulate token usage from this API call
-            if (result.raw_response) {
-                accumulate_token_usage(state, result.raw_response);
-            }
+            
 
             // Log success to persistence
             if (state->persistence_db && result.raw_response) {
@@ -5277,14 +5189,7 @@ static void ai_worker_handle_instruction(AIWorkerContext *ctx, const AIInstructi
         return;
     }
 
-    // Post token usage update to TUI (token counts were accumulated in call_api)
-    if (conversation_state_lock(ctx->state) == 0) {
-        post_token_update(ctx->tui_queue,
-                         ctx->state->total_prompt_tokens,
-                         ctx->state->total_completion_tokens,
-                         ctx->state->total_cached_tokens);
-        conversation_state_unlock(ctx->state);
-    }
+    
 
     process_response(ctx->state, response, NULL, ctx->tui_queue, ctx);
     api_response_free(response);
@@ -5753,6 +5658,10 @@ static void interactive_mode(ConversationState *state) {
         LOG_ERROR("Failed to initialize TUI");
         return;
     }
+
+    // Set up database connection for token usage queries
+    tui.persistence_db = state->persistence_db;
+    tui.session_id = state->session_id;
 
     // Initialize command system
     commands_init();

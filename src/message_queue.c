@@ -77,9 +77,6 @@ int post_tui_message(TUIMessageQueue *queue, TUIMessageType type, const char *te
     msg->type = type;
     msg->text = text_copy;
     msg->priority = 0; /* Reserved for future use */
-    msg->prompt_tokens = 0;
-    msg->completion_tokens = 0;
-    msg->cached_tokens = 0;
 
     queue->head = (queue->head + 1) % queue->capacity;
     queue->count++;
@@ -92,47 +89,7 @@ int post_tui_message(TUIMessageQueue *queue, TUIMessageType type, const char *te
     return 0;
 }
 
-int post_token_update(TUIMessageQueue *queue, int prompt_tokens, int completion_tokens, int cached_tokens) {
-    if (!queue) {
-        return -1;
-    }
 
-    pthread_mutex_lock(&queue->mutex);
-
-    /* If queue is full, drop oldest message (FIFO eviction) */
-    if (queue->count == queue->capacity) {
-        TUIMessage *oldest = &queue->messages[queue->tail];
-        LOG_DEBUG("[TUI] Message queue at capacity (%zu) - dropping oldest message (type=%d)",
-                  queue->capacity,
-                  oldest->type);
-        free(oldest->text);
-        oldest->text = NULL;
-        queue->tail = (queue->tail + 1) % queue->capacity;
-        queue->count--;
-    }
-
-    /* Add new token update message */
-    TUIMessage *msg = &queue->messages[queue->head];
-    msg->type = TUI_MSG_TOKEN_UPDATE;
-    msg->text = NULL;
-    msg->priority = 0;
-    msg->prompt_tokens = prompt_tokens;
-    msg->completion_tokens = completion_tokens;
-    msg->cached_tokens = cached_tokens;
-
-    LOG_DEBUG("[TUI] Posting token update: prompt=%d, completion=%d, cached=%d (queue count=%zu)",
-             prompt_tokens, completion_tokens, cached_tokens, queue->count);
-
-    queue->head = (queue->head + 1) % queue->capacity;
-    queue->count++;
-
-    /* Signal waiting readers */
-    pthread_cond_signal(&queue->not_empty);
-
-    pthread_mutex_unlock(&queue->mutex);
-
-    return 0;
-}
 
 
 

@@ -194,11 +194,6 @@ typedef struct ConversationState {
     volatile sig_atomic_t interrupt_requested;  // Flag to interrupt ongoing API calls
     struct MCPConfig *mcp_config;   // MCP server configuration (NULL if not enabled)
 
-    // Token usage tracking (cumulative for the session)
-    int total_prompt_tokens;        // Total input tokens used
-    int total_completion_tokens;    // Total output tokens used
-    int total_cached_tokens;        // Total cached tokens
-
     // Planning mode flag
     int plan_mode;                  // Whether planning mode is enabled
 } ConversationState;
@@ -293,6 +288,6 @@ cJSON* get_tool_definitions(ConversationState *state, int enable_caching);
  *   state: Conversation state to update
  *   raw_response: Raw JSON response string from API
  */
-void accumulate_token_usage(ConversationState *state, const char *raw_response);
+
 
 #endif // CLAUDE_INTERNAL_H

@@ -15,6 +15,7 @@
 #include "todo.h"
 #include "window_manager.h"
 #include "history_file.h"
+#include "persistence.h"
 
 // Forward declaration for WINDOW type (not actually used, kept for compatibility)
 typedef struct _win_st WINDOW;
@@ -70,10 +71,11 @@ typedef struct {
     int status_spinner_frame;         // Current spinner frame index
     uint64_t status_spinner_last_update_ns; // Last spinner frame update timestamp
 
-    // Token usage tracking (displayed in status bar)
-    int total_prompt_tokens;      // Total input tokens used
-    int total_completion_tokens;  // Total output tokens used
-    int total_cached_tokens;      // Total cached tokens
+
+
+    // Database connection for real-time token usage queries
+    struct PersistenceDB *persistence_db;  // Database connection for token queries
+    char *session_id;                     // Current session ID for token queries
 
     // Plan mode flag (displayed in status bar)
     int plan_mode;           // Whether planning mode is enabled
@@ -205,9 +207,7 @@ void tui_render_todo_list(TUIState *tui, const TodoList *list);
 
 // Update token usage counts displayed in status bar
 // prompt_tokens: Total input tokens used
-// completion_tokens: Total output tokens used
-// cached_tokens: Total cached tokens
-void tui_update_token_usage(TUIState *tui, int prompt_tokens, int completion_tokens, int cached_tokens);
+
 
 
 

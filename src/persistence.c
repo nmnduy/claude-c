@@ -152,6 +152,73 @@ static int extract_token_usage(
     return 0;
 }
 
+// Get total token usage for a session
+int persistence_get_session_token_usage(
+    PersistenceDB *db,
+    const char *session_id,
+    int *prompt_tokens,
+    int *completion_tokens,
+    int *cached_tokens
+) {
+    if (!db || !db->db || !prompt_tokens || !completion_tokens || !cached_tokens) {
+        LOG_ERROR("Invalid parameters to persistence_get_session_token_usage");
+        return -1;
+    }
+
+    // Initialize output parameters
+    *prompt_tokens = 0;
+    *completion_tokens = 0;
+    *cached_tokens = 0;
+
+    const char *sql;
+    sqlite3_stmt *stmt;
+    int rc;
+
+    if (session_id) {
+        // Get token usage for specific session
+        sql = "SELECT "
+              "COALESCE(SUM(prompt_tokens), 0) as total_prompt, "
+              "COALESCE(SUM(completion_tokens), 0) as total_completion, "
+              "COALESCE(SUM(cached_tokens), 0) as total_cached "
+              "FROM token_usage "
+              "WHERE session_id = ?;";
+    } else {
+        // Get token usage for all sessions
+        sql = "SELECT "
+              "COALESCE(SUM(prompt_tokens), 0) as total_prompt, "
+              "COALESCE(SUM(completion_tokens), 0) as total_completion, "
+              "COALESCE(SUM(cached_tokens), 0) as total_cached "
+              "FROM token_usage;";
+    }
+
+    rc = sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        LOG_ERROR("Failed to prepare token usage query: %s", sqlite3_errmsg(db->db));
+        return -1;
+    }
+
+    if (session_id) {
+        sqlite3_bind_text(stmt, 1, session_id, -1, SQLITE_TRANSIENT);
+    }
+
+    rc = sqlite3_step(stmt);
+    if (rc == SQLITE_ROW) {
+        *prompt_tokens = sqlite3_column_int(stmt, 0);
+        *completion_tokens = sqlite3_column_int(stmt, 1);
+        *cached_tokens = sqlite3_column_int(stmt, 2);
+        
+        LOG_DEBUG("Retrieved token usage for session %s: prompt=%d, completion=%d, cached=%d",
+                 session_id ? session_id : "all", *prompt_tokens, *completion_tokens, *cached_tokens);
+    } else if (rc != SQLITE_DONE) {
+        LOG_ERROR("Failed to execute token usage query: %s", sqlite3_errmsg(db->db));
+        sqlite3_finalize(stmt);
+        return -1;
+    }
+
+    sqlite3_finalize(stmt);
+    return 0;
+}
+
 // SQL schema for the api_calls table
 static const char *SCHEMA_SQL =
     "CREATE TABLE IF NOT EXISTS api_calls ("
