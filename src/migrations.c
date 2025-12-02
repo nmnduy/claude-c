@@ -67,6 +67,39 @@ static int migration_002_add_headers_json(sqlite3 *db) {
     return 0;
 }
 
+// Migration 3: Add session_id column to token_usage table
+static int migration_003_add_session_id_to_token_usage(sqlite3 *db) {
+    const char *sql =
+        "ALTER TABLE token_usage ADD COLUMN session_id TEXT;";
+
+    char *err_msg = NULL;
+    int rc = sqlite3_exec(db, sql, NULL, NULL, &err_msg);
+
+    if (rc != SQLITE_OK) {
+        // Check if column already exists (idempotent migration)
+        if (strstr(err_msg, "duplicate column name")) {
+            sqlite3_free(err_msg);
+            return 0;  // Column already exists, consider it success
+        }
+        LOG_ERROR("Migration 003 failed: %s", err_msg);
+        sqlite3_free(err_msg);
+        return -1;
+    }
+
+    // Create index on session_id
+    const char *index_sql =
+        "CREATE INDEX IF NOT EXISTS idx_token_usage_session_id ON token_usage(session_id);";
+
+    rc = sqlite3_exec(db, index_sql, NULL, NULL, &err_msg);
+    if (rc != SQLITE_OK) {
+        LOG_WARN("Migration 003 index warning: %s", err_msg);
+        sqlite3_free(err_msg);
+        // Non-fatal, continue
+    }
+
+    return 0;
+}
+
 // ============================================================================
 // Migration Registry
 // ============================================================================
@@ -81,6 +114,11 @@ static const Migration MIGRATIONS[] = {
         .version = 2,
         .description = "Add headers_json column to api_calls table",
         .up = migration_002_add_headers_json
+    },
+    {
+        .version = 3,
+        .description = "Add session_id column to token_usage table",
+        .up = migration_003_add_session_id_to_token_usage
     },
     // Add new migrations here with incrementing version numbers
 };

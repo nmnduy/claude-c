@@ -174,6 +174,7 @@ static const char *SCHEMA_SQL =
     "CREATE TABLE IF NOT EXISTS token_usage ("
     "    id INTEGER PRIMARY KEY AUTOINCREMENT,"
     "    api_call_id INTEGER NOT NULL,"
+    "    session_id TEXT,"
     "    prompt_tokens INTEGER DEFAULT 0,"
     "    completion_tokens INTEGER DEFAULT 0,"
     "    total_tokens INTEGER DEFAULT 0,"
@@ -188,7 +189,8 @@ static const char *SCHEMA_SQL =
 static const char *INDEX_SQL =
     "CREATE INDEX IF NOT EXISTS idx_api_calls_timestamp ON api_calls(timestamp);"
     "CREATE INDEX IF NOT EXISTS idx_api_calls_session_id ON api_calls(session_id);"
-    "CREATE INDEX IF NOT EXISTS idx_token_usage_api_call_id ON token_usage(api_call_id);";
+    "CREATE INDEX IF NOT EXISTS idx_token_usage_api_call_id ON token_usage(api_call_id);"
+    "CREATE INDEX IF NOT EXISTS idx_token_usage_session_id ON token_usage(session_id);";
 
 // Get default database path
 // Priority: $CLAUDE_C_DB_PATH > ./.claude-c/api_calls.db > $XDG_DATA_HOME/claude-c/api_calls.db > ~/.local/share/claude-c/api_calls.db
@@ -511,9 +513,9 @@ int persistence_log_api_call(
             // Prepare token usage insert statement
             const char *token_sql =
                 "INSERT INTO token_usage "
-                "(api_call_id, prompt_tokens, completion_tokens, total_tokens, "
+                "(api_call_id, session_id, prompt_tokens, completion_tokens, total_tokens, "
                 "cached_tokens, prompt_cache_hit_tokens, prompt_cache_miss_tokens, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?);";
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);";
 
             sqlite3_stmt *token_stmt;
             rc = sqlite3_prepare_v2(db->db, token_sql, -1, &token_stmt, NULL);
@@ -523,13 +525,14 @@ int persistence_log_api_call(
             } else {
                 // Bind parameters
                 sqlite3_bind_int64(token_stmt, 1, api_call_id);
-                sqlite3_bind_int(token_stmt, 2, prompt_tokens);
-                sqlite3_bind_int(token_stmt, 3, completion_tokens);
-                sqlite3_bind_int(token_stmt, 4, total_tokens);
-                sqlite3_bind_int(token_stmt, 5, cached_tokens);
-                sqlite3_bind_int(token_stmt, 6, prompt_cache_hit_tokens);
-                sqlite3_bind_int(token_stmt, 7, prompt_cache_miss_tokens);
-                sqlite3_bind_int64(token_stmt, 8, now);
+                sqlite3_bind_text(token_stmt, 2, session_id, -1, SQLITE_TRANSIENT);
+                sqlite3_bind_int(token_stmt, 3, prompt_tokens);
+                sqlite3_bind_int(token_stmt, 4, completion_tokens);
+                sqlite3_bind_int(token_stmt, 5, total_tokens);
+                sqlite3_bind_int(token_stmt, 6, cached_tokens);
+                sqlite3_bind_int(token_stmt, 7, prompt_cache_hit_tokens);
+                sqlite3_bind_int(token_stmt, 8, prompt_cache_miss_tokens);
+                sqlite3_bind_int64(token_stmt, 9, now);
 
                 // Execute token usage insert
                 rc = sqlite3_step(token_stmt);

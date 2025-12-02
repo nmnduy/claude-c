@@ -36,6 +36,7 @@
 // CREATE TABLE IF NOT EXISTS token_usage (
 //     id INTEGER PRIMARY KEY AUTOINCREMENT,
 //     api_call_id INTEGER NOT NULL,      -- Foreign key to api_calls.id
+//     session_id TEXT,                   -- Unique session identifier for grouping related token usage
 //     prompt_tokens INTEGER DEFAULT 0,   -- Number of prompt tokens used
 //     completion_tokens INTEGER DEFAULT 0, -- Number of completion tokens used
 //     total_tokens INTEGER DEFAULT 0,    -- Total tokens used
