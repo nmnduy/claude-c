@@ -23,14 +23,15 @@
 // Progress callback placeholder (Ctrl+C handled by TUI)
 static int progress_callback(void *clientp, curl_off_t dltotal, curl_off_t dlnow,
                              curl_off_t ultotal, curl_off_t ulnow) {
-    (void)clientp;  // Unused
-    (void)dltotal;  // Unused
-    (void)dlnow;    // Unused
-    (void)ultotal;  // Unused
-    (void)ulnow;    // Unused
-
-    // Interrupt (Ctrl+C) handling is done by the TUI event loop
-    // Non-TUI mode doesn't have interactive interrupt support during API calls
+    (void)dltotal; (void)dlnow; (void)ultotal; (void)ulnow;
+    
+    // clientp is the ConversationState* passed via progress_data parameter
+    ConversationState *state = (ConversationState *)clientp;
+    if (state && state->interrupt_requested) {
+        LOG_DEBUG("Progress callback: interrupt requested, aborting HTTP request");
+        return 1;  // Non-zero return aborts the curl transfer
+    }
+    
     return 0;  // Continue transfer
 }
 
@@ -53,7 +54,7 @@ static int progress_callback(void *clientp, curl_off_t dltotal, curl_off_t dlnow
  * Helper: Execute a single HTTP request with current credentials
  * Returns: ApiCallResult (caller must free fields)
  */
-static ApiCallResult bedrock_execute_request(BedrockConfig *config, const char *bedrock_json) {
+static ApiCallResult bedrock_execute_request(BedrockConfig *config, const char *bedrock_json, ConversationState *state) {
     ApiCallResult result = {0};
 
     // Sign request with SigV4 using current credentials
@@ -81,7 +82,7 @@ static ApiCallResult bedrock_execute_request(BedrockConfig *config, const char *
     req.verbose = 0;
 
     // Execute HTTP request using the unified HTTP client
-    HttpResponse *http_resp = http_client_execute(&req, progress_callback, NULL);
+    HttpResponse *http_resp = http_client_execute(&req, progress_callback, state);
     
     // Convert headers to JSON for logging before freeing them
     char *headers_json = http_headers_to_json(headers);
@@ -366,7 +367,7 @@ static ApiCallResult bedrock_call_api(Provider *self, ConversationState *state) 
 
     // === STEP 2: First API call attempt ===
     LOG_DEBUG("Executing first API call attempt...");
-    result = bedrock_execute_request(config, bedrock_json);
+    result = bedrock_execute_request(config, bedrock_json, state);
 
     // Success on first try
     if (result.response) {
@@ -414,7 +415,7 @@ static ApiCallResult bedrock_call_api(Provider *self, ConversationState *state) 
 
                 // === STEP 5: Retry with externally rotated credentials ===
                 LOG_DEBUG("Retrying API call with externally rotated credentials...");
-                result = bedrock_execute_request(config, bedrock_json);
+                result = bedrock_execute_request(config, bedrock_json, state);
 
                 if (result.response) {
                     LOG_INFO("API call succeeded after using externally rotated credentials");
@@ -479,7 +480,7 @@ static ApiCallResult bedrock_call_api(Provider *self, ConversationState *state) 
 
                         // === STEP 5: Retry with rotated credentials ===
                         LOG_DEBUG("Retrying API call with rotated credentials...");
-                        result = bedrock_execute_request(config, bedrock_json);
+                        result = bedrock_execute_request(config, bedrock_json, state);
 
                         if (result.response) {
                             LOG_INFO("API call succeeded after credential rotation");
@@ -553,7 +554,7 @@ static ApiCallResult bedrock_call_api(Provider *self, ConversationState *state) 
 
                     // === STEP 7: Final retry ===
                     LOG_DEBUG("Final API call attempt with re-rotated credentials...");
-                    result = bedrock_execute_request(config, bedrock_json);
+                    result = bedrock_execute_request(config, bedrock_json, state);
 
                     if (result.response) {
                         LOG_INFO("API call succeeded on final retry");

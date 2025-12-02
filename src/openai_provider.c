@@ -25,14 +25,15 @@
 // Progress callback for interrupt handling
 static int progress_callback(void *clientp, curl_off_t dltotal, curl_off_t dlnow,
                              curl_off_t ultotal, curl_off_t ulnow) {
-    (void)clientp;  // Unused
-    (void)dltotal;  // Unused
-    (void)dlnow;    // Unused
-    (void)ultotal;  // Unused
-    (void)ulnow;    // Unused
-
-    // Interrupt (Ctrl+C) handling is done by the TUI event loop
-    // Non-TUI mode doesn't have interactive interrupt support during API calls
+    (void)dltotal; (void)dlnow; (void)ultotal; (void)ulnow;
+    
+    // clientp is the ConversationState* passed via progress_data parameter
+    ConversationState *state = (ConversationState *)clientp;
+    if (state && state->interrupt_requested) {
+        LOG_DEBUG("Progress callback: interrupt requested, aborting HTTP request");
+        return 1;  // Non-zero return aborts the curl transfer
+    }
+    
     return 0;  // Continue transfer
 }
 
@@ -160,7 +161,7 @@ static ApiCallResult openai_call_api(Provider *self, ConversationState *state) {
     req.connect_timeout_ms = 30000;  // 30 seconds
     req.total_timeout_ms = 300000;   // 5 minutes
     
-    HttpResponse *http_resp = http_client_execute(&req, progress_callback, NULL);
+    HttpResponse *http_resp = http_client_execute(&req, progress_callback, state);
     
     // Store request JSON for logging (caller must free)
     result.request_json = openai_json;
