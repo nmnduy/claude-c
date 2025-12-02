@@ -5234,6 +5234,9 @@ static int interrupt_callback(void *user_data) {
     // Check if there's work in progress
     int queue_depth = instr_queue ? ai_queue_depth(instr_queue) : 0;
     int work_in_progress = (queue_depth > 0);
+    
+    // Debug log the queue depth
+    LOG_DEBUG("interrupt_callback: queue_depth=%d, work_in_progress=%d", queue_depth, work_in_progress);
 
     if (work_in_progress) {
         // There's an API call or tool execution in progress - interrupt it
