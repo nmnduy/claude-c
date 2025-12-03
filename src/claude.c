@@ -5250,7 +5250,7 @@ static int interrupt_callback(void *user_data) {
     } else {
         // No work in queue, but interrupt flag is set for any ongoing operations
         LOG_INFO("User pressed Ctrl+C - interrupt flag set for any ongoing operations");
-        ui_set_status(NULL, queue, "Interrupt requested - any ongoing operations will be canceled");
+        ui_set_status(NULL, queue, "Interruptted");
     }
 
     return 0;  // Always continue running (never exit on Ctrl+C)
