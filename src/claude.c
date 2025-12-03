@@ -5238,18 +5238,20 @@ static int interrupt_callback(void *user_data) {
     // Debug log the queue depth
     LOG_DEBUG("interrupt_callback: queue_depth=%d, work_in_progress=%d", queue_depth, work_in_progress);
 
-    if (work_in_progress) {
-        // There's an API call or tool execution in progress - interrupt it
+    // Ctrl+C always sets the interrupt flag to cancel any ongoing operations
+    // It never exits the application - use Ctrl+D or :q/:quit command to exit
+    if (work_in_progress || state->interrupt_requested) {
+        // There's work in progress or already interrupted - set/reinforce the flag
         LOG_INFO("User requested interrupt (Ctrl+C pressed) - canceling ongoing operations");
         state->interrupt_requested = 1;
         ui_set_status(NULL, queue, "Interrupt requested - canceling operations...");
-        return 0;  // Continue running (don't exit)
     } else {
-        // Nothing is running - exit immediately
-        LOG_INFO("User pressed Ctrl+C with no work in progress - exiting");
-        ui_set_status(NULL, queue, "Exiting...");
-        return 1;  // Exit the event loop
+        // No work in progress - just acknowledge the Ctrl+C
+        LOG_INFO("User pressed Ctrl+C (no work in progress)");
+        ui_set_status(NULL, queue, "Press Ctrl+D to exit or :q to quit");
     }
+    
+    return 0;  // Always continue running (never exit on Ctrl+C)
 }
 
 // Submit callback invoked by the TUI event loop when the user presses Enter
