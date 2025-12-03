@@ -260,12 +260,18 @@ static void render_status_window(TUIState *tui) {
         if (conversation_state_lock(tui->conversation_state) == 0) {
             plan_mode = tui->conversation_state->plan_mode;
             conversation_state_unlock(tui->conversation_state);
+            LOG_DEBUG("[TUI] render_status_window: plan_mode=%d, width=%d", plan_mode, width);
+        } else {
+            LOG_WARN("[TUI] Failed to lock conversation state for plan_mode read");
         }
+    } else {
+        LOG_WARN("[TUI] No conversation state for plan_mode read");
     }
 
     if (plan_mode) {
         snprintf(plan_str, sizeof(plan_str), " ● Plan ");
         plan_str_len = (int)strlen(plan_str);
+        LOG_DEBUG("[TUI] Plan mode indicator: '%s' (len=%d)", plan_str, plan_str_len);
     }
 
     // Render scroll percentage (right-aligned, before plan mode and token usage)
@@ -295,6 +301,9 @@ static void render_status_window(TUIState *tui) {
         }
         if (plan_col < 0) plan_col = 0;
 
+        LOG_DEBUG("[TUI] Rendering plan mode at col=%d, width=%d, plan_str_len=%d, token_str_len=%d, mode=%d", 
+                  plan_col, width, plan_str_len, token_str_len, tui->mode);
+
         if (has_colors()) {
             wattron(tui->wm.status_win, COLOR_PAIR(NCURSES_PAIR_PROMPT) | A_BOLD);
         } else {
@@ -306,6 +315,9 @@ static void render_status_window(TUIState *tui) {
         } else {
             wattroff(tui->wm.status_win, A_BOLD);
         }
+    } else if (plan_str_len > 0) {
+        LOG_DEBUG("[TUI] Plan mode indicator not rendered: plan_str_len=%d, width=%d, condition=%d", 
+                  plan_str_len, width, (plan_str_len > 0 && plan_str_len < width));
     }
 
     // Render token usage on the right
@@ -2266,6 +2278,7 @@ int tui_process_input_char(TUIState *tui, int ch, const char *prompt, void *user
 
                     // Log the toggle
                     LOG_INFO("[TUI] Plan mode toggled: %s", new_plan_mode ? "ON" : "OFF");
+                    LOG_DEBUG("[TUI] Plan mode value in state: %d", state->plan_mode);
 
                     // Refresh status bar to show change
                     render_status_window(tui);

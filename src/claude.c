@@ -3146,6 +3146,7 @@ static cJSON* execute_tool(const char *tool_name, cJSON *input, ConversationStat
 cJSON* get_tool_definitions(ConversationState *state, int enable_caching) {
     cJSON *tool_array = cJSON_CreateArray();
     int plan_mode = state ? state->plan_mode : 0;
+    LOG_DEBUG("[TOOLS] get_tool_definitions: plan_mode=%d", plan_mode);
     // Sleep tool
     cJSON *sleep_tool = cJSON_CreateObject();
     cJSON_AddStringToObject(sleep_tool, "type", "function");
@@ -3868,6 +3869,9 @@ static ApiResponse* call_api_with_retries(ConversationState *state) {
         return NULL;
     }
 
+    // Log plan mode before API call
+    LOG_DEBUG("[API] call_api_with_retries: plan_mode=%d", state->plan_mode);
+
     // Lazy-initialize provider to avoid blocking initial TUI render
     if (!state->provider) {
         LOG_INFO("Initializing API provider in background context...");
@@ -4303,6 +4307,9 @@ char* build_system_prompt(ConversationState *state) {
     }
 
     // Build the system prompt with additional directories
+    // Log plan mode when building system prompt
+    LOG_DEBUG("[SYSTEM] build_system_prompt: plan_mode=%d", state->plan_mode);
+    
     int offset = snprintf(prompt, prompt_size,
         "Here is useful information about the environment you are running in:\n"
         "<env>\n"
