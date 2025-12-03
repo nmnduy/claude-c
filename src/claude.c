@@ -2964,6 +2964,43 @@ static Tool tools[] = {
 
 static const int num_tools = sizeof(tools) / sizeof(Tool);
 
+// Validate that a tool name is in the provided tools list
+// Returns 1 if valid, 0 if invalid (hallucinated)
+static int is_tool_allowed(const char *tool_name, ConversationState *state) {
+    if (!tool_name || !state) {
+        return 0;
+    }
+
+    // Get the list of tools that were sent to the API
+    cJSON *tool_defs = get_tool_definitions(state, 0);  // Don't need caching for validation
+    if (!tool_defs) {
+        LOG_ERROR("Failed to get tool definitions for validation");
+        return 0;  // Fail closed - reject if we can't verify
+    }
+
+    int found = 0;
+    cJSON *tool = NULL;
+    cJSON_ArrayForEach(tool, tool_defs) {
+        // Tools are in format: { "type": "function", "function": { "name": "ToolName", ... } }
+        cJSON *func = cJSON_GetObjectItem(tool, "function");
+        if (func) {
+            cJSON *name = cJSON_GetObjectItem(func, "name");
+            if (name && cJSON_IsString(name) && strcmp(name->valuestring, tool_name) == 0) {
+                found = 1;
+                break;
+            }
+        }
+    }
+
+    cJSON_Delete(tool_defs);
+    
+    if (!found) {
+        LOG_WARN("Tool validation failed: '%s' was not in the provided tools list (possible model hallucination)", tool_name);
+    }
+    
+    return found;
+}
+
 static cJSON* execute_tool(const char *tool_name, cJSON *input, ConversationState *state) {
     // Time the tool execution
     struct timespec start, end;
@@ -3241,72 +3278,72 @@ cJSON* get_tool_definitions(ConversationState *state, int enable_caching) {
 
         // Write tool
         cJSON *write = cJSON_CreateObject();
-    cJSON_AddStringToObject(write, "type", "function");
-    cJSON *write_func = cJSON_CreateObject();
-    cJSON_AddStringToObject(write_func, "name", "Write");
-    cJSON_AddStringToObject(write_func, "description", "Writes content to a file");
-    cJSON *write_params = cJSON_CreateObject();
-    cJSON_AddStringToObject(write_params, "type", "object");
-    cJSON *write_props = cJSON_CreateObject();
-    cJSON *write_path = cJSON_CreateObject();
-    cJSON_AddStringToObject(write_path, "type", "string");
-    cJSON_AddStringToObject(write_path, "description", "Path to the file to write");
-    cJSON_AddItemToObject(write_props, "file_path", write_path);
-    cJSON *write_content = cJSON_CreateObject();
-    cJSON_AddStringToObject(write_content, "type", "string");
-    cJSON_AddStringToObject(write_content, "description", "Content to write to the file");
-    cJSON_AddItemToObject(write_props, "content", write_content);
-    cJSON_AddItemToObject(write_params, "properties", write_props);
-    cJSON *write_req = cJSON_CreateArray();
-    cJSON_AddItemToArray(write_req, cJSON_CreateString("file_path"));
-    cJSON_AddItemToArray(write_req, cJSON_CreateString("content"));
-    cJSON_AddItemToObject(write_params, "required", write_req);
-    cJSON_AddItemToObject(write_func, "parameters", write_params);
-    cJSON_AddItemToObject(write, "function", write_func);
-    cJSON_AddItemToArray(tool_array, write);
+        cJSON_AddStringToObject(write, "type", "function");
+        cJSON *write_func = cJSON_CreateObject();
+        cJSON_AddStringToObject(write_func, "name", "Write");
+        cJSON_AddStringToObject(write_func, "description", "Writes content to a file");
+        cJSON *write_params = cJSON_CreateObject();
+        cJSON_AddStringToObject(write_params, "type", "object");
+        cJSON *write_props = cJSON_CreateObject();
+        cJSON *write_path = cJSON_CreateObject();
+        cJSON_AddStringToObject(write_path, "type", "string");
+        cJSON_AddStringToObject(write_path, "description", "Path to the file to write");
+        cJSON_AddItemToObject(write_props, "file_path", write_path);
+        cJSON *write_content = cJSON_CreateObject();
+        cJSON_AddStringToObject(write_content, "type", "string");
+        cJSON_AddStringToObject(write_content, "description", "Content to write to the file");
+        cJSON_AddItemToObject(write_props, "content", write_content);
+        cJSON_AddItemToObject(write_params, "properties", write_props);
+        cJSON *write_req = cJSON_CreateArray();
+        cJSON_AddItemToArray(write_req, cJSON_CreateString("file_path"));
+        cJSON_AddItemToArray(write_req, cJSON_CreateString("content"));
+        cJSON_AddItemToObject(write_params, "required", write_req);
+        cJSON_AddItemToObject(write_func, "parameters", write_params);
+        cJSON_AddItemToObject(write, "function", write_func);
+        cJSON_AddItemToArray(tool_array, write);
 
-    // Edit tool
-    cJSON *edit = cJSON_CreateObject();
-    cJSON_AddStringToObject(edit, "type", "function");
-    cJSON *edit_func = cJSON_CreateObject();
-    cJSON_AddStringToObject(edit_func, "name", "Edit");
-    cJSON_AddStringToObject(edit_func, "description",
-        "Performs string replacements in files with optional regex and multi-replace support");
-    cJSON *edit_params = cJSON_CreateObject();
-    cJSON_AddStringToObject(edit_params, "type", "object");
-    cJSON *edit_props = cJSON_CreateObject();
-    cJSON *edit_path = cJSON_CreateObject();
-    cJSON_AddStringToObject(edit_path, "type", "string");
-    cJSON_AddStringToObject(edit_path, "description", "Path to the file to edit");
-    cJSON_AddItemToObject(edit_props, "file_path", edit_path);
-    cJSON *old_str = cJSON_CreateObject();
-    cJSON_AddStringToObject(old_str, "type", "string");
-    cJSON_AddStringToObject(old_str, "description",
-        "String or regex pattern to search for (use_regex must be true for regex)");
-    cJSON_AddItemToObject(edit_props, "old_string", old_str);
-    cJSON *new_str = cJSON_CreateObject();
-    cJSON_AddStringToObject(new_str, "type", "string");
-    cJSON_AddStringToObject(new_str, "description", "Replacement string");
-    cJSON_AddItemToObject(edit_props, "new_string", new_str);
-    cJSON *replace_all = cJSON_CreateObject();
-    cJSON_AddStringToObject(replace_all, "type", "boolean");
-    cJSON_AddStringToObject(replace_all, "description",
-        "If true, replace all occurrences; if false, replace only first occurrence (default: false)");
-    cJSON_AddItemToObject(edit_props, "replace_all", replace_all);
-    cJSON *use_regex = cJSON_CreateObject();
-    cJSON_AddStringToObject(use_regex, "type", "boolean");
-    cJSON_AddStringToObject(use_regex, "description",
-        "If true, treat old_string as POSIX extended regex pattern (default: false)");
-    cJSON_AddItemToObject(edit_props, "use_regex", use_regex);
-    cJSON_AddItemToObject(edit_params, "properties", edit_props);
-    cJSON *edit_req = cJSON_CreateArray();
-    cJSON_AddItemToArray(edit_req, cJSON_CreateString("file_path"));
-    cJSON_AddItemToArray(edit_req, cJSON_CreateString("old_string"));
-    cJSON_AddItemToArray(edit_req, cJSON_CreateString("new_string"));
-    cJSON_AddItemToObject(edit_params, "required", edit_req);
-    cJSON_AddItemToObject(edit_func, "parameters", edit_params);
-    cJSON_AddItemToObject(edit, "function", edit_func);
-    cJSON_AddItemToArray(tool_array, edit);
+        // Edit tool
+        cJSON *edit = cJSON_CreateObject();
+        cJSON_AddStringToObject(edit, "type", "function");
+        cJSON *edit_func = cJSON_CreateObject();
+        cJSON_AddStringToObject(edit_func, "name", "Edit");
+        cJSON_AddStringToObject(edit_func, "description",
+            "Performs string replacements in files with optional regex and multi-replace support");
+        cJSON *edit_params = cJSON_CreateObject();
+        cJSON_AddStringToObject(edit_params, "type", "object");
+        cJSON *edit_props = cJSON_CreateObject();
+        cJSON *edit_path = cJSON_CreateObject();
+        cJSON_AddStringToObject(edit_path, "type", "string");
+        cJSON_AddStringToObject(edit_path, "description", "Path to the file to edit");
+        cJSON_AddItemToObject(edit_props, "file_path", edit_path);
+        cJSON *old_str = cJSON_CreateObject();
+        cJSON_AddStringToObject(old_str, "type", "string");
+        cJSON_AddStringToObject(old_str, "description",
+            "String or regex pattern to search for (use_regex must be true for regex)");
+        cJSON_AddItemToObject(edit_props, "old_string", old_str);
+        cJSON *new_str = cJSON_CreateObject();
+        cJSON_AddStringToObject(new_str, "type", "string");
+        cJSON_AddStringToObject(new_str, "description", "Replacement string");
+        cJSON_AddItemToObject(edit_props, "new_string", new_str);
+        cJSON *replace_all = cJSON_CreateObject();
+        cJSON_AddStringToObject(replace_all, "type", "boolean");
+        cJSON_AddStringToObject(replace_all, "description",
+            "If true, replace all occurrences; if false, replace only first occurrence (default: false)");
+        cJSON_AddItemToObject(edit_props, "replace_all", replace_all);
+        cJSON *use_regex = cJSON_CreateObject();
+        cJSON_AddStringToObject(use_regex, "type", "boolean");
+        cJSON_AddStringToObject(use_regex, "description",
+            "If true, treat old_string as POSIX extended regex pattern (default: false)");
+        cJSON_AddItemToObject(edit_props, "use_regex", use_regex);
+        cJSON_AddItemToObject(edit_params, "properties", edit_props);
+        cJSON *edit_req = cJSON_CreateArray();
+        cJSON_AddItemToArray(edit_req, cJSON_CreateString("file_path"));
+        cJSON_AddItemToArray(edit_req, cJSON_CreateString("old_string"));
+        cJSON_AddItemToArray(edit_req, cJSON_CreateString("new_string"));
+        cJSON_AddItemToObject(edit_params, "required", edit_req);
+        cJSON_AddItemToObject(edit_func, "parameters", edit_params);
+        cJSON_AddItemToObject(edit, "function", edit_func);
+        cJSON_AddItemToArray(tool_array, edit);
     }
 
     // Glob tool
@@ -4317,7 +4354,7 @@ char* build_system_prompt(ConversationState *state) {
         "Planning mode: %s\n"
         "Working directory: %s\n"
         "Additional working directories: ",
-        state->plan_mode ? "ENABLED (read-only tools only)" : "disabled",
+        state->plan_mode ? "ENABLED - You can ONLY use read-only tools (Read, Glob, Grep, Sleep, UploadImage, TodoWrite). The Bash, Write, and Edit tools are NOT available in planning mode." : "disabled",
         working_dir);
 
     // Add additional directories
@@ -4921,6 +4958,55 @@ static void process_response(ConversationState *state,
                 cJSON_AddStringToObject(error, "error", "Tool call missing name or id");
                 result_slot->tool_output = error;
                 result_slot->is_error = 1;
+                continue;
+            }
+
+            // Validate that the tool is in the allowed tools list (prevent hallucination)
+            if (!is_tool_allowed(tool->name, state)) {
+                LOG_ERROR("Tool validation failed: '%s' was not provided in tools list (model hallucination)", tool->name);
+                result_slot->tool_id = strdup(tool->id);
+                result_slot->tool_name = strdup(tool->name);
+                cJSON *error = cJSON_CreateObject();
+                char error_msg[512];
+                
+                // Check if this is a plan mode restriction
+                int is_plan_mode_restriction = state->plan_mode && 
+                    (strcmp(tool->name, "Bash") == 0 || 
+                     strcmp(tool->name, "Write") == 0 || 
+                     strcmp(tool->name, "Edit") == 0);
+                
+                if (is_plan_mode_restriction) {
+                    snprintf(error_msg, sizeof(error_msg),
+                             "ERROR: Tool '%s' is not available in planning mode. "
+                             "You are currently in PLANNING MODE which only allows read-only tools: "
+                             "Read, Glob, Grep, Sleep, UploadImage, TodoWrite, ListMcpResources, ReadMcpResource. "
+                             "Please reformulate your request using only these available tools.",
+                             tool->name);
+                } else {
+                    snprintf(error_msg, sizeof(error_msg),
+                             "ERROR: Tool '%s' does not exist or was not provided to you. "
+                             "Please check the list of available tools and try again with a valid tool name.",
+                             tool->name);
+                }
+                
+                cJSON_AddStringToObject(error, "error", error_msg);
+                result_slot->tool_output = error;
+                result_slot->is_error = 1;
+                
+                // Display error to user
+                char prefix_with_tool[128];
+                snprintf(prefix_with_tool, sizeof(prefix_with_tool), "[%s]", tool->name);
+                char display_error[512];
+                if (is_plan_mode_restriction) {
+                    snprintf(display_error, sizeof(display_error),
+                             "Error: Tool '%s' not available in planning mode (read-only mode)",
+                             tool->name);
+                } else {
+                    snprintf(display_error, sizeof(display_error),
+                             "Error: Tool '%s' not available (not in provided tools list)",
+                             tool->name);
+                }
+                ui_append_line(tui, queue, prefix_with_tool, display_error, COLOR_PAIR_ERROR);
                 continue;
             }
 
