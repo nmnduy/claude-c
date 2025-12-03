@@ -3171,40 +3171,6 @@ cJSON* get_tool_definitions(ConversationState *state, int enable_caching) {
     }
     cJSON_AddItemToArray(tool_array, sleep_tool);
 
-    // Bash tool
-    cJSON *bash = cJSON_CreateObject();
-    cJSON_AddStringToObject(bash, "type", "function");
-    cJSON *bash_func = cJSON_CreateObject();
-    cJSON_AddStringToObject(bash_func, "name", "Bash");
-    cJSON_AddStringToObject(bash_func, "description",
-        "Executes bash commands. Note: stderr is automatically redirected to stdout "
-        "to prevent terminal corruption, so both stdout and stderr output will be "
-        "captured in the 'output' field. Commands have a configurable timeout "
-        "(default: 30 seconds) to prevent hanging. Use the 'timeout' parameter to "
-        "override the default or set to 0 for no timeout. If the output exceeds "
-        "12,228 bytes, it will be truncated and a 'truncation_warning' field "
-        "will be added to the result.");
-    cJSON *bash_params = cJSON_CreateObject();
-    cJSON_AddStringToObject(bash_params, "type", "object");
-    cJSON *bash_props = cJSON_CreateObject();
-    cJSON *bash_cmd = cJSON_CreateObject();
-    cJSON_AddStringToObject(bash_cmd, "type", "string");
-    cJSON_AddStringToObject(bash_cmd, "description", "The command to execute");
-    cJSON_AddItemToObject(bash_props, "command", bash_cmd);
-    cJSON *bash_timeout = cJSON_CreateObject();
-    cJSON_AddStringToObject(bash_timeout, "type", "integer");
-    cJSON_AddStringToObject(bash_timeout, "description",
-        "Optional: Timeout in seconds. Default: 30 (from CLAUDE_C_BASH_TIMEOUT env var). "
-        "Set to 0 for no timeout. Commands that timeout will return exit code -2.");
-    cJSON_AddItemToObject(bash_props, "timeout", bash_timeout);
-    cJSON_AddItemToObject(bash_params, "properties", bash_props);
-    cJSON *bash_req = cJSON_CreateArray();
-    cJSON_AddItemToArray(bash_req, cJSON_CreateString("command"));
-    cJSON_AddItemToObject(bash_params, "required", bash_req);
-    cJSON_AddItemToObject(bash_func, "parameters", bash_params);
-    cJSON_AddItemToObject(bash, "function", bash_func);
-    cJSON_AddItemToArray(tool_array, bash);
-
     // Read tool
     cJSON *read = cJSON_CreateObject();
     cJSON_AddStringToObject(read, "type", "function");
@@ -3237,8 +3203,42 @@ cJSON* get_tool_definitions(ConversationState *state, int enable_caching) {
     cJSON_AddItemToObject(read, "function", read_func);
     cJSON_AddItemToArray(tool_array, read);
 
-    // Write and Edit tools - excluded in plan mode
+    // Bash, Write, and Edit tools - excluded in plan mode
     if (!plan_mode) {
+        // Bash tool
+        cJSON *bash = cJSON_CreateObject();
+        cJSON_AddStringToObject(bash, "type", "function");
+        cJSON *bash_func = cJSON_CreateObject();
+        cJSON_AddStringToObject(bash_func, "name", "Bash");
+        cJSON_AddStringToObject(bash_func, "description",
+            "Executes bash commands. Note: stderr is automatically redirected to stdout "
+            "to prevent terminal corruption, so both stdout and stderr output will be "
+            "captured in the 'output' field. Commands have a configurable timeout "
+            "(default: 30 seconds) to prevent hanging. Use the 'timeout' parameter to "
+            "override the default or set to 0 for no timeout. If the output exceeds "
+            "12,228 bytes, it will be truncated and a 'truncation_warning' field "
+            "will be added to the result.");
+        cJSON *bash_params = cJSON_CreateObject();
+        cJSON_AddStringToObject(bash_params, "type", "object");
+        cJSON *bash_props = cJSON_CreateObject();
+        cJSON *bash_cmd = cJSON_CreateObject();
+        cJSON_AddStringToObject(bash_cmd, "type", "string");
+        cJSON_AddStringToObject(bash_cmd, "description", "The command to execute");
+        cJSON_AddItemToObject(bash_props, "command", bash_cmd);
+        cJSON *bash_timeout = cJSON_CreateObject();
+        cJSON_AddStringToObject(bash_timeout, "type", "integer");
+        cJSON_AddStringToObject(bash_timeout, "description",
+            "Optional: Timeout in seconds. Default: 30 (from CLAUDE_C_BASH_TIMEOUT env var). "
+            "Set to 0 for no timeout. Commands that timeout will return exit code -2.");
+        cJSON_AddItemToObject(bash_props, "timeout", bash_timeout);
+        cJSON_AddItemToObject(bash_params, "properties", bash_props);
+        cJSON *bash_req = cJSON_CreateArray();
+        cJSON_AddItemToArray(bash_req, cJSON_CreateString("command"));
+        cJSON_AddItemToObject(bash_params, "required", bash_req);
+        cJSON_AddItemToObject(bash_func, "parameters", bash_params);
+        cJSON_AddItemToObject(bash, "function", bash_func);
+        cJSON_AddItemToArray(tool_array, bash);
+
         // Write tool
         cJSON *write = cJSON_CreateObject();
     cJSON_AddStringToObject(write, "type", "function");
@@ -3795,7 +3795,7 @@ char* build_request_json_from_state(ConversationState *state) {
     cJSON_AddItemToObject(request, "messages", messages_array);
 
     // Add tools with cache_control support (including MCP tools if available)
-    // In plan mode, exclude editing/writing tools
+    // In plan mode, exclude Bash, Write, and Edit tools
     cJSON *tool_defs = get_tool_definitions(state, enable_caching);
     cJSON_AddItemToObject(request, "tools", tool_defs);
 

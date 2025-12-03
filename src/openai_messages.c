@@ -300,7 +300,7 @@ cJSON* build_openai_request(ConversationState *state, int enable_caching) {
     conversation_state_unlock(state);
 
     // Add tools with cache_control support (including MCP tools if available)
-    // In plan mode, exclude editing/writing tools
+    // In plan mode, exclude Bash, Write, and Edit tools
     cJSON *tool_defs = get_tool_definitions(state, enable_caching);
     cJSON_AddItemToObject(request, "tools", tool_defs);
 
