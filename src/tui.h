@@ -15,7 +15,12 @@
 #include "todo.h"
 #include "window_manager.h"
 #include "history_file.h"
+#ifndef TEST_BUILD
 #include "persistence.h"
+#else
+// Forward declaration for test builds
+struct PersistenceDB;
+#endif
 
 // Forward declaration for WINDOW type (not actually used, kept for compatibility)
 typedef struct _win_st WINDOW;
@@ -77,8 +82,8 @@ typedef struct {
     struct PersistenceDB *persistence_db;  // Database connection for token queries
     char *session_id;                     // Current session ID for token queries
 
-    // Plan mode flag (displayed in status bar)
-    int plan_mode;           // Whether planning mode is enabled
+    // Reference to conversation state (source of truth for plan_mode and other state)
+    ConversationState *conversation_state;
 
     // Modes
     TUIMode mode;            // Current input mode (NORMAL, INSERT, or COMMAND)
@@ -99,8 +104,10 @@ typedef struct {
 } TUIState;
 
 // Initialize the TUI
+// tui: TUI state to initialize
+// state: Conversation state (source of truth for plan_mode and other state)
 // Returns: 0 on success, -1 on failure
-int tui_init(TUIState *tui);
+int tui_init(TUIState *tui, ConversationState *state);
 
 // Cleanup and restore terminal
 void tui_cleanup(TUIState *tui);

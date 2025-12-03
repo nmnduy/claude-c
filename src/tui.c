@@ -253,7 +253,17 @@ static void render_status_window(TUIState *tui) {
     // Render plan mode indicator (if enabled) - always visible regardless of mode
     char plan_str[16] = {0};
     int plan_str_len = 0;
-    if (tui->plan_mode) {
+    int plan_mode = 0;
+    
+    // Read plan mode from conversation state with proper locking
+    if (tui->conversation_state) {
+        if (conversation_state_lock(tui->conversation_state) == 0) {
+            plan_mode = tui->conversation_state->plan_mode;
+            conversation_state_unlock(tui->conversation_state);
+        }
+    }
+    
+    if (plan_mode) {
         snprintf(plan_str, sizeof(plan_str), " ● Plan ");
         plan_str_len = (int)strlen(plan_str);
     }
@@ -1139,7 +1149,7 @@ static void input_redraw(TUIState *tui, const char *prompt) {
     wrefresh(win);
 }
 
-int tui_init(TUIState *tui) {
+int tui_init(TUIState *tui, ConversationState *state) {
     if (!tui) return -1;
 
     // Store global pointer for input resize callback
@@ -1225,6 +1235,9 @@ int tui_init(TUIState *tui) {
     // Start with zero content lines
     window_manager_set_content_lines(&tui->wm, 0);
 
+    // Store conversation state reference
+    tui->conversation_state = state;
+
     // Initialize conversation entries
     tui->entries = NULL;
     tui->entries_count = 0;
@@ -1238,9 +1251,6 @@ int tui_init(TUIState *tui) {
     // Initialize mode (start in INSERT mode for immediate input)
     tui->mode = TUI_MODE_INSERT;
     tui->normal_mode_last_key = 0;
-
-    // Initialize plan mode (start disabled)
-    tui->plan_mode = 0;
 
     // Initialize command mode buffer
     tui->command_buffer = NULL;
@@ -2252,9 +2262,6 @@ int tui_process_input_char(TUIState *tui, int ch, const char *prompt, void *user
                     state->plan_mode = state->plan_mode ? 0 : 1;
                     int new_plan_mode = state->plan_mode;
 
-                    // Update TUI directly
-                    tui->plan_mode = new_plan_mode;
-
                     conversation_state_unlock(state);
 
                     // Log the toggle
@@ -2840,26 +2847,9 @@ int tui_event_loop(TUIState *tui, const char *prompt,
     int running = 1;
     const long frame_time_us = 16667;  // ~60 FPS (1/60 second in microseconds)
 
-    // Initialize plan_mode from state (if available)
-    if (user_data) {
-        typedef struct {
-            ConversationState *state;
-            TUIState *tui;
-            void *worker;
-            void *instruction_queue;
-            TUIMessageQueue *tui_queue;
-            int instruction_queue_capacity;
-        } InteractiveContextView;
-
-        InteractiveContextView *ctx = (InteractiveContextView *)user_data;
-        if (ctx->state) {
-            if (conversation_state_lock(ctx->state) == 0) {
-                tui->plan_mode = ctx->state->plan_mode;
-                conversation_state_unlock(ctx->state);
-                LOG_DEBUG("[TUI] Initialized plan_mode from state: %s", tui->plan_mode ? "ON" : "OFF");
-            }
-        }
-    }
+    // Note: tui->conversation_state is already set during tui_init()
+    // No need to copy plan_mode separately
+    (void)user_data;  // Mark as unused to avoid compiler warning
 
     // Clear input buffer at start
     tui_clear_input_buffer(tui);

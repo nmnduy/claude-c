@@ -5657,7 +5657,7 @@ static void interactive_mode(ConversationState *state) {
 
     // Initialize TUI
     TUIState tui = {0};
-    if (tui_init(&tui) != 0) {
+    if (tui_init(&tui, state) != 0) {
         LOG_ERROR("Failed to initialize TUI");
         return;
     }
