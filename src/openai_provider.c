@@ -26,14 +26,14 @@
 static int progress_callback(void *clientp, curl_off_t dltotal, curl_off_t dlnow,
                              curl_off_t ultotal, curl_off_t ulnow) {
     (void)dltotal; (void)dlnow; (void)ultotal; (void)ulnow;
-    
+
     // clientp is the ConversationState* passed via progress_data parameter
     ConversationState *state = (ConversationState *)clientp;
     if (state && state->interrupt_requested) {
         LOG_DEBUG("Progress callback: interrupt requested, aborting HTTP request");
         return 1;  // Non-zero return aborts the curl transfer
     }
-    
+
     return 0;  // Continue transfer
 }
 
@@ -160,25 +160,25 @@ static ApiCallResult openai_call_api(Provider *self, ConversationState *state) {
     req.headers = headers;
     req.connect_timeout_ms = 30000;  // 30 seconds
     req.total_timeout_ms = 300000;   // 5 minutes
-    
+
     HttpResponse *http_resp = http_client_execute(&req, progress_callback, state);
-    
+
     // Store request JSON for logging (caller must free)
     result.request_json = openai_json;
-    
+
     if (!http_resp) {
         result.error_message = strdup("Failed to execute HTTP request");
         result.is_retryable = 0;
         curl_slist_free_all(headers);
         return result;
     }
-    
+
     // Copy results from HTTP response
     result.duration_ms = http_resp->duration_ms;
     result.http_status = http_resp->status_code;
     result.raw_response = http_resp->body ? strdup(http_resp->body) : NULL;
     result.headers_json = http_headers_to_json(http_resp->headers);
-    
+
     // Handle HTTP errors
     if (http_resp->error_message) {
         result.error_message = strdup(http_resp->error_message);
@@ -187,13 +187,13 @@ static ApiCallResult openai_call_api(Provider *self, ConversationState *state) {
         curl_slist_free_all(headers);
         return result;
     }
-    
+
     // Clean up HTTP response (but keep body since we duplicated it)
     char *body_to_free = http_resp->body;
     http_resp->body = NULL;  // Prevent double free
     http_response_free(http_resp);
     free(body_to_free);
-    
+
     // Free headers (they were copied by http_client_execute)
     curl_slist_free_all(headers);
 

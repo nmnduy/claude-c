@@ -45,7 +45,7 @@ typedef struct {
  * Callback for tracking request progress (can be used for interrupt handling)
  * Return non-zero to abort the request.
  */
-typedef int (*HttpProgressCallback)(void *userdata, 
+typedef int (*HttpProgressCallback)(void *userdata,
                                    curl_off_t dltotal, curl_off_t dlnow,
                                    curl_off_t ultotal, curl_off_t ulnow);
 
@@ -66,7 +66,7 @@ void http_client_cleanup(void);
 
 /**
  * Execute an HTTP request
- * 
+ *
  * @param req - Request configuration (will be copied internally)
  * @param progress_cb - Optional progress callback (can be NULL)
  * @param progress_data - User data passed to progress callback

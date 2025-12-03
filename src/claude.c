@@ -5234,7 +5234,7 @@ static int interrupt_callback(void *user_data) {
     // Check if there's work in progress
     int queue_depth = instr_queue ? ai_queue_depth(instr_queue) : 0;
     int work_in_progress = (queue_depth > 0);
-    
+
     // Debug log the queue depth
     LOG_DEBUG("interrupt_callback: queue_depth=%d, work_in_progress=%d", queue_depth, work_in_progress);
 
@@ -5242,7 +5242,7 @@ static int interrupt_callback(void *user_data) {
     // It never exits the application - use Ctrl+D or :q/:quit command to exit
     // Always set the interrupt flag regardless of queue state
     state->interrupt_requested = 1;
-    
+
     if (work_in_progress) {
         // There's work in the queue - inform user we're canceling
         LOG_INFO("User requested interrupt (Ctrl+C pressed) - canceling ongoing operations");
@@ -5252,7 +5252,7 @@ static int interrupt_callback(void *user_data) {
         LOG_INFO("User pressed Ctrl+C - interrupt flag set for any ongoing operations");
         ui_set_status(NULL, queue, "Interrupt requested - any ongoing operations will be canceled");
     }
-    
+
     return 0;  // Always continue running (never exit on Ctrl+C)
 }
 

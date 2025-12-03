@@ -24,14 +24,14 @@
 static int progress_callback(void *clientp, curl_off_t dltotal, curl_off_t dlnow,
                              curl_off_t ultotal, curl_off_t ulnow) {
     (void)dltotal; (void)dlnow; (void)ultotal; (void)ulnow;
-    
+
     // clientp is the ConversationState* passed via progress_data parameter
     ConversationState *state = (ConversationState *)clientp;
     if (state && state->interrupt_requested) {
         LOG_DEBUG("Progress callback: interrupt requested, aborting HTTP request");
         return 1;  // Non-zero return aborts the curl transfer
     }
-    
+
     return 0;  // Continue transfer
 }
 
@@ -83,11 +83,11 @@ static ApiCallResult bedrock_execute_request(BedrockConfig *config, const char *
 
     // Execute HTTP request using the unified HTTP client
     HttpResponse *http_resp = http_client_execute(&req, progress_callback, state);
-    
+
     // Convert headers to JSON for logging before freeing them
     char *headers_json = http_headers_to_json(headers);
     result.headers_json = headers_json;  // Store for logging (caller must free)
-    
+
     // Free the headers list (http_client_execute makes its own copy)
     curl_slist_free_all(headers);
 

@@ -254,7 +254,7 @@ static void render_status_window(TUIState *tui) {
     char plan_str[16] = {0};
     int plan_str_len = 0;
     int plan_mode = 0;
-    
+
     // Read plan mode from conversation state with proper locking
     if (tui->conversation_state) {
         if (conversation_state_lock(tui->conversation_state) == 0) {
@@ -262,7 +262,7 @@ static void render_status_window(TUIState *tui) {
             conversation_state_unlock(tui->conversation_state);
         }
     }
-    
+
     if (plan_mode) {
         snprintf(plan_str, sizeof(plan_str), " ● Plan ");
         plan_str_len = (int)strlen(plan_str);

@@ -45,13 +45,13 @@ static size_t write_callback(void *contents, size_t size, size_t nmemb, void *us
         if (new_capacity < needed) {
             new_capacity = needed;
         }
-        
+
         char *new_data = realloc(buf->data, new_capacity);
         if (!new_data) {
             LOG_ERROR("Failed to allocate memory for HTTP response (needed: %zu)", needed);
             return 0;
         }
-        
+
         buf->data = new_data;
         buf->capacity = new_capacity;
     }
@@ -67,28 +67,28 @@ static size_t write_callback(void *contents, size_t size, size_t nmemb, void *us
 static size_t header_callback(char *buffer, size_t size, size_t nitems, void *userdata) {
     size_t realsize = size * nitems;
     WriteContext *ctx = (WriteContext *)userdata;
-    
+
     // Null-terminate the header line
     char *header = malloc(realsize + 1);
     if (!header) {
         LOG_ERROR("Failed to allocate memory for header");
         return 0;
     }
-    
+
     memcpy(header, buffer, realsize);
     header[realsize] = '\0';
-    
+
     // Remove trailing CRLF
     if (realsize >= 2 && header[realsize-2] == '\r' && header[realsize-1] == '\n') {
         header[realsize-2] = '\0';
     } else if (realsize >= 1 && header[realsize-1] == '\n') {
         header[realsize-1] = '\0';
     }
-    
+
     // Add to headers list
     ctx->headers = curl_slist_append(ctx->headers, header);
     free(header);
-    
+
     return realsize;
 }
 
@@ -97,7 +97,7 @@ static MemoryBuffer* memory_buffer_create(void) {
     if (!buf) {
         return NULL;
     }
-    
+
     // Initial capacity
     buf->capacity = 4096;
     buf->data = malloc(buf->capacity);
@@ -105,7 +105,7 @@ static MemoryBuffer* memory_buffer_create(void) {
         free(buf);
         return NULL;
     }
-    
+
     buf->data[0] = '\0';
     return buf;
 }
@@ -143,35 +143,35 @@ HttpResponse* http_client_execute(const HttpRequest *req,
         LOG_ERROR("Invalid HTTP request: NULL request or URL");
         return NULL;
     }
-    
+
     HttpResponse *resp = calloc(1, sizeof(HttpResponse));
     if (!resp) {
         LOG_ERROR("Failed to allocate HTTP response");
         return NULL;
     }
-    
+
     CURL *curl = curl_easy_init();
     if (!curl) {
         LOG_ERROR("Failed to initialize CURL handle");
         free(resp);
         return NULL;
     }
-    
+
     // Initialize buffers
     MemoryBuffer *body_buf = memory_buffer_create();
     WriteContext write_ctx = {0};
     write_ctx.buffer = body_buf;
-    
+
     if (!body_buf) {
         LOG_ERROR("Failed to allocate memory buffer");
         curl_easy_cleanup(curl);
         free(resp);
         return NULL;
     }
-    
+
     // Set up curl options
     curl_easy_setopt(curl, CURLOPT_URL, req->url);
-    
+
     // Method
     if (req->method && strcmp(req->method, "GET") == 0) {
         curl_easy_setopt(curl, CURLOPT_HTTPGET, 1L);
@@ -192,38 +192,38 @@ HttpResponse* http_client_execute(const HttpRequest *req,
             curl_easy_setopt(curl, CURLOPT_POSTFIELDS, req->body);
         }
     }
-    
+
     // Headers
     if (req->headers) {
         curl_easy_setopt(curl, CURLOPT_HTTPHEADER, req->headers);
     }
-    
+
     // Timeouts (convert ms to seconds for curl)
     if (req->connect_timeout_ms > 0) {
         curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, req->connect_timeout_ms);
     } else {
         curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 30L); // Default 30 seconds
     }
-    
+
     if (req->total_timeout_ms > 0) {
         curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, req->total_timeout_ms);
     } else {
         curl_easy_setopt(curl, CURLOPT_TIMEOUT, 300L); // Default 5 minutes
     }
-    
+
     // Redirects
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, req->follow_redirects ? 1L : 0L);
-    
+
     // Verbose logging
     curl_easy_setopt(curl, CURLOPT_VERBOSE, req->verbose ? 1L : 0L);
-    
+
     // Callbacks
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &write_ctx);
-    
+
     curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, header_callback);
     curl_easy_setopt(curl, CURLOPT_HEADERDATA, &write_ctx);
-    
+
     // Progress callback
     if (progress_cb) {
         curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
@@ -232,20 +232,20 @@ HttpResponse* http_client_execute(const HttpRequest *req,
     } else {
         curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 1L);
     }
-    
+
     // Execute request
     struct timespec start, end;
     clock_gettime(CLOCK_MONOTONIC, &start);
-    
+
     CURLcode res = curl_easy_perform(curl);
-    
+
     clock_gettime(CLOCK_MONOTONIC, &end);
     resp->duration_ms = (end.tv_sec - start.tv_sec) * 1000 +
                        (end.tv_nsec - start.tv_nsec) / 1000000;
-    
+
     // Get status code
     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &resp->status_code);
-    
+
     // Handle result
     if (res != CURLE_OK) {
         // Check if the error was due to user interruption
@@ -261,7 +261,7 @@ HttpResponse* http_client_execute(const HttpRequest *req,
                                  res == CURLE_SSL_CONNECT_ERROR ||
                                  res == CURLE_GOT_NOTHING);
         }
-        
+
         // Clean up buffers on error
         memory_buffer_free(body_buf);
         curl_slist_free_all(write_ctx.headers);
@@ -270,18 +270,18 @@ HttpResponse* http_client_execute(const HttpRequest *req,
         resp->body = body_buf->data;
         body_buf->data = NULL; // Prevent double free
         resp->headers = write_ctx.headers;
-        
+
         // Body buffer is now owned by HttpResponse
         free(body_buf);
     }
-    
+
     curl_easy_cleanup(curl);
     return resp;
 }
 
 void http_response_free(HttpResponse *resp) {
     if (!resp) return;
-    
+
     free(resp->body);
     curl_slist_free_all(resp->headers);
     free(resp->error_message);
@@ -292,12 +292,12 @@ char* http_headers_to_json(struct curl_slist *headers) {
     if (!headers) {
         return NULL;
     }
-    
+
     cJSON *headers_array = cJSON_CreateArray();
     if (!headers_array) {
         return NULL;
     }
-    
+
     struct curl_slist *current = headers;
     while (current) {
         if (current->data) {
@@ -309,15 +309,15 @@ char* http_headers_to_json(struct curl_slist *headers) {
                     *colon = '\0';  // Split the string
                     char *header_name = current->data;
                     char *header_value = colon + 1;
-                    
+
                     // Skip leading whitespace in value
                     while (*header_value == ' ' || *header_value == '\t') {
                         header_value++;
                     }
-                    
+
                     cJSON_AddStringToObject(header_obj, "name", header_name);
                     cJSON_AddStringToObject(header_obj, "value", header_value);
-                    
+
                     *colon = ':';  // Restore the colon
                 } else {
                     // If no colon, treat the whole line as a header line
@@ -328,7 +328,7 @@ char* http_headers_to_json(struct curl_slist *headers) {
         }
         current = current->next;
     }
-    
+
     char *json_str = cJSON_PrintUnformatted(headers_array);
     cJSON_Delete(headers_array);
     return json_str;
@@ -337,7 +337,7 @@ char* http_headers_to_json(struct curl_slist *headers) {
 struct curl_slist* http_copy_headers(struct curl_slist *headers) {
     struct curl_slist *new_list = NULL;
     struct curl_slist *current = headers;
-    
+
     while (current) {
         if (current->data) {
             new_list = curl_slist_append(new_list, current->data);
@@ -349,7 +349,7 @@ struct curl_slist* http_copy_headers(struct curl_slist *headers) {
         }
         current = current->next;
     }
-    
+
     return new_list;
 }
 
