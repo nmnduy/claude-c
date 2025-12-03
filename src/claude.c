@@ -5240,15 +5240,17 @@ static int interrupt_callback(void *user_data) {
 
     // Ctrl+C always sets the interrupt flag to cancel any ongoing operations
     // It never exits the application - use Ctrl+D or :q/:quit command to exit
-    if (work_in_progress || state->interrupt_requested) {
-        // There's work in progress or already interrupted - set/reinforce the flag
+    // Always set the interrupt flag regardless of queue state
+    state->interrupt_requested = 1;
+    
+    if (work_in_progress) {
+        // There's work in the queue - inform user we're canceling
         LOG_INFO("User requested interrupt (Ctrl+C pressed) - canceling ongoing operations");
-        state->interrupt_requested = 1;
         ui_set_status(NULL, queue, "Interrupt requested - canceling operations...");
     } else {
-        // No work in progress - just acknowledge the Ctrl+C
-        LOG_INFO("User pressed Ctrl+C (no work in progress)");
-        ui_set_status(NULL, queue, "Press Ctrl+D to exit or :q to quit");
+        // No work in queue, but interrupt flag is set for any ongoing operations
+        LOG_INFO("User pressed Ctrl+C - interrupt flag set for any ongoing operations");
+        ui_set_status(NULL, queue, "Interrupt requested - any ongoing operations will be canceled");
     }
     
     return 0;  // Always continue running (never exit on Ctrl+C)
