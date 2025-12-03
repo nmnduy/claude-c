@@ -254,12 +254,19 @@ HttpResponse* http_client_execute(const HttpRequest *req,
             resp->is_retryable = 0;
         } else {
             resp->error_message = strdup(curl_easy_strerror(res));
+            // Network/protocol errors that should be retried:
+            // - Connection issues (COULDNT_CONNECT, RECV_ERROR, SEND_ERROR, GOT_NOTHING)
+            // - Timeouts (OPERATION_TIMEDOUT)
+            // - SSL issues (SSL_CONNECT_ERROR)
+            // - HTTP2/HTTP3 protocol layer issues (HTTP2, HTTP2_STREAM)
             resp->is_retryable = (res == CURLE_COULDNT_CONNECT ||
                                  res == CURLE_OPERATION_TIMEDOUT ||
                                  res == CURLE_RECV_ERROR ||
                                  res == CURLE_SEND_ERROR ||
                                  res == CURLE_SSL_CONNECT_ERROR ||
-                                 res == CURLE_GOT_NOTHING);
+                                 res == CURLE_GOT_NOTHING ||
+                                 res == CURLE_HTTP2 ||
+                                 res == CURLE_HTTP2_STREAM);
         }
 
         // Clean up buffers on error

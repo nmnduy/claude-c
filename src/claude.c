@@ -4822,6 +4822,13 @@ static void process_response(ConversationState *state,
     struct timespec proc_start, proc_end;
     clock_gettime(CLOCK_MONOTONIC, &proc_start);
 
+    // Check for error response first - these are already displayed by call_api_with_retries
+    // and don't have raw_response populated, so we exit early to avoid NULL pointer access
+    if (response->error_message) {
+        LOG_DEBUG("process_response: Error response encountered, exiting early: %s", response->error_message);
+        return;
+    }
+
     // Display assistant's text content if present
     if (response->message.text && response->message.text[0] != '\0') {
         // Skip whitespace-only content
@@ -4835,6 +4842,12 @@ static void process_response(ConversationState *state,
 
     // Add to conversation history (using raw response for now)
     // Extract message from raw_response for backward compatibility
+    // Defense in depth: check for NULL raw_response
+    if (!response->raw_response) {
+        LOG_WARN("process_response: raw_response is NULL, cannot add to conversation history");
+        return;
+    }
+
     cJSON *choices = cJSON_GetObjectItem(response->raw_response, "choices");
     if (choices && cJSON_IsArray(choices) && cJSON_GetArraySize(choices) > 0) {
         cJSON *choice = cJSON_GetArrayItem(choices, 0);
