@@ -3954,9 +3954,10 @@ static ApiResponse* call_api_with_retries(ConversationState *state) {
             long total_ms = (call_end.tv_sec - call_start.tv_sec) * 1000 +
                            (call_end.tv_nsec - call_start.tv_nsec) / 1000000;
 
-            LOG_INFO("API call succeeded (duration: %ld ms, provider duration: %ld ms, attempts: %d, auth_refreshed: %s)",
+            LOG_INFO("API call succeeded (duration: %ld ms, provider duration: %ld ms, attempts: %d, auth_refreshed: %s, plan_mode: %s)",
                      total_ms, result.duration_ms, attempt_num,
-                     result.auth_refreshed ? "yes" : "no");
+                     result.auth_refreshed ? "yes" : "no",
+                     state->plan_mode ? "yes" : "no");
 
 
 
