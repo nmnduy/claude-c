@@ -1403,16 +1403,33 @@ void tui_add_conversation_line(TUIState *tui, const char *prefix, const char *te
     // Estimate wrapped lines (conservative)
     int estimated_lines = 1; // At least 1 line
     if (text_len > 0) {
-        estimated_lines = ((prefix_len + text_len) / pad_width) + 2; // +2 for newline and safety
+        // Count newlines in text (each newline is a line break)
+        int newline_count = 0;
+        for (int i = 0; i < text_len; i++) {
+            if (text[i] == '\n') {
+                newline_count++;
+            }
+        }
+        
+        // Each newline in text is definitely a line break
+        // Text without newlines might wrap
+        // Be conservative: assume worst-case wrapping
+        estimated_lines = newline_count + ((prefix_len + text_len) / (pad_width / 2)) + 5;
     }
 
     // Ensure pad has enough capacity (centralized via WindowManager)
     int current_lines = window_manager_get_content_lines(&tui->wm);
-    int needed_capacity = current_lines + estimated_lines + 100;
+    int needed_capacity = current_lines + estimated_lines + 500; // Increased safety buffer
     if (needed_capacity > tui->wm.conv_pad_capacity) {
         if (window_manager_ensure_pad_capacity(&tui->wm, needed_capacity) != 0) {
             LOG_ERROR("[TUI] Failed to ensure pad capacity via WindowManager");
         }
+    }
+    
+    // Double-check pad exists before writing
+    if (!tui->wm.conv_pad) {
+        LOG_ERROR("[TUI] Cannot write to conversation - conv_pad is NULL");
+        return;
     }
 
     // Map color pair
@@ -1489,10 +1506,24 @@ void tui_add_conversation_line(TUIState *tui, const char *prefix, const char *te
     int cur_y, cur_x;
     getyx(tui->wm.conv_pad, cur_y, cur_x);
     (void)cur_x;
+    
+    // Safety check: ensure cursor is within pad bounds
+    int current_pad_height, current_pad_width;
+    getmaxyx(tui->wm.conv_pad, current_pad_height, current_pad_width);
+    if (cur_y >= current_pad_height) {
+        LOG_ERROR("[TUI] Cursor position %d exceeds pad height %d! Expanding pad.", cur_y, current_pad_height);
+        // Emergency expansion
+        if (window_manager_ensure_pad_capacity(&tui->wm, cur_y + 100) != 0) {
+            LOG_ERROR("[TUI] Failed to expand pad in emergency!");
+            // Try to recover by limiting to current capacity
+            cur_y = current_pad_height - 1;
+        }
+    }
+    
     window_manager_set_content_lines(&tui->wm, cur_y);
 
-    LOG_DEBUG("[TUI] Added line, total_lines now %d (estimated %d, actual %d)",
-              window_manager_get_content_lines(&tui->wm), estimated_lines, cur_y - start_line);
+    LOG_DEBUG("[TUI] Added line, total_lines now %d (estimated %d, actual %d, pad_height=%d)",
+              window_manager_get_content_lines(&tui->wm), estimated_lines, cur_y - start_line, current_pad_height);
 
     // Auto-scroll to bottom only in INSERT mode (preserve scroll position in NORMAL mode)
     if (tui->mode == TUI_MODE_INSERT) {
