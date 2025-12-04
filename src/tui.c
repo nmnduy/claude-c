@@ -27,6 +27,8 @@
 #include <unistd.h>
 #include <time.h>
 #include <strings.h>
+#include <limits.h>
+#include <bsd/string.h>
 #include "message_queue.h"
 #include "history_file.h"
 #include "array_resize.h"
@@ -1419,7 +1421,17 @@ void tui_add_conversation_line(TUIState *tui, const char *prefix, const char *te
 
     // Ensure pad has enough capacity (centralized via WindowManager)
     int current_lines = window_manager_get_content_lines(&tui->wm);
-    int needed_capacity = current_lines + estimated_lines + 500; // Increased safety buffer
+    // Check for integer overflow before calculating needed capacity
+    int needed_capacity;
+    if (current_lines > INT_MAX - estimated_lines ||
+        current_lines + estimated_lines > INT_MAX - 500) {
+        LOG_ERROR("[TUI] Capacity calculation would overflow! current=%d, estimated=%d",
+                 current_lines, estimated_lines);
+        needed_capacity = INT_MAX;
+    } else {
+        needed_capacity = current_lines + estimated_lines + 500; // Increased safety buffer
+    }
+    
     if (needed_capacity > tui->wm.conv_pad_capacity) {
         if (window_manager_ensure_pad_capacity(&tui->wm, needed_capacity) != 0) {
             LOG_ERROR("[TUI] Failed to ensure pad capacity via WindowManager");
@@ -1512,8 +1524,12 @@ void tui_add_conversation_line(TUIState *tui, const char *prefix, const char *te
     getmaxyx(tui->wm.conv_pad, current_pad_height, current_pad_width);
     if (cur_y >= current_pad_height) {
         LOG_ERROR("[TUI] Cursor position %d exceeds pad height %d! Expanding pad.", cur_y, current_pad_height);
-        // Emergency expansion
-        if (window_manager_ensure_pad_capacity(&tui->wm, cur_y + 100) != 0) {
+        // Emergency expansion with overflow check
+        int emergency_capacity = cur_y + 100;
+        if (emergency_capacity < cur_y) {  // Check for integer overflow
+            LOG_ERROR("[TUI] Emergency expansion would overflow! Limiting cursor.");
+            cur_y = current_pad_height - 1;
+        } else if (window_manager_ensure_pad_capacity(&tui->wm, emergency_capacity) != 0) {
             LOG_ERROR("[TUI] Failed to expand pad in emergency!");
             // Try to recover by limiting to current capacity
             cur_y = current_pad_height - 1;

@@ -9,6 +9,7 @@
 #include "voice_input.h"
 #define COLORSCHEME_EXTERN
 #include "colorscheme.h"
+#include <bsd/string.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -354,7 +355,7 @@ static CompletionResult* dir_path_completer(const char *line, int cursor_pos, vo
     prefix[plen] = '\0';
     char pattern[PATH_MAX];
     if (plen == 0) {
-        strcpy(pattern, "*");
+        strlcpy(pattern, "*", sizeof(pattern));
     } else {
         // Build pattern: prefix + '*' with safety against overflow
         size_t max_copy = sizeof(pattern) - 2; // leave space for '*' and '\0'

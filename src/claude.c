@@ -8,9 +8,7 @@
  * Dependencies: libcurl, cJSON, pthread
  */
 
-#ifdef __APPLE__
-    #define _DARWIN_C_SOURCE
-#else
+#ifndef __APPLE__
     #define _GNU_SOURCE
 #endif
 #include <stdio.h>
@@ -1926,7 +1924,9 @@ static char* str_replace_all(const char *content, const char *old_str, const cha
         src = pos + old_len;
     }
 
-    strcpy(dest, src);
+    // Calculate remaining space and use strlcpy for safety
+    size_t remaining_space = (size_t)((result + result_len + 1) - dest);
+    strlcpy(dest, src, remaining_space);
     return result;
 }
 
@@ -1993,7 +1993,8 @@ static char* regex_replace(const char *content, const char *pattern, const char 
     // Copy remaining text
     size_t remaining = strlen(src);
     if (dest_len + remaining >= result_capacity) {
-        char *new_result = realloc(result, dest_len + remaining + 1);
+        result_capacity = dest_len + remaining + 1;
+        char *new_result = realloc(result, result_capacity);
         if (!new_result) {
             free(result);
             regfree(&regex);
@@ -2004,7 +2005,9 @@ static char* regex_replace(const char *content, const char *pattern, const char 
         dest = result + dest_len;
     }
 
-    strcpy(dest, src);
+    // Use strlcpy for safety
+    size_t remaining_space = result_capacity - dest_len;
+    strlcpy(dest, src, remaining_space);
     regfree(&regex);
 
     if (*replace_count == 0) {

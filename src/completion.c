@@ -11,6 +11,7 @@
 #include <unistd.h>
 #include <limits.h>
 #include <libgen.h>
+#include <bsd/string.h>
 
 // ============================================================================
 // Helper Functions
@@ -22,8 +23,8 @@
 static int split_path(const char *path, char *dir_out, char *base_out) {
     if (strlen(path) == 0) {
         // Empty path: complete in current directory
-        strcpy(dir_out, ".");
-        strcpy(base_out, "");
+        strlcpy(dir_out, ".", PATH_MAX);
+        strlcpy(base_out, "", PATH_MAX);
         return 0;
     }
 
@@ -39,11 +40,11 @@ static int split_path(const char *path, char *dir_out, char *base_out) {
 
     if (last_slash == NULL) {
         // No slash: complete in current directory
-        strcpy(dir_out, ".");
+        strlcpy(dir_out, ".", PATH_MAX);
         snprintf(base_out, PATH_MAX, "%s", path);
     } else if (last_slash == path_copy1) {
         // Path starts with '/': root directory
-        strcpy(dir_out, "/");
+        strlcpy(dir_out, "/", PATH_MAX);
         snprintf(base_out, PATH_MAX, "%s", path + 1);
     } else {
         // Normal path: split at last slash

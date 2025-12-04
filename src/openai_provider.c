@@ -14,6 +14,7 @@
 #include <string.h>
 #include <time.h>
 #include <curl/curl.h>
+#include <bsd/string.h>
 
 // Default Anthropic API URL
 #define DEFAULT_ANTHROPIC_URL "https://api.anthropic.com/v1/messages"
@@ -116,8 +117,9 @@ static ApiCallResult openai_call_api(Provider *self, ConversationState *state) {
             if (prefix_len + api_key_len + suffix_len + 1 < sizeof(auth_header)) {
                 strncpy(auth_header, config->auth_header_template, prefix_len);
                 auth_header[prefix_len] = '\0';
-                strcat(auth_header, config->api_key);
-                strcat(auth_header, percent_s + 2);
+                // Use strlcat for safety
+                strlcat(auth_header, config->api_key, sizeof(auth_header));
+                strlcat(auth_header, percent_s + 2, sizeof(auth_header));
             } else {
                 // Fallback if template is too long
                 strncpy(auth_header, config->auth_header_template, sizeof(auth_header) - 1);
@@ -522,8 +524,10 @@ Provider* openai_provider_create(const char *api_key, const char *base_url) {
             return NULL;
         }
 
-        // Copy headers
-        strcpy(extra_headers_copy, extra_headers_env);  // Reset copy
+        // Copy headers - reset buffer for second strtok pass
+        // Since extra_headers_copy was allocated with strdup(extra_headers_env),
+        // it has exactly strlen(extra_headers_env) + 1 bytes
+        memcpy(extra_headers_copy, extra_headers_env, strlen(extra_headers_env) + 1);
         token = strtok(extra_headers_copy, ",");
         for (int i = 0; i < config->extra_headers_count && token; i++) {
             // Trim whitespace

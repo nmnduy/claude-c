@@ -16,6 +16,7 @@
 #include <strings.h>
 #include <time.h>
 #include <curl/curl.h>
+#include <bsd/string.h>
 
 #define DEFAULT_ANTHROPIC_URL "https://api.anthropic.com/v1/messages"
 #define ANTHROPIC_VERSION_HEADER "anthropic-version: 2023-06-01"
@@ -629,7 +630,8 @@ Provider* anthropic_provider_create(const char *api_key, const char *base_url) {
         while (tok) { count++; tok = strtok(NULL, ","); }
         cfg->extra_headers = calloc((size_t)count + 1, sizeof(char*));
         if (!cfg->extra_headers) { free(copy); free(cfg->auth_header_template); free(cfg->base_url); free(cfg->api_key); free(cfg); free(p); return NULL; }
-        strcpy(copy, extra_env);
+        // Reset buffer for second strtok pass
+        memcpy(copy, extra_env, strlen(extra_env) + 1);
         tok = strtok(copy, ",");
         for (int i = 0; i < count && tok; i++) {
             while (*tok == ' ' || *tok == '\t') tok++;

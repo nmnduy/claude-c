@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <limits.h>
 
 // Default configuration values
 const WindowManagerConfig DEFAULT_WINDOW_CONFIG = {
@@ -345,14 +346,30 @@ int window_manager_ensure_pad_capacity(WindowManager *wm, int needed_lines) {
         return -1;
     }
 
+    // Validate input
+    if (needed_lines <= 0) {
+        LOG_ERROR("[WM] Invalid needed_lines: %d", needed_lines);
+        return -1;
+    }
+
     // Already have enough capacity?
     if (needed_lines <= wm->conv_pad_capacity) {
         return 0;
     }
 
-    // Calculate new capacity (double until it fits)
+    // Calculate new capacity (double until it fits) with overflow checking
     int new_capacity = wm->conv_pad_capacity;
+    if (new_capacity == 0) {
+        new_capacity = 1;  // Start with at least 1
+    }
+    
     while (new_capacity < needed_lines) {
+        // Check for integer overflow before doubling
+        if (new_capacity > INT_MAX / 2) {
+            LOG_ERROR("[WM] Pad capacity doubling would overflow (current=%d, INT_MAX=%d)",
+                     new_capacity, INT_MAX);
+            return -1;
+        }
         new_capacity *= 2;
     }
 

@@ -18,6 +18,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <pwd.h>
+#include <bsd/string.h>
 
 // ============================================================================
 // Helper Functions
@@ -140,7 +141,9 @@ static char* exec_command_impl(const char *command) {
             }
             output = new_output;
         }
-        strcpy(output + size, buffer);
+        // Use strlcpy for safety
+        size_t remaining_space = capacity - size;
+        strlcpy(output + size, buffer, remaining_space);
         size += len;
     }
 

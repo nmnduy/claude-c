@@ -1,6 +1,4 @@
-#ifdef __APPLE__
-    #define _DARWIN_C_SOURCE
-#else
+#ifndef __APPLE__
     #define _GNU_SOURCE
 #endif
 

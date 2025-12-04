@@ -5,9 +5,7 @@
  * Supports stdio transport (process spawning) and basic server management.
  */
 
-#ifdef __APPLE__
-    #define _DARWIN_C_SOURCE
-#else
+#ifndef __APPLE__
     #define _GNU_SOURCE
 #endif
 
@@ -23,6 +21,7 @@
 #include <signal.h>
 #include <fcntl.h>
 #include <cjson/cJSON.h>
+#include <bsd/string.h>
 #include "mcp.h"
 #include "base64.h"
 
@@ -1000,8 +999,9 @@ MCPToolResult* mcp_call_tool(MCPServer *server, const char *tool_name, cJSON *ar
                     char *new_result = realloc(result->result, new_len);
                     if (new_result) {
                         result->result = new_result;
-                        strcat(result->result, "\n");
-                        strcat(result->result, text->valuestring);
+                        // Use strlcat for safety
+                        strlcat(result->result, "\n", new_len);
+                        strlcat(result->result, text->valuestring, new_len);
                     }
                 }
             }
