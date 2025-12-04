@@ -2321,6 +2321,25 @@ int tui_process_input_char(TUIState *tui, int ch, const char *prompt, void *user
                     state->plan_mode = state->plan_mode ? 0 : 1;
                     int new_plan_mode = state->plan_mode;
 
+                    // Rebuild system prompt to reflect plan mode change
+                    char *new_system_prompt = build_system_prompt(state);
+                    if (new_system_prompt) {
+                        if (state->count > 0 && state->messages[0].role == MSG_SYSTEM) {
+                            free(state->messages[0].contents[0].text);
+                            size_t len = strlen(new_system_prompt) + 1;
+                            state->messages[0].contents[0].text = malloc(len);
+                            if (!state->messages[0].contents[0].text) {
+                                LOG_ERROR("[TUI] Failed to allocate memory for updated system prompt");
+                            } else {
+                                strlcpy(state->messages[0].contents[0].text, new_system_prompt, len);
+                                LOG_DEBUG("[TUI] System prompt updated to reflect plan mode change");
+                            }
+                        }
+                        free(new_system_prompt);
+                    } else {
+                        LOG_ERROR("[TUI] Failed to rebuild system prompt after plan mode toggle");
+                    }
+
                     conversation_state_unlock(state);
 
                     // Log the toggle
