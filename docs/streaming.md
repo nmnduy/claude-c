@@ -36,10 +36,11 @@ HttpResponse* http_client_execute_stream(
 
 ### 2. Event Types
 
-Streaming events follow Anthropic's Messages API streaming format:
+Streaming events support both Anthropic and OpenAI streaming formats:
 
 ```c
 typedef enum {
+    // Anthropic Messages API events
     SSE_EVENT_MESSAGE_START,        // message_start event
     SSE_EVENT_CONTENT_BLOCK_START,  // content_block_start event
     SSE_EVENT_CONTENT_BLOCK_DELTA,  // content_block_delta event (text streaming)
@@ -47,11 +48,17 @@ typedef enum {
     SSE_EVENT_MESSAGE_DELTA,        // message_delta event (stop_reason, etc.)
     SSE_EVENT_MESSAGE_STOP,         // message_stop event
     SSE_EVENT_ERROR,                // error event
-    SSE_EVENT_PING                  // ping event (keepalive)
+    SSE_EVENT_PING,                 // ping event (keepalive)
+    
+    // OpenAI Chat Completions API events
+    SSE_EVENT_OPENAI_CHUNK,         // OpenAI chunk (default "data:" event)
+    SSE_EVENT_OPENAI_DONE           // OpenAI [DONE] marker
 } StreamEventType;
 ```
 
-### 3. Provider Layer (`src/anthropic_provider.c`)
+### 3. Provider Layers
+
+#### Anthropic Provider (`src/anthropic_provider.c`)
 
 **StreamingContext:**
 - Accumulates text deltas from `content_block_delta` events
@@ -63,6 +70,20 @@ typedef enum {
 - `streaming_event_handler()`: Processes each SSE event
 - Dispatches text deltas to TUI via `tui_update_last_conversation_line()`
 - Builds synthetic response from accumulated data for logging
+
+#### OpenAI Provider (`src/openai_provider.c`)
+
+**OpenAIStreamingContext:**
+- Accumulates text deltas from OpenAI chunk events
+- Tracks tool calls with incremental updates
+- Reconstructs complete message from streaming chunks
+- Updates TUI in real-time
+
+**Key Functions:**
+- `openai_streaming_event_handler()`: Processes OpenAI SSE chunks
+- Handles `delta.content` for text streaming
+- Accumulates `delta.tool_calls` for function calling
+- Builds synthetic OpenAI-format response for compatibility
 
 ### 4. TUI Layer (`src/tui.c`)
 
@@ -105,7 +126,9 @@ export CLAUDE_C_ENABLE_STREAMING=1
 
 ## Implementation Details
 
-### SSE Format
+### SSE Formats
+
+#### Anthropic Format
 
 Server-Sent Events follow this format:
 
@@ -132,7 +155,32 @@ event: message_stop
 data: {"type":"message_stop"}
 ```
 
+#### OpenAI Format
+
+OpenAI uses implicit events (no `event:` field):
+
+```
+data: {"id":"chatcmpl-123","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-123","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"Hello"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-123","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":" world"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-123","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+data: [DONE]
+```
+
+**Key Differences:**
+- No explicit `event:` field - parser detects OpenAI format by content
+- Each chunk is a complete JSON object with `choices` array
+- `delta.content` contains incremental text
+- `delta.tool_calls` array for function calling (indexed, incremental)
+- `[DONE]` marker signals end of stream
+
 ### Text Accumulation
+
+#### Anthropic
 
 The streaming handler accumulates text in `StreamingContext`:
 
@@ -142,7 +190,20 @@ The streaming handler accumulates text in `StreamingContext`:
    - Call `tui_update_last_conversation_line()` to display
 3. `message_stop`: Build final synthetic response for logging
 
+#### OpenAI
+
+The streaming handler accumulates text in `OpenAIStreamingContext`:
+
+1. First `delta.content`: Initialize empty assistant line in TUI
+2. Subsequent `delta.content`: 
+   - Append to `accumulated_text` buffer
+   - Call `tui_update_last_conversation_line()` to display
+3. `finish_reason` present: Build final synthetic response for logging
+4. `delta.tool_calls`: Incrementally accumulate tool call data by index
+
 ### Response Reconstruction
+
+#### Anthropic
 
 After streaming completes, the provider builds a synthetic response JSON:
 
@@ -162,6 +223,37 @@ After streaming completes, the provider builds a synthetic response JSON:
 ```
 
 This ensures compatibility with existing logging and persistence code.
+
+#### OpenAI
+
+After streaming completes, the provider builds a synthetic response in OpenAI format:
+
+```json
+{
+  "id": "chatcmpl-123",
+  "object": "chat.completion",
+  "model": "gpt-4",
+  "created": 1234567890,
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "<accumulated text>",
+        "tool_calls": [...]
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 0,
+    "completion_tokens": 0,
+    "total_tokens": 0
+  }
+}
+```
+
+**Note**: Usage stats are placeholder zeros since OpenAI streaming doesn't always include final token counts in all streaming modes.
 
 ## Error Handling
 
@@ -216,9 +308,9 @@ export CLAUDE_C_ENABLE_STREAMING=1
 
 ## Compatibility
 
-- **Anthropic API**: Fully compatible with Messages API streaming
-- **OpenAI API**: Not yet implemented (OpenAI uses different streaming format)
-- **Bedrock**: Not yet implemented
+- **Anthropic API**: ✅ Fully compatible with Messages API streaming
+- **OpenAI API**: ✅ Fully compatible with Chat Completions API streaming
+- **Bedrock**: ❌ Not yet implemented
 - **Caching**: Works with prompt caching enabled
 - **TUI**: Required - streaming won't work in non-TUI mode
 
@@ -246,7 +338,8 @@ The streaming callback checks `state->interrupt_requested` on each event. When u
 ## Code References
 
 - **HTTP Client**: `src/http_client.c` - SSE parser and streaming execution
-- **Provider**: `src/anthropic_provider.c` - Event handling and text accumulation  
+- **Anthropic Provider**: `src/anthropic_provider.c` - Anthropic event handling and text accumulation
+- **OpenAI Provider**: `src/openai_provider.c` - OpenAI chunk handling and response reconstruction  
 - **TUI**: `src/tui.c` - `tui_update_last_conversation_line()`
 - **Types**: `src/http_client.h` - `StreamEvent`, `StreamEventType`
 - **State**: `src/claude_internal.h` - `ConversationState.tui` pointer

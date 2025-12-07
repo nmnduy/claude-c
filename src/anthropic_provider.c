@@ -519,6 +519,13 @@ static int streaming_event_handler(StreamEvent *event, void *userdata) {
         case SSE_EVENT_PING:
             // Keepalive, ignore
             break;
+
+        case SSE_EVENT_OPENAI_CHUNK:
+        case SSE_EVENT_OPENAI_DONE:
+            // OpenAI-specific events, not used by Anthropic provider
+            LOG_WARN("Received unexpected OpenAI event in Anthropic provider");
+            break;
+            break;
     }
 
     return 0;  // Continue

@@ -8,6 +8,7 @@
 #include "openai_provider.h"
 #include "logger.h"
 #include "http_client.h"
+#include "tui.h"  // For streaming TUI updates
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -56,6 +57,204 @@ static int is_prompt_caching_enabled(void) {
 
 
 // ============================================================================
+// Streaming Support for OpenAI
+// ============================================================================
+
+// OpenAI streaming context passed to SSE callback
+typedef struct {
+    ConversationState *state;        // For interrupt checking and TUI
+    char *accumulated_text;          // Accumulated text from deltas
+    size_t accumulated_size;
+    size_t accumulated_capacity;
+    char *finish_reason;             // Finish reason from final chunk
+    char *model;                     // Model name from chunks
+    char *message_id;                // Message ID from chunks
+    int tool_calls_count;            // Number of tool calls
+    cJSON *tool_calls_array;         // Array of accumulated tool calls
+} OpenAIStreamingContext;
+
+static void openai_streaming_context_init(OpenAIStreamingContext *ctx, ConversationState *state) {
+    memset(ctx, 0, sizeof(OpenAIStreamingContext));
+    ctx->state = state;
+    ctx->accumulated_capacity = 4096;
+    ctx->accumulated_text = malloc(ctx->accumulated_capacity);
+    if (ctx->accumulated_text) {
+        ctx->accumulated_text[0] = '\0';
+    }
+    ctx->tool_calls_array = cJSON_CreateArray();
+}
+
+static void openai_streaming_context_free(OpenAIStreamingContext *ctx) {
+    if (!ctx) return;
+    free(ctx->accumulated_text);
+    free(ctx->finish_reason);
+    free(ctx->model);
+    free(ctx->message_id);
+    if (ctx->tool_calls_array) {
+        cJSON_Delete(ctx->tool_calls_array);
+    }
+}
+
+static int openai_streaming_event_handler(StreamEvent *event, void *userdata) {
+    OpenAIStreamingContext *ctx = (OpenAIStreamingContext *)userdata;
+
+    // Check for interrupt
+    if (ctx->state && ctx->state->interrupt_requested) {
+        LOG_DEBUG("OpenAI streaming handler: interrupt requested");
+        return 1;  // Abort stream
+    }
+
+    if (!event || !event->data) {
+        // Ping or [DONE] marker
+        if (event && event->type == SSE_EVENT_OPENAI_DONE) {
+            LOG_DEBUG("OpenAI stream: received [DONE] marker");
+        }
+        return 0;
+    }
+
+    // OpenAI chunk format: { "id": "...", "object": "chat.completion.chunk", "choices": [...], ... }
+    if (event->type == SSE_EVENT_OPENAI_CHUNK) {
+        // Extract model and id if not yet seen
+        if (!ctx->model) {
+            cJSON *model = cJSON_GetObjectItem(event->data, "model");
+            if (model && cJSON_IsString(model)) {
+                ctx->model = strdup(model->valuestring);
+            }
+        }
+        if (!ctx->message_id) {
+            cJSON *id = cJSON_GetObjectItem(event->data, "id");
+            if (id && cJSON_IsString(id)) {
+                ctx->message_id = strdup(id->valuestring);
+            }
+        }
+
+        // Process choices array
+        cJSON *choices = cJSON_GetObjectItem(event->data, "choices");
+        if (choices && cJSON_IsArray(choices)) {
+            cJSON *choice = cJSON_GetArrayItem(choices, 0);
+            if (choice) {
+                cJSON *delta = cJSON_GetObjectItem(choice, "delta");
+                if (delta) {
+                    // Handle text content
+                    cJSON *content = cJSON_GetObjectItem(delta, "content");
+                    if (content && cJSON_IsString(content) && content->valuestring) {
+                        size_t new_len = strlen(content->valuestring);
+                        size_t needed = ctx->accumulated_size + new_len + 1;
+
+                        if (needed > ctx->accumulated_capacity) {
+                            size_t new_cap = ctx->accumulated_capacity * 2;
+                            if (new_cap < needed) new_cap = needed;
+                            char *new_buf = realloc(ctx->accumulated_text, new_cap);
+                            if (new_buf) {
+                                ctx->accumulated_text = new_buf;
+                                ctx->accumulated_capacity = new_cap;
+                            }
+                        }
+
+                        if (ctx->accumulated_text && needed <= ctx->accumulated_capacity) {
+                            // Initialize TUI on first content
+                            if (ctx->accumulated_size == 0 && ctx->state && ctx->state->tui) {
+                                tui_add_conversation_line(ctx->state->tui, "[Assistant]", "", COLOR_PAIR_ASSISTANT);
+                            }
+
+                            memcpy(ctx->accumulated_text + ctx->accumulated_size,
+                                  content->valuestring, new_len);
+                            ctx->accumulated_size += new_len;
+                            ctx->accumulated_text[ctx->accumulated_size] = '\0';
+
+                            // Stream to TUI if available
+                            if (ctx->state && ctx->state->tui) {
+                                tui_update_last_conversation_line(ctx->state->tui, content->valuestring);
+                            }
+                        }
+                    }
+
+                    // Handle tool calls
+                    cJSON *tool_calls = cJSON_GetObjectItem(delta, "tool_calls");
+                    if (tool_calls && cJSON_IsArray(tool_calls)) {
+                        // OpenAI streams tool calls incrementally with index and deltas
+                        cJSON *tool_call = NULL;
+                        cJSON_ArrayForEach(tool_call, tool_calls) {
+                            cJSON *index_obj = cJSON_GetObjectItem(tool_call, "index");
+                            if (!index_obj || !cJSON_IsNumber(index_obj)) continue;
+                            
+                            int index = index_obj->valueint;
+                            
+                            // Ensure array has enough space
+                            while (cJSON_GetArraySize(ctx->tool_calls_array) <= index) {
+                                cJSON *new_tool = cJSON_CreateObject();
+                                cJSON_AddStringToObject(new_tool, "id", "");
+                                cJSON_AddStringToObject(new_tool, "type", "function");
+                                cJSON *function = cJSON_CreateObject();
+                                cJSON_AddStringToObject(function, "name", "");
+                                cJSON_AddStringToObject(function, "arguments", "");
+                                cJSON_AddItemToObject(new_tool, "function", function);
+                                cJSON_AddItemToArray(ctx->tool_calls_array, new_tool);
+                            }
+                            
+                            cJSON *existing_tool = cJSON_GetArrayItem(ctx->tool_calls_array, index);
+                            if (!existing_tool) continue;
+                            
+                            // Update id if present
+                            cJSON *id_obj = cJSON_GetObjectItem(tool_call, "id");
+                            if (id_obj && cJSON_IsString(id_obj) && id_obj->valuestring[0]) {
+                                cJSON_ReplaceItemInObject(existing_tool, "id", cJSON_CreateString(id_obj->valuestring));
+                            }
+                            
+                            // Update function data
+                            cJSON *function_delta = cJSON_GetObjectItem(tool_call, "function");
+                            if (function_delta) {
+                                cJSON *existing_function = cJSON_GetObjectItem(existing_tool, "function");
+                                if (!existing_function) {
+                                    existing_function = cJSON_CreateObject();
+                                    cJSON_AddItemToObject(existing_tool, "function", existing_function);
+                                }
+                                
+                                cJSON *name_obj = cJSON_GetObjectItem(function_delta, "name");
+                                if (name_obj && cJSON_IsString(name_obj)) {
+                                    cJSON_ReplaceItemInObject(existing_function, "name", cJSON_Duplicate(name_obj, 1));
+                                }
+                                
+                                cJSON *args_obj = cJSON_GetObjectItem(function_delta, "arguments");
+                                if (args_obj && cJSON_IsString(args_obj)) {
+                                    // Append to existing arguments
+                                    cJSON *existing_args = cJSON_GetObjectItem(existing_function, "arguments");
+                                    if (existing_args && cJSON_IsString(existing_args)) {
+                                        size_t old_len = strlen(existing_args->valuestring);
+                                        size_t new_len = strlen(args_obj->valuestring);
+                                        char *combined = malloc(old_len + new_len + 1);
+                                        if (combined) {
+                                            memcpy(combined, existing_args->valuestring, old_len);
+                                            memcpy(combined + old_len, args_obj->valuestring, new_len);
+                                            combined[old_len + new_len] = '\0';
+                                            cJSON_ReplaceItemInObject(existing_function, "arguments", cJSON_CreateString(combined));
+                                            free(combined);
+                                        }
+                                    } else {
+                                        cJSON_AddStringToObject(existing_function, "arguments", args_obj->valuestring);
+                                    }
+                                }
+                            }
+                        }
+                        ctx->tool_calls_count = cJSON_GetArraySize(ctx->tool_calls_array);
+                    }
+                }
+
+                // Handle finish_reason
+                cJSON *finish_reason = cJSON_GetObjectItem(choice, "finish_reason");
+                if (finish_reason && cJSON_IsString(finish_reason) && finish_reason->valuestring) {
+                    free(ctx->finish_reason);
+                    ctx->finish_reason = strdup(finish_reason->valuestring);
+                    LOG_DEBUG("OpenAI stream: finish_reason=%s", ctx->finish_reason);
+                }
+            }
+        }
+    }
+
+    return 0;
+}
+
+// ============================================================================
 // OpenAI Provider Implementation
 // ============================================================================
 
@@ -73,6 +272,13 @@ static ApiCallResult openai_call_api(Provider *self, ConversationState *state) {
         return result;
     }
 
+    // Check if streaming is enabled via environment variable
+    int enable_streaming = 0;
+    const char *streaming_env = getenv("CLAUDE_C_ENABLE_STREAMING");
+    if (streaming_env && (strcmp(streaming_env, "1") == 0 || strcasecmp(streaming_env, "true") == 0)) {
+        enable_streaming = 1;
+    }
+
     // Build request JSON using OpenAI message format
     int enable_caching = is_prompt_caching_enabled();
     cJSON *request = build_openai_request(state, enable_caching);
@@ -80,6 +286,12 @@ static ApiCallResult openai_call_api(Provider *self, ConversationState *state) {
         result.error_message = strdup("Failed to build request JSON");
         result.is_retryable = 0;
         return result;
+    }
+
+    // Add streaming parameter if enabled
+    if (enable_streaming) {
+        cJSON_AddBoolToObject(request, "stream", cJSON_True);
+        LOG_DEBUG("OpenAI provider: streaming enabled");
     }
 
     char *openai_json = cJSON_PrintUnformatted(request);
@@ -162,16 +374,27 @@ static ApiCallResult openai_call_api(Provider *self, ConversationState *state) {
     req.headers = headers;
     req.connect_timeout_ms = 30000;  // 30 seconds
     req.total_timeout_ms = 300000;   // 5 minutes
-
-    HttpResponse *http_resp = http_client_execute(&req, progress_callback, state);
+    req.enable_streaming = enable_streaming;
 
     // Store request JSON for logging (caller must free)
     result.request_json = openai_json;
+
+    // Initialize streaming context if needed
+    OpenAIStreamingContext stream_ctx = {0};
+    HttpResponse *http_resp = NULL;
+
+    if (enable_streaming) {
+        openai_streaming_context_init(&stream_ctx, state);
+        http_resp = http_client_execute_stream(&req, openai_streaming_event_handler, &stream_ctx, progress_callback, state);
+    } else {
+        http_resp = http_client_execute(&req, progress_callback, state);
+    }
 
     if (!http_resp) {
         result.error_message = strdup("Failed to execute HTTP request");
         result.is_retryable = 0;
         curl_slist_free_all(headers);
+        if (enable_streaming) openai_streaming_context_free(&stream_ctx);
         return result;
     }
 
@@ -187,6 +410,7 @@ static ApiCallResult openai_call_api(Provider *self, ConversationState *state) {
         result.is_retryable = http_resp->is_retryable;
         http_response_free(http_resp);
         curl_slist_free_all(headers);
+        if (enable_streaming) openai_streaming_context_free(&stream_ctx);
         return result;
     }
 
@@ -201,13 +425,65 @@ static ApiCallResult openai_call_api(Provider *self, ConversationState *state) {
 
     // Check HTTP status
     if (result.http_status >= 200 && result.http_status < 300) {
-        // Success - parse response (already in OpenAI format)
-        cJSON *raw_json = cJSON_Parse(result.raw_response);
-        if (!raw_json) {
-            result.error_message = strdup("Failed to parse JSON response");
-            result.is_retryable = 0;
-            free(result.headers_json);  // Clean up headers JSON in error paths
-            return result;
+        // Success
+        cJSON *raw_json = NULL;
+
+        // If streaming was used, reconstruct response from streaming context
+        if (enable_streaming) {
+            LOG_DEBUG("Reconstructing OpenAI response from streaming context");
+            
+            // Build synthetic response in OpenAI format
+            raw_json = cJSON_CreateObject();
+            cJSON_AddStringToObject(raw_json, "id", stream_ctx.message_id ? stream_ctx.message_id : "streaming");
+            cJSON_AddStringToObject(raw_json, "object", "chat.completion");
+            cJSON_AddStringToObject(raw_json, "model", stream_ctx.model ? stream_ctx.model : "unknown");
+            time_t now = time(NULL);
+            cJSON_AddNumberToObject(raw_json, "created", (double)now);
+            
+            cJSON *choices = cJSON_CreateArray();
+            cJSON *choice = cJSON_CreateObject();
+            cJSON_AddNumberToObject(choice, "index", 0);
+            
+            cJSON *message = cJSON_CreateObject();
+            cJSON_AddStringToObject(message, "role", "assistant");
+            
+            // Add content if we have text
+            if (stream_ctx.accumulated_text && stream_ctx.accumulated_size > 0) {
+                cJSON_AddStringToObject(message, "content", stream_ctx.accumulated_text);
+            } else {
+                cJSON_AddNullToObject(message, "content");
+            }
+            
+            // Add tool calls if we have any
+            if (stream_ctx.tool_calls_count > 0) {
+                cJSON_AddItemToObject(message, "tool_calls", cJSON_Duplicate(stream_ctx.tool_calls_array, 1));
+            }
+            
+            cJSON_AddItemToObject(choice, "message", message);
+            cJSON_AddStringToObject(choice, "finish_reason", 
+                stream_ctx.finish_reason ? stream_ctx.finish_reason : "stop");
+            
+            cJSON_AddItemToArray(choices, choice);
+            cJSON_AddItemToObject(raw_json, "choices", choices);
+            
+            // Add usage (placeholder since OpenAI streaming doesn't always include it)
+            cJSON *usage = cJSON_CreateObject();
+            cJSON_AddNumberToObject(usage, "prompt_tokens", 0);
+            cJSON_AddNumberToObject(usage, "completion_tokens", 0);
+            cJSON_AddNumberToObject(usage, "total_tokens", 0);
+            cJSON_AddItemToObject(raw_json, "usage", usage);
+            
+            // Free streaming context
+            openai_streaming_context_free(&stream_ctx);
+        } else {
+            // Non-streaming: parse response
+            raw_json = cJSON_Parse(result.raw_response);
+            if (!raw_json) {
+                result.error_message = strdup("Failed to parse JSON response");
+                result.is_retryable = 0;
+                free(result.headers_json);  // Clean up headers JSON in error paths
+                return result;
+            }
         }
 
         // Extract vendor-agnostic response data
@@ -217,6 +493,7 @@ static ApiCallResult openai_call_api(Provider *self, ConversationState *state) {
             result.is_retryable = 0;
             cJSON_Delete(raw_json);
             free(result.headers_json);  // Clean up headers JSON in error paths
+            if (enable_streaming) openai_streaming_context_free(&stream_ctx);
             return result;
         }
 
@@ -367,6 +644,7 @@ static ApiCallResult openai_call_api(Provider *self, ConversationState *state) {
     }
 
     free(result.headers_json);  // Clean up headers JSON in error paths
+    if (enable_streaming) openai_streaming_context_free(&stream_ctx);
     return result;
 }
 

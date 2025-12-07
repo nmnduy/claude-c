@@ -162,17 +162,31 @@ static void sse_parser_reset_event(SSEParserState *parser) {
 }
 
 // Map event name to enum
-static StreamEventType sse_event_name_to_type(const char *name) {
-    if (!name) return SSE_EVENT_PING;
-    if (strcmp(name, "message_start") == 0) return SSE_EVENT_MESSAGE_START;
-    if (strcmp(name, "content_block_start") == 0) return SSE_EVENT_CONTENT_BLOCK_START;
-    if (strcmp(name, "content_block_delta") == 0) return SSE_EVENT_CONTENT_BLOCK_DELTA;
-    if (strcmp(name, "content_block_stop") == 0) return SSE_EVENT_CONTENT_BLOCK_STOP;
-    if (strcmp(name, "message_delta") == 0) return SSE_EVENT_MESSAGE_DELTA;
-    if (strcmp(name, "message_stop") == 0) return SSE_EVENT_MESSAGE_STOP;
-    if (strcmp(name, "error") == 0) return SSE_EVENT_ERROR;
-    if (strcmp(name, "ping") == 0) return SSE_EVENT_PING;
-    return SSE_EVENT_PING;  // Unknown events treated as ping
+static StreamEventType sse_event_name_to_type(const char *name, const char *data) {
+    // Anthropic events have explicit event types
+    if (name) {
+        if (strcmp(name, "message_start") == 0) return SSE_EVENT_MESSAGE_START;
+        if (strcmp(name, "content_block_start") == 0) return SSE_EVENT_CONTENT_BLOCK_START;
+        if (strcmp(name, "content_block_delta") == 0) return SSE_EVENT_CONTENT_BLOCK_DELTA;
+        if (strcmp(name, "content_block_stop") == 0) return SSE_EVENT_CONTENT_BLOCK_STOP;
+        if (strcmp(name, "message_delta") == 0) return SSE_EVENT_MESSAGE_DELTA;
+        if (strcmp(name, "message_stop") == 0) return SSE_EVENT_MESSAGE_STOP;
+        if (strcmp(name, "error") == 0) return SSE_EVENT_ERROR;
+        if (strcmp(name, "ping") == 0) return SSE_EVENT_PING;
+    }
+    
+    // OpenAI uses implicit events (no event: field, just data:)
+    // Check if data is "[DONE]" marker
+    if (data && strcmp(data, "[DONE]") == 0) {
+        return SSE_EVENT_OPENAI_DONE;
+    }
+    
+    // If no event name specified and data exists, assume OpenAI chunk
+    if (!name && data && data[0] != '\0') {
+        return SSE_EVENT_OPENAI_CHUNK;
+    }
+    
+    return SSE_EVENT_PING;  // Unknown/empty events treated as ping
 }
 
 // Dispatch event to callback
@@ -181,13 +195,17 @@ static int sse_parser_dispatch_event(SSEParserState *parser) {
 
     // Build StreamEvent
     StreamEvent event = {0};
-    event.type = sse_event_name_to_type(parser->event_type);
+    event.type = sse_event_name_to_type(parser->event_type, parser->data_buffer->data);
     event.event_name = parser->event_type ? parser->event_type : "message";  // Default to "message"
     event.raw_data = parser->data_buffer->data;
 
-    // Try to parse data as JSON
-    if (parser->data_buffer->data && parser->data_buffer->size > 0) {
+    // Try to parse data as JSON (skip for OpenAI [DONE] marker)
+    if (parser->data_buffer->data && parser->data_buffer->size > 0 && 
+        strcmp(parser->data_buffer->data, "[DONE]") != 0) {
         event.data = cJSON_Parse(parser->data_buffer->data);
+        if (!event.data) {
+            LOG_WARN("Failed to parse SSE data as JSON: %s", parser->data_buffer->data);
+        }
     }
 
     // Call user callback

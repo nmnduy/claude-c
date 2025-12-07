@@ -52,8 +52,10 @@ typedef int (*HttpProgressCallback)(void *userdata,
 
 /**
  * Streaming event types for Server-Sent Events (SSE)
+ * Supports both Anthropic and OpenAI streaming formats
  */
 typedef enum {
+    // Anthropic Messages API events
     SSE_EVENT_MESSAGE_START,    // message_start event
     SSE_EVENT_CONTENT_BLOCK_START, // content_block_start event
     SSE_EVENT_CONTENT_BLOCK_DELTA, // content_block_delta event (text streaming)
@@ -61,7 +63,11 @@ typedef enum {
     SSE_EVENT_MESSAGE_DELTA,    // message_delta event (stop_reason, etc.)
     SSE_EVENT_MESSAGE_STOP,     // message_stop event
     SSE_EVENT_ERROR,            // error event
-    SSE_EVENT_PING              // ping event (keepalive)
+    SSE_EVENT_PING,             // ping event (keepalive)
+    
+    // OpenAI Chat Completions API events (data events without explicit event type)
+    SSE_EVENT_OPENAI_CHUNK,     // OpenAI chunk (default "data:" event)
+    SSE_EVENT_OPENAI_DONE       // OpenAI [DONE] marker
 } StreamEventType;
 
 /**

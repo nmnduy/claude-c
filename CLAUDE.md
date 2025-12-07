@@ -24,7 +24,7 @@ Project instructions for Claude Code when working with this codebase.
 **TUI & Normal Mode**: `src/tui.h`, `src/tui.c`, `docs/normal-mode.md`
 **Color themes**: `src/colorscheme.h`, `src/builtin_themes.h`, `src/builtin_themes.c`
 **Token usage tracking**: `docs/token-usage.md`, `src/persistence.c`
-**Streaming**: `docs/streaming.md`, `STREAMING_QUICKSTART.md` (real-time response display)
+**Streaming**: `docs/streaming.md` (real-time response display for Anthropic and OpenAI)
 **Tests**: `tests/test_*.c`
 **Build**: `Makefile`
 
@@ -165,7 +165,7 @@ export CLAUDE_C_THEME="/path/to/custom-theme.conf"
 
 **Purpose**: Real-time response display using Server-Sent Events (SSE)
 **Documentation**: `docs/streaming.md`
-**Implementation**: `src/http_client.c`, `src/anthropic_provider.c`
+**Implementation**: `src/http_client.c`, `src/anthropic_provider.c`, `src/openai_provider.c`
 
 **Enable streaming:**
 ```bash
@@ -176,16 +176,18 @@ export CLAUDE_C_ENABLE_STREAMING=1
 **Features:**
 - Character-by-character text display as generated
 - Server-Sent Events (SSE) protocol
-- Anthropic Messages API streaming format
+- Supports Anthropic Messages API and OpenAI Chat Completions API streaming
 - Interrupt-safe (Ctrl+C works during streaming)
 - Zero overhead when disabled (default)
 
 **Technical:**
-- SSE parser in `http_client.c` (~200 lines)
-- Streaming context in provider layer
+- SSE parser in `http_client.c` (~250 lines)
+- Provider-specific streaming contexts (Anthropic and OpenAI)
 - Real-time TUI updates via `tui_update_last_conversation_line()`
 - Synthetic response reconstruction for logging
-- Currently Anthropic-only (OpenAI/Bedrock coming soon)
+- Anthropic: ✅ Fully supported
+- OpenAI: ✅ Fully supported
+- Bedrock: ❌ Coming soon
 
 ## TODO List System
 
