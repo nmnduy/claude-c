@@ -27,6 +27,7 @@ typedef struct {
     long total_timeout_ms;     // Total timeout in milliseconds (default: 300000)
     int follow_redirects;      // Whether to follow redirects (default: 0)
     int verbose;               // Enable curl verbose logging (default: 0)
+    int enable_streaming;      // Enable Server-Sent Events (SSE) streaming (default: 0)
 } HttpRequest;
 
 /**
@@ -48,6 +49,37 @@ typedef struct {
 typedef int (*HttpProgressCallback)(void *userdata,
                                    curl_off_t dltotal, curl_off_t dlnow,
                                    curl_off_t ultotal, curl_off_t ulnow);
+
+/**
+ * Streaming event types for Server-Sent Events (SSE)
+ */
+typedef enum {
+    SSE_EVENT_MESSAGE_START,    // message_start event
+    SSE_EVENT_CONTENT_BLOCK_START, // content_block_start event
+    SSE_EVENT_CONTENT_BLOCK_DELTA, // content_block_delta event (text streaming)
+    SSE_EVENT_CONTENT_BLOCK_STOP,  // content_block_stop event
+    SSE_EVENT_MESSAGE_DELTA,    // message_delta event (stop_reason, etc.)
+    SSE_EVENT_MESSAGE_STOP,     // message_stop event
+    SSE_EVENT_ERROR,            // error event
+    SSE_EVENT_PING              // ping event (keepalive)
+} StreamEventType;
+
+/**
+ * Streaming event data
+ */
+typedef struct {
+    StreamEventType type;
+    const char *event_name; // Raw event name from SSE (e.g., "content_block_delta") - not owned
+    cJSON *data;            // Parsed JSON data from the event (owned by callback, freed after)
+    const char *raw_data;   // Raw data string (not owned, points to parser buffer)
+} StreamEvent;
+
+/**
+ * Callback for handling streaming events
+ * Called for each Server-Sent Event received
+ * Return non-zero to abort the stream.
+ */
+typedef int (*HttpStreamCallback)(StreamEvent *event, void *userdata);
 
 // ============================================================================
 // Core Functions
@@ -76,6 +108,24 @@ void http_client_cleanup(void);
 HttpResponse* http_client_execute(const HttpRequest *req,
                                  HttpProgressCallback progress_cb,
                                  void *progress_data);
+
+/**
+ * Execute an HTTP request with streaming support (Server-Sent Events)
+ *
+ * @param req - Request configuration (must have enable_streaming=1)
+ * @param stream_cb - Callback for each streaming event (required)
+ * @param stream_data - User data passed to stream callback
+ * @param progress_cb - Optional progress callback (can be NULL)
+ * @param progress_data - User data passed to progress callback
+ * @return HttpResponse* - Response object with final state (caller must free)
+ *                        Returns NULL on memory allocation failure
+ *                        Note: body may be empty for streaming requests
+ */
+HttpResponse* http_client_execute_stream(const HttpRequest *req,
+                                        HttpStreamCallback stream_cb,
+                                        void *stream_data,
+                                        HttpProgressCallback progress_cb,
+                                        void *progress_data);
 
 /**
  * Free an HTTP response

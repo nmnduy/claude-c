@@ -362,7 +362,7 @@ int window_manager_ensure_pad_capacity(WindowManager *wm, int needed_lines) {
     if (new_capacity == 0) {
         new_capacity = 1;  // Start with at least 1
     }
-    
+
     while (new_capacity < needed_lines) {
         // Check for integer overflow before doubling
         if (new_capacity > INT_MAX / 2) {

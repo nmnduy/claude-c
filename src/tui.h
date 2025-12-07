@@ -57,7 +57,7 @@ typedef enum {
 } TUIMode;
 
 // TUI State
-typedef struct {
+typedef struct TUIStateStruct {
     // Centralized window manager (owns ncurses windows)
     WindowManager wm;
 
@@ -117,6 +117,11 @@ void tui_cleanup(TUIState *tui);
 // text: Message text
 // color_pair: Color pair to use for the message
 void tui_add_conversation_line(TUIState *tui, const char *prefix, const char *text, TUIColorPair color_pair);
+
+// Update the last conversation line (for streaming text)
+// text: New text to append to the last line
+// If no lines exist, this creates a new line with empty prefix
+void tui_update_last_conversation_line(TUIState *tui, const char *text);
 
 // Update the status line
 void tui_update_status(TUIState *tui, const char *status_text);

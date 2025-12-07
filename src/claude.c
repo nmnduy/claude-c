@@ -2996,11 +2996,11 @@ static int is_tool_allowed(const char *tool_name, ConversationState *state) {
     }
 
     cJSON_Delete(tool_defs);
-    
+
     if (!found) {
         LOG_WARN("Tool validation failed: '%s' was not in the provided tools list (possible model hallucination)", tool_name);
     }
-    
+
     return found;
 }
 
@@ -4350,7 +4350,7 @@ char* build_system_prompt(ConversationState *state) {
     // Build the system prompt with additional directories
     // Log plan mode when building system prompt
     LOG_DEBUG("[SYSTEM] build_system_prompt: plan_mode=%d", state->plan_mode);
-    
+
     int offset = snprintf(prompt, prompt_size,
         "Here is useful information about the environment you are running in:\n"
         "<env>\n"
@@ -4984,13 +4984,13 @@ static void process_response(ConversationState *state,
                 result_slot->tool_name = strdup(tool->name);
                 cJSON *error = cJSON_CreateObject();
                 char error_msg[512];
-                
+
                 // Check if this is a plan mode restriction
-                int is_plan_mode_restriction = state->plan_mode && 
-                    (strcmp(tool->name, "Bash") == 0 || 
-                     strcmp(tool->name, "Write") == 0 || 
+                int is_plan_mode_restriction = state->plan_mode &&
+                    (strcmp(tool->name, "Bash") == 0 ||
+                     strcmp(tool->name, "Write") == 0 ||
                      strcmp(tool->name, "Edit") == 0);
-                
+
                 if (is_plan_mode_restriction) {
                     snprintf(error_msg, sizeof(error_msg),
                              "ERROR: Tool '%s' is not available in planning mode. "
@@ -5004,11 +5004,11 @@ static void process_response(ConversationState *state,
                              "Please check the list of available tools and try again with a valid tool name.",
                              tool->name);
                 }
-                
+
                 cJSON_AddStringToObject(error, "error", error_msg);
                 result_slot->tool_output = error;
                 result_slot->is_error = 1;
-                
+
                 // Display error to user
                 char prefix_with_tool[128];
                 snprintf(prefix_with_tool, sizeof(prefix_with_tool), "[%s]", tool->name);
@@ -5779,6 +5779,9 @@ static void interactive_mode(ConversationState *state) {
     // Set up database connection for token usage queries
     tui.persistence_db = state->persistence_db;
     tui.session_id = state->session_id;
+
+    // Link TUI to state for streaming support
+    state->tui = &tui;
 
     // Initialize command system
     commands_init();

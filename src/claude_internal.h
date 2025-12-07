@@ -55,6 +55,10 @@ struct MCPConfig;
 // Provider is defined in provider.h
 typedef struct Provider Provider;
 
+// TUIState is an incomplete type (defined in tui.h)
+// We only use pointers to it, so forward declaration is sufficient
+typedef struct TUIStateStruct TUIState;
+
 // ============================================================================
 // Enums
 // ============================================================================
@@ -196,6 +200,9 @@ typedef struct ConversationState {
 
     // Planning mode flag
     int plan_mode;                  // Whether planning mode is enabled
+
+    // TUI reference for streaming updates (NULL if not using TUI)
+    TUIState *tui;                  // TUI state for real-time streaming display
 } ConversationState;
 
 // ============================================================================

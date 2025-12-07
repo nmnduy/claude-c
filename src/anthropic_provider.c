@@ -9,6 +9,7 @@
 #include "openai_messages.h"  // We reuse internal message building and parse into OpenAI-like intermediate
 #include "logger.h"
 #include "http_client.h"
+#include "tui.h"  // For streaming TUI updates
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -304,6 +305,226 @@ static cJSON* anthropic_to_openai_response(const char *anthropic_raw) {
 }
 
 // ============================================================================
+// Streaming Support
+// ============================================================================
+
+// Streaming context passed to SSE callback
+typedef struct {
+    ConversationState *state;        // For interrupt checking
+    char *accumulated_text;          // Accumulated text from deltas
+    size_t accumulated_size;
+    size_t accumulated_capacity;
+    int content_block_index;         // Current content block being streamed
+    char *content_block_type;        // Type of current block ("text" or "tool_use")
+    char *tool_use_id;               // Tool use ID for current block
+    char *tool_use_name;             // Tool name for current block
+    char *tool_input_json;           // Accumulated tool input JSON
+    size_t tool_input_size;
+    size_t tool_input_capacity;
+    cJSON *message_start_data;       // Message metadata from message_start
+    char *stop_reason;               // Stop reason from message_delta
+} StreamingContext;
+
+static void streaming_context_init(StreamingContext *ctx, ConversationState *state) {
+    memset(ctx, 0, sizeof(StreamingContext));
+    ctx->state = state;
+    ctx->content_block_index = -1;
+    ctx->accumulated_capacity = 4096;
+    ctx->accumulated_text = malloc(ctx->accumulated_capacity);
+    if (ctx->accumulated_text) {
+        ctx->accumulated_text[0] = '\0';
+    }
+    ctx->tool_input_capacity = 4096;
+    ctx->tool_input_json = malloc(ctx->tool_input_capacity);
+    if (ctx->tool_input_json) {
+        ctx->tool_input_json[0] = '\0';
+    }
+}
+
+static void streaming_context_free(StreamingContext *ctx) {
+    if (!ctx) return;
+    free(ctx->accumulated_text);
+    free(ctx->content_block_type);
+    free(ctx->tool_use_id);
+    free(ctx->tool_use_name);
+    free(ctx->tool_input_json);
+    free(ctx->stop_reason);
+    if (ctx->message_start_data) {
+        cJSON_Delete(ctx->message_start_data);
+    }
+}
+
+static int streaming_event_handler(StreamEvent *event, void *userdata) {
+    StreamingContext *ctx = (StreamingContext *)userdata;
+
+    // Check for interrupt
+    if (ctx->state && ctx->state->interrupt_requested) {
+        LOG_DEBUG("Streaming handler: interrupt requested");
+        return 1;  // Abort stream
+    }
+
+    if (!event || !event->data) {
+        // Ping or invalid event
+        return 0;
+    }
+
+    switch (event->type) {
+        case SSE_EVENT_MESSAGE_START:
+            // Store message metadata (model, usage, etc.)
+            if (ctx->message_start_data) {
+                cJSON_Delete(ctx->message_start_data);
+            }
+            ctx->message_start_data = cJSON_Duplicate(event->data, 1);
+            LOG_DEBUG("Stream: message_start");
+
+            // Initialize TUI for streaming by adding an empty assistant line
+            if (ctx->state && ctx->state->tui) {
+                // Add assistant prefix with empty text - streaming will fill it in
+                tui_add_conversation_line(ctx->state->tui, "[Assistant]", "", COLOR_PAIR_ASSISTANT);
+            }
+            break;
+
+        case SSE_EVENT_CONTENT_BLOCK_START: {
+            // New content block starting
+            cJSON *index = cJSON_GetObjectItem(event->data, "index");
+            cJSON *content_block = cJSON_GetObjectItem(event->data, "content_block");
+            if (index && cJSON_IsNumber(index)) {
+                ctx->content_block_index = index->valueint;
+            }
+            if (content_block) {
+                cJSON *type = cJSON_GetObjectItem(content_block, "type");
+                if (type && cJSON_IsString(type)) {
+                    free(ctx->content_block_type);
+                    ctx->content_block_type = strdup(type->valuestring);
+
+                    if (strcmp(type->valuestring, "tool_use") == 0) {
+                        cJSON *id = cJSON_GetObjectItem(content_block, "id");
+                        cJSON *name = cJSON_GetObjectItem(content_block, "name");
+                        if (id && cJSON_IsString(id)) {
+                            free(ctx->tool_use_id);
+                            ctx->tool_use_id = strdup(id->valuestring);
+                        }
+                        if (name && cJSON_IsString(name)) {
+                            free(ctx->tool_use_name);
+                            ctx->tool_use_name = strdup(name->valuestring);
+                        }
+                        ctx->tool_input_size = 0;
+                        if (ctx->tool_input_json) {
+                            ctx->tool_input_json[0] = '\0';
+                        }
+                    }
+                }
+            }
+            LOG_DEBUG("Stream: content_block_start (index=%d, type=%s)",
+                     ctx->content_block_index,
+                     ctx->content_block_type ? ctx->content_block_type : "unknown");
+            break;
+        }
+
+        case SSE_EVENT_CONTENT_BLOCK_DELTA: {
+            // Delta with new content
+            cJSON *delta = cJSON_GetObjectItem(event->data, "delta");
+            if (delta) {
+                cJSON *type = cJSON_GetObjectItem(delta, "type");
+                if (type && cJSON_IsString(type)) {
+                    if (strcmp(type->valuestring, "text_delta") == 0) {
+                        cJSON *text = cJSON_GetObjectItem(delta, "text");
+                        if (text && cJSON_IsString(text) && text->valuestring) {
+                            size_t new_len = strlen(text->valuestring);
+                            size_t needed = ctx->accumulated_size + new_len + 1;
+
+                            if (needed > ctx->accumulated_capacity) {
+                                size_t new_cap = ctx->accumulated_capacity * 2;
+                                if (new_cap < needed) new_cap = needed;
+                                char *new_buf = realloc(ctx->accumulated_text, new_cap);
+                                if (new_buf) {
+                                    ctx->accumulated_text = new_buf;
+                                    ctx->accumulated_capacity = new_cap;
+                                }
+                            }
+
+                            if (ctx->accumulated_text && needed <= ctx->accumulated_capacity) {
+                                memcpy(ctx->accumulated_text + ctx->accumulated_size,
+                                      text->valuestring, new_len);
+                                ctx->accumulated_size += new_len;
+                                ctx->accumulated_text[ctx->accumulated_size] = '\0';
+
+                                // Stream to TUI if available
+                                if (ctx->state && ctx->state->tui) {
+                                    tui_update_last_conversation_line(ctx->state->tui, text->valuestring);
+                                }
+                            }
+                        }
+                    } else if (strcmp(type->valuestring, "input_json_delta") == 0) {
+                        cJSON *partial = cJSON_GetObjectItem(delta, "partial_json");
+                        if (partial && cJSON_IsString(partial) && partial->valuestring) {
+                            size_t new_len = strlen(partial->valuestring);
+                            size_t needed = ctx->tool_input_size + new_len + 1;
+
+                            if (needed > ctx->tool_input_capacity) {
+                                size_t new_cap = ctx->tool_input_capacity * 2;
+                                if (new_cap < needed) new_cap = needed;
+                                char *new_buf = realloc(ctx->tool_input_json, new_cap);
+                                if (new_buf) {
+                                    ctx->tool_input_json = new_buf;
+                                    ctx->tool_input_capacity = new_cap;
+                                }
+                            }
+
+                            if (ctx->tool_input_json && needed <= ctx->tool_input_capacity) {
+                                memcpy(ctx->tool_input_json + ctx->tool_input_size,
+                                      partial->valuestring, new_len);
+                                ctx->tool_input_size += new_len;
+                                ctx->tool_input_json[ctx->tool_input_size] = '\0';
+                            }
+                        }
+                    }
+                }
+            }
+            break;
+        }
+
+        case SSE_EVENT_CONTENT_BLOCK_STOP:
+            LOG_DEBUG("Stream: content_block_stop (index=%d)", ctx->content_block_index);
+            break;
+
+        case SSE_EVENT_MESSAGE_DELTA: {
+            cJSON *delta = cJSON_GetObjectItem(event->data, "delta");
+            if (delta) {
+                cJSON *stop_reason = cJSON_GetObjectItem(delta, "stop_reason");
+                if (stop_reason && cJSON_IsString(stop_reason)) {
+                    free(ctx->stop_reason);
+                    ctx->stop_reason = strdup(stop_reason->valuestring);
+                    LOG_DEBUG("Stream: stop_reason=%s", ctx->stop_reason);
+                }
+            }
+            break;
+        }
+
+        case SSE_EVENT_MESSAGE_STOP:
+            LOG_DEBUG("Stream: message_stop");
+            break;
+
+        case SSE_EVENT_ERROR: {
+            cJSON *error = cJSON_GetObjectItem(event->data, "error");
+            if (error) {
+                cJSON *message = cJSON_GetObjectItem(error, "message");
+                if (message && cJSON_IsString(message)) {
+                    LOG_ERROR("Stream error: %s", message->valuestring);
+                }
+            }
+            return 1;  // Abort on error
+        }
+
+        case SSE_EVENT_PING:
+            // Keepalive, ignore
+            break;
+    }
+
+    return 0;  // Continue
+}
+
+// ============================================================================
 // Provider Implementation
 // ============================================================================
 
@@ -403,6 +624,24 @@ static ApiCallResult anthropic_call_api(Provider *self, ConversationState *state
         return result;
     }
 
+    // Check if streaming is enabled via environment variable
+    int enable_streaming = 0;
+    const char *streaming_env = getenv("CLAUDE_C_ENABLE_STREAMING");
+    if (streaming_env && (strcmp(streaming_env, "1") == 0 || strcasecmp(streaming_env, "true") == 0)) {
+        enable_streaming = 1;
+    }
+
+    // Modify request to enable streaming if needed
+    if (enable_streaming) {
+        cJSON *req_json = cJSON_Parse(anth_req);
+        if (req_json) {
+            cJSON_AddBoolToObject(req_json, "stream", 1);
+            free(anth_req);
+            anth_req = cJSON_PrintUnformatted(req_json);
+            cJSON_Delete(req_json);
+        }
+    }
+
     // Build HTTP request using the new HTTP client
     HttpRequest req = {0};
     req.url = config->base_url;
@@ -413,9 +652,18 @@ static ApiCallResult anthropic_call_api(Provider *self, ConversationState *state
     req.total_timeout_ms = 300000;   // 5 minutes
     req.follow_redirects = 0;
     req.verbose = 0;
+    req.enable_streaming = enable_streaming;
 
-    // Execute HTTP request using the unified HTTP client
-    HttpResponse *http_resp = http_client_execute(&req, progress_callback, state);
+    // Execute HTTP request
+    HttpResponse *http_resp = NULL;
+    StreamingContext stream_ctx;
+
+    if (enable_streaming) {
+        streaming_context_init(&stream_ctx, state);
+        http_resp = http_client_execute_stream(&req, streaming_event_handler, &stream_ctx, progress_callback, state);
+    } else {
+        http_resp = http_client_execute(&req, progress_callback, state);
+    }
 
     // Convert headers to JSON for logging
     result.headers_json = http_headers_to_json(headers);
@@ -451,8 +699,58 @@ static ApiCallResult anthropic_call_api(Provider *self, ConversationState *state
     http_response_free(http_resp);
 
     if (result.http_status >= 200 && result.http_status < 300) {
-        // Convert to OpenAI-like then parse as in other providers
-        cJSON *openai_like = anthropic_to_openai_response(result.raw_response);
+        cJSON *openai_like = NULL;
+
+        // If streaming was used, reconstruct response from streaming context
+        if (enable_streaming) {
+            // Build a synthetic Anthropic response from accumulated data
+            cJSON *synth_response = cJSON_CreateObject();
+            if (synth_response) {
+                cJSON_AddStringToObject(synth_response, "id", "streaming");
+                cJSON_AddStringToObject(synth_response, "type", "message");
+                cJSON_AddStringToObject(synth_response, "role", "assistant");
+
+                cJSON *content = cJSON_CreateArray();
+                if (stream_ctx.accumulated_text && stream_ctx.accumulated_size > 0) {
+                    cJSON *text_block = cJSON_CreateObject();
+                    cJSON_AddStringToObject(text_block, "type", "text");
+                    cJSON_AddStringToObject(text_block, "text", stream_ctx.accumulated_text);
+                    cJSON_AddItemToArray(content, text_block);
+                }
+                // TODO: Add tool_use blocks if present
+                cJSON_AddItemToObject(synth_response, "content", content);
+
+                if (stream_ctx.stop_reason) {
+                    cJSON_AddStringToObject(synth_response, "stop_reason", stream_ctx.stop_reason);
+                } else {
+                    cJSON_AddStringToObject(synth_response, "stop_reason", "end_turn");
+                }
+
+                // Add usage if available from message_start
+                if (stream_ctx.message_start_data) {
+                    cJSON *usage_src = cJSON_GetObjectItem(stream_ctx.message_start_data, "usage");
+                    if (usage_src) {
+                        cJSON_AddItemToObject(synth_response, "usage", cJSON_Duplicate(usage_src, 1));
+                    }
+                }
+
+                // Convert to JSON string for logging
+                char *synth_str = cJSON_PrintUnformatted(synth_response);
+                if (synth_str) {
+                    free(result.raw_response);
+                    result.raw_response = synth_str;
+                }
+
+                // Convert to OpenAI format
+                openai_like = anthropic_to_openai_response(synth_str ? synth_str : "{}");
+                cJSON_Delete(synth_response);
+            }
+
+            streaming_context_free(&stream_ctx);
+        } else {
+            // Non-streaming: convert normal response
+            openai_like = anthropic_to_openai_response(result.raw_response);
+        }
         if (!openai_like) {
             result.error_message = strdup("Failed to parse Anthropic response");
             result.is_retryable = 0;

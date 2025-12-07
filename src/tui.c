@@ -303,7 +303,7 @@ static void render_status_window(TUIState *tui) {
         }
         if (plan_col < 0) plan_col = 0;
 
-        LOG_DEBUG("[TUI] Rendering plan mode at col=%d, width=%d, plan_str_len=%d, token_str_len=%d, mode=%d", 
+        LOG_DEBUG("[TUI] Rendering plan mode at col=%d, width=%d, plan_str_len=%d, token_str_len=%d, mode=%d",
                   plan_col, width, plan_str_len, token_str_len, tui->mode);
 
         if (has_colors()) {
@@ -318,7 +318,7 @@ static void render_status_window(TUIState *tui) {
             wattroff(tui->wm.status_win, A_BOLD);
         }
     } else if (plan_str_len > 0) {
-        LOG_DEBUG("[TUI] Plan mode indicator not rendered: plan_str_len=%d, width=%d, condition=%d", 
+        LOG_DEBUG("[TUI] Plan mode indicator not rendered: plan_str_len=%d, width=%d, condition=%d",
                   plan_str_len, width, (plan_str_len > 0 && plan_str_len < width));
     }
 
@@ -1412,7 +1412,7 @@ void tui_add_conversation_line(TUIState *tui, const char *prefix, const char *te
                 newline_count++;
             }
         }
-        
+
         // Each newline in text is definitely a line break
         // Text without newlines might wrap
         // Be conservative: assume worst-case wrapping
@@ -1431,13 +1431,13 @@ void tui_add_conversation_line(TUIState *tui, const char *prefix, const char *te
     } else {
         needed_capacity = current_lines + estimated_lines + 500; // Increased safety buffer
     }
-    
+
     if (needed_capacity > tui->wm.conv_pad_capacity) {
         if (window_manager_ensure_pad_capacity(&tui->wm, needed_capacity) != 0) {
             LOG_ERROR("[TUI] Failed to ensure pad capacity via WindowManager");
         }
     }
-    
+
     // Double-check pad exists before writing
     if (!tui->wm.conv_pad) {
         LOG_ERROR("[TUI] Cannot write to conversation - conv_pad is NULL");
@@ -1518,7 +1518,7 @@ void tui_add_conversation_line(TUIState *tui, const char *prefix, const char *te
     int cur_y, cur_x;
     getyx(tui->wm.conv_pad, cur_y, cur_x);
     (void)cur_x;
-    
+
     // Safety check: ensure cursor is within pad bounds
     int current_pad_height, current_pad_width;
     getmaxyx(tui->wm.conv_pad, current_pad_height, current_pad_width);
@@ -1535,7 +1535,7 @@ void tui_add_conversation_line(TUIState *tui, const char *prefix, const char *te
             cur_y = current_pad_height - 1;
         }
     }
-    
+
     window_manager_set_content_lines(&tui->wm, cur_y);
 
     LOG_DEBUG("[TUI] Added line, total_lines now %d (estimated %d, actual %d, pad_height=%d)",
@@ -1552,6 +1552,69 @@ void tui_add_conversation_line(TUIState *tui, const char *prefix, const char *te
     }
 
     // Redraw input window to ensure it stays visible
+    if (tui->wm.input_win) {
+        touchwin(tui->wm.input_win);
+        wrefresh(tui->wm.input_win);
+    }
+}
+
+void tui_update_last_conversation_line(TUIState *tui, const char *text) {
+    if (!tui || !tui->is_initialized || !text) return;
+
+    // Validate conversation pad exists
+    if (!tui->wm.conv_pad) {
+        LOG_ERROR("[TUI] Cannot update conversation line - conv_pad is NULL");
+        return;
+    }
+
+    // Update the last entry in the conversation history
+    if (tui->entries_count > 0) {
+        ConversationEntry *last_entry = &tui->entries[tui->entries_count - 1];
+
+        // Append new text to the existing text
+        size_t old_len = last_entry->text ? strlen(last_entry->text) : 0;
+        size_t new_len = strlen(text);
+        char *new_text = realloc(last_entry->text, old_len + new_len + 1);
+        if (new_text) {
+            if (old_len == 0) {
+                new_text[0] = '\0';
+            }
+            strncat(new_text, text, new_len);
+            last_entry->text = new_text;
+
+            // Just append to the end of the pad (simple approach)
+            // Get current cursor position
+            int cur_y, cur_x;
+            getyx(tui->wm.conv_pad, cur_y, cur_x);
+
+            // If we're at the beginning of a line and there's a prefix,
+            // we need to handle it differently
+            if (cur_x == 0 && last_entry->prefix && last_entry->prefix[0] != '\0') {
+                // We shouldn't get here in streaming mode
+                LOG_WARN("[TUI] Streaming update but at start of line");
+                return;
+            }
+
+            // Write the new text at current position
+            waddstr(tui->wm.conv_pad, text);
+
+            // Update content lines
+            getyx(tui->wm.conv_pad, cur_y, cur_x);
+            (void)cur_x;
+            window_manager_set_content_lines(&tui->wm, cur_y);
+        }
+    } else {
+        // No entries exist - create a new one
+        add_conversation_entry(tui, "", text, COLOR_PAIR_ASSISTANT);
+    }
+
+    // Auto-scroll to bottom only in INSERT mode
+    if (tui->mode == TUI_MODE_INSERT) {
+        window_manager_scroll_to_bottom(&tui->wm);
+    }
+    window_manager_refresh_conversation(&tui->wm);
+
+    // Redraw input window
     if (tui->wm.input_win) {
         touchwin(tui->wm.input_win);
         wrefresh(tui->wm.input_win);

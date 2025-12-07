@@ -24,6 +24,7 @@ Project instructions for Claude Code when working with this codebase.
 **TUI & Normal Mode**: `src/tui.h`, `src/tui.c`, `docs/normal-mode.md`
 **Color themes**: `src/colorscheme.h`, `src/builtin_themes.h`, `src/builtin_themes.c`
 **Token usage tracking**: `docs/token-usage.md`, `src/persistence.c`
+**Streaming**: `docs/streaming.md`, `STREAMING_QUICKSTART.md` (real-time response display)
 **Tests**: `tests/test_*.c`
 **Build**: `Makefile`
 
@@ -37,6 +38,7 @@ Pure C implementation of a coding agent using Anthropic's Claude API.
 - 7 core tools implemented
 - Prompt caching enabled by default
 - Bash command timeout protection (configurable via `CLAUDE_C_BASH_TIMEOUT`)
+- Real-time streaming support (SSE) for Anthropic API
 
 ## C Coding Standards
 
@@ -158,6 +160,32 @@ export CLAUDE_C_THEME="/path/to/custom-theme.conf"
 - Maps to TUI elements (assistant, user, status, error, header)
 - 256-color ANSI support with RGB→256 conversion
 - Compatible with 300+ external Kitty themes from kitty-themes repo
+
+## Streaming Responses
+
+**Purpose**: Real-time response display using Server-Sent Events (SSE)
+**Documentation**: `docs/streaming.md`
+**Implementation**: `src/http_client.c`, `src/anthropic_provider.c`
+
+**Enable streaming:**
+```bash
+export CLAUDE_C_ENABLE_STREAMING=1
+./build/claude-c "your prompt"
+```
+
+**Features:**
+- Character-by-character text display as generated
+- Server-Sent Events (SSE) protocol
+- Anthropic Messages API streaming format
+- Interrupt-safe (Ctrl+C works during streaming)
+- Zero overhead when disabled (default)
+
+**Technical:**
+- SSE parser in `http_client.c` (~200 lines)
+- Streaming context in provider layer
+- Real-time TUI updates via `tui_update_last_conversation_line()`
+- Synthetic response reconstruction for logging
+- Currently Anthropic-only (OpenAI/Bedrock coming soon)
 
 ## TODO List System
 
