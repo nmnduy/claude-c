@@ -24,7 +24,7 @@ Project instructions for Claude Code when working with this codebase.
 **TUI & Normal Mode**: `src/tui.h`, `src/tui.c`, `docs/normal-mode.md`
 **Color themes**: `src/colorscheme.h`, `src/builtin_themes.h`, `src/builtin_themes.c`
 **Token usage tracking**: `docs/token-usage.md`, `src/persistence.c`
-**Streaming**: `docs/streaming.md` (real-time response display for Anthropic and OpenAI)
+**Streaming**: `docs/streaming.md` (real-time response display for Anthropic, OpenAI, and Bedrock)
 **Tests**: `tests/test_*.c`
 **Build**: `Makefile`
 

@@ -85,6 +85,26 @@ typedef enum {
 - Accumulates `delta.tool_calls` for function calling
 - Builds synthetic OpenAI-format response for compatibility
 
+#### Bedrock Provider (`src/bedrock_provider.c`)
+
+**BedrockStreamingContext:**
+- Accumulates text deltas from content_block_delta events
+- Tracks tool calls and their parameters
+- Reconstructs complete message from streaming events
+- Updates TUI in real-time
+
+**Key Functions:**
+- `bedrock_streaming_event_handler()`: Processes Bedrock SSE events (same format as Anthropic)
+- Dispatches text deltas to TUI via `tui_update_last_conversation_line()`
+- Builds synthetic Anthropic-format response, then converts to OpenAI format for logging
+- Uses AWS SigV4 signing for the streaming endpoint
+
+**Implementation Notes:**
+- Bedrock streaming uses the `invoke-with-response-stream` endpoint
+- Event handling is identical to Anthropic provider (same Messages API format)
+- AWS SigV4 signature is computed for the streaming endpoint URL
+- Supports all Bedrock credential sources (env vars, SSO, config files)
+
 ### 4. TUI Layer (`src/tui.c`)
 
 **Streaming Display:**
@@ -177,6 +197,39 @@ data: [DONE]
 - `delta.content` contains incremental text
 - `delta.tool_calls` array for function calling (indexed, incremental)
 - `[DONE]` marker signals end of stream
+
+#### Bedrock Format
+
+AWS Bedrock uses the same Anthropic Messages API streaming format for Claude models:
+
+```
+event: message_start
+data: {"type":"message_start","message":{"id":"msg_123",...}}
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"text"}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" world"}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":0}
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":10}}
+
+event: message_stop
+data: {"type":"message_stop"}
+```
+
+**Key Details:**
+- Bedrock uses the `invoke-with-response-stream` endpoint instead of `invoke`
+- Event format is identical to Anthropic's Messages API
+- Supports text deltas and tool use streaming
+- AWS SigV4 signing is applied to the streaming endpoint
 
 ### Text Accumulation
 
@@ -310,7 +363,7 @@ export CLAUDE_C_ENABLE_STREAMING=1
 
 - **Anthropic API**: ✅ Fully compatible with Messages API streaming
 - **OpenAI API**: ✅ Fully compatible with Chat Completions API streaming
-- **Bedrock**: ❌ Not yet implemented
+- **Bedrock**: ✅ Fully compatible with Bedrock streaming (invoke-with-response-stream)
 - **Caching**: Works with prompt caching enabled
 - **TUI**: Required - streaming won't work in non-TUI mode
 

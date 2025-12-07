@@ -8,10 +8,12 @@
 #include "bedrock_provider.h"
 #include "logger.h"
 #include "http_client.h"
+#include "tui.h"  // For streaming TUI updates
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>  // for strcasecmp
 #include <time.h>
 #include <unistd.h>  // for usleep
 #include <curl/curl.h>
@@ -47,6 +49,242 @@ static int progress_callback(void *clientp, curl_off_t dltotal, curl_off_t dlnow
 
 
 // ============================================================================
+// Streaming Support
+// ============================================================================
+
+// Bedrock streaming context passed to SSE callback
+typedef struct {
+    ConversationState *state;        // For interrupt checking
+    char *accumulated_text;          // Accumulated text from deltas
+    size_t accumulated_size;
+    size_t accumulated_capacity;
+    int content_block_index;         // Current content block being streamed
+    char *content_block_type;        // Type of current block ("text" or "tool_use")
+    char *tool_use_id;               // Tool use ID for current block
+    char *tool_use_name;             // Tool name for current block
+    char *tool_input_json;           // Accumulated tool input JSON
+    size_t tool_input_size;
+    size_t tool_input_capacity;
+    cJSON *message_start_data;       // Message metadata from message_start
+    char *stop_reason;               // Stop reason from message_delta
+} BedrockStreamingContext;
+
+static void bedrock_streaming_context_init(BedrockStreamingContext *ctx, ConversationState *state) {
+    memset(ctx, 0, sizeof(BedrockStreamingContext));
+    ctx->state = state;
+    ctx->content_block_index = -1;
+    ctx->accumulated_capacity = 4096;
+    ctx->accumulated_text = malloc(ctx->accumulated_capacity);
+    if (ctx->accumulated_text) {
+        ctx->accumulated_text[0] = '\0';
+    }
+    ctx->tool_input_capacity = 4096;
+    ctx->tool_input_json = malloc(ctx->tool_input_capacity);
+    if (ctx->tool_input_json) {
+        ctx->tool_input_json[0] = '\0';
+    }
+}
+
+static void bedrock_streaming_context_free(BedrockStreamingContext *ctx) {
+    if (!ctx) return;
+    free(ctx->accumulated_text);
+    free(ctx->content_block_type);
+    free(ctx->tool_use_id);
+    free(ctx->tool_use_name);
+    free(ctx->tool_input_json);
+    free(ctx->stop_reason);
+    if (ctx->message_start_data) {
+        cJSON_Delete(ctx->message_start_data);
+    }
+}
+
+static int bedrock_streaming_event_handler(StreamEvent *event, void *userdata) {
+    BedrockStreamingContext *ctx = (BedrockStreamingContext *)userdata;
+
+    // Check for interrupt
+    if (ctx->state && ctx->state->interrupt_requested) {
+        LOG_DEBUG("Bedrock streaming handler: interrupt requested");
+        return 1;  // Abort stream
+    }
+
+    if (!event || !event->data) {
+        // Ping or invalid event
+        return 0;
+    }
+
+    // Bedrock uses the same Anthropic Messages API streaming format
+    // So we can reuse the same event handling logic
+    switch (event->type) {
+        case SSE_EVENT_MESSAGE_START:
+            // Store message metadata
+            if (ctx->message_start_data) {
+                cJSON_Delete(ctx->message_start_data);
+            }
+            ctx->message_start_data = cJSON_Duplicate(event->data, 1);
+            LOG_DEBUG("Bedrock stream: message_start");
+
+            // Initialize TUI for streaming by adding an empty assistant line
+            if (ctx->state && ctx->state->tui) {
+                tui_add_conversation_line(ctx->state->tui, "[Assistant]", "", COLOR_PAIR_ASSISTANT);
+            }
+            break;
+
+        case SSE_EVENT_CONTENT_BLOCK_START: {
+            // New content block starting
+            cJSON *index = cJSON_GetObjectItem(event->data, "index");
+            cJSON *content_block = cJSON_GetObjectItem(event->data, "content_block");
+            if (index && cJSON_IsNumber(index)) {
+                ctx->content_block_index = index->valueint;
+            }
+            if (content_block) {
+                cJSON *type = cJSON_GetObjectItem(content_block, "type");
+                if (type && cJSON_IsString(type)) {
+                    free(ctx->content_block_type);
+                    ctx->content_block_type = strdup(type->valuestring);
+
+                    if (strcmp(type->valuestring, "tool_use") == 0) {
+                        cJSON *id = cJSON_GetObjectItem(content_block, "id");
+                        cJSON *name = cJSON_GetObjectItem(content_block, "name");
+                        if (id && cJSON_IsString(id)) {
+                            free(ctx->tool_use_id);
+                            ctx->tool_use_id = strdup(id->valuestring);
+                        }
+                        if (name && cJSON_IsString(name)) {
+                            free(ctx->tool_use_name);
+                            ctx->tool_use_name = strdup(name->valuestring);
+                        }
+                        ctx->tool_input_size = 0;
+                        if (ctx->tool_input_json) {
+                            ctx->tool_input_json[0] = '\0';
+                        }
+                    }
+                }
+            }
+            LOG_DEBUG("Bedrock stream: content_block_start (index=%d, type=%s)",
+                     ctx->content_block_index,
+                     ctx->content_block_type ? ctx->content_block_type : "unknown");
+            break;
+        }
+
+        case SSE_EVENT_CONTENT_BLOCK_DELTA: {
+            // Delta with new content
+            cJSON *delta = cJSON_GetObjectItem(event->data, "delta");
+            if (delta) {
+                cJSON *type = cJSON_GetObjectItem(delta, "type");
+                if (type && cJSON_IsString(type)) {
+                    if (strcmp(type->valuestring, "text_delta") == 0) {
+                        cJSON *text = cJSON_GetObjectItem(delta, "text");
+                        if (text && cJSON_IsString(text) && text->valuestring) {
+                            size_t new_len = strlen(text->valuestring);
+                            size_t needed = ctx->accumulated_size + new_len + 1;
+
+                            if (needed > ctx->accumulated_capacity) {
+                                size_t new_cap = ctx->accumulated_capacity * 2;
+                                if (new_cap < needed) new_cap = needed;
+                                char *new_buf = realloc(ctx->accumulated_text, new_cap);
+                                if (new_buf) {
+                                    ctx->accumulated_text = new_buf;
+                                    ctx->accumulated_capacity = new_cap;
+                                }
+                            }
+
+                            if (ctx->accumulated_text && needed <= ctx->accumulated_capacity) {
+                                memcpy(ctx->accumulated_text + ctx->accumulated_size,
+                                      text->valuestring, new_len);
+                                ctx->accumulated_size += new_len;
+                                ctx->accumulated_text[ctx->accumulated_size] = '\0';
+
+                                // Update TUI with new text delta
+                                if (ctx->state && ctx->state->tui) {
+                                    tui_update_last_conversation_line(ctx->state->tui, text->valuestring);
+                                }
+
+                                LOG_DEBUG("Bedrock stream delta: %s", text->valuestring);
+                            }
+                        }
+                    } else if (strcmp(type->valuestring, "input_json_delta") == 0) {
+                        // Tool input JSON delta
+                        cJSON *partial_json = cJSON_GetObjectItem(delta, "partial_json");
+                        if (partial_json && cJSON_IsString(partial_json) && partial_json->valuestring) {
+                            size_t new_len = strlen(partial_json->valuestring);
+                            size_t needed = ctx->tool_input_size + new_len + 1;
+
+                            if (needed > ctx->tool_input_capacity) {
+                                size_t new_cap = ctx->tool_input_capacity * 2;
+                                if (new_cap < needed) new_cap = needed;
+                                char *new_buf = realloc(ctx->tool_input_json, new_cap);
+                                if (new_buf) {
+                                    ctx->tool_input_json = new_buf;
+                                    ctx->tool_input_capacity = new_cap;
+                                }
+                            }
+
+                            if (ctx->tool_input_json && needed <= ctx->tool_input_capacity) {
+                                memcpy(ctx->tool_input_json + ctx->tool_input_size,
+                                      partial_json->valuestring, new_len);
+                                ctx->tool_input_size += new_len;
+                                ctx->tool_input_json[ctx->tool_input_size] = '\0';
+                                LOG_DEBUG("Bedrock stream: tool input delta");
+                            }
+                        }
+                    }
+                }
+            }
+            break;
+        }
+
+        case SSE_EVENT_CONTENT_BLOCK_STOP:
+            LOG_DEBUG("Bedrock stream: content_block_stop");
+            break;
+
+        case SSE_EVENT_MESSAGE_DELTA: {
+            // Message metadata update (stop_reason, usage, etc.)
+            cJSON *delta = cJSON_GetObjectItem(event->data, "delta");
+            if (delta) {
+                cJSON *stop_reason = cJSON_GetObjectItem(delta, "stop_reason");
+                if (stop_reason && cJSON_IsString(stop_reason)) {
+                    free(ctx->stop_reason);
+                    ctx->stop_reason = strdup(stop_reason->valuestring);
+                    LOG_DEBUG("Bedrock stream: stop_reason=%s", ctx->stop_reason);
+                }
+            }
+            break;
+        }
+
+        case SSE_EVENT_MESSAGE_STOP:
+            LOG_DEBUG("Bedrock stream: message_stop");
+            break;
+
+        case SSE_EVENT_ERROR: {
+            cJSON *error = cJSON_GetObjectItem(event->data, "error");
+            if (error) {
+                cJSON *message = cJSON_GetObjectItem(error, "message");
+                if (message && cJSON_IsString(message)) {
+                    LOG_ERROR("Bedrock stream error: %s", message->valuestring);
+                }
+            }
+            return 1;  // Abort on error
+        }
+
+        case SSE_EVENT_PING:
+            // Keepalive ping
+            break;
+
+        case SSE_EVENT_OPENAI_CHUNK:
+        case SSE_EVENT_OPENAI_DONE:
+            // These are OpenAI-specific events, not used in Bedrock
+            LOG_WARN("Bedrock stream: unexpected OpenAI event type %d", event->type);
+            break;
+
+        default:
+            LOG_DEBUG("Bedrock stream: unknown event type %d", event->type);
+            break;
+    }
+
+    return 0;  // Continue streaming
+}
+
+// ============================================================================
 // Bedrock Provider Implementation
 // ============================================================================
 
@@ -54,12 +292,26 @@ static int progress_callback(void *clientp, curl_off_t dltotal, curl_off_t dlnow
  * Helper: Execute a single HTTP request with current credentials
  * Returns: ApiCallResult (caller must free fields)
  */
-static ApiCallResult bedrock_execute_request(BedrockConfig *config, const char *bedrock_json, ConversationState *state) {
+static ApiCallResult bedrock_execute_request(BedrockConfig *config, const char *bedrock_json, ConversationState *state, int enable_streaming) {
     ApiCallResult result = {0};
+
+    // Use streaming endpoint if streaming is enabled
+    char *streaming_endpoint = NULL;
+    const char *endpoint_url = config->endpoint;
+    
+    if (enable_streaming) {
+        streaming_endpoint = bedrock_build_streaming_endpoint(config->region, config->model_id);
+        if (!streaming_endpoint) {
+            result.error_message = strdup("Failed to build streaming endpoint");
+            result.is_retryable = 0;
+            return result;
+        }
+        endpoint_url = streaming_endpoint;
+    }
 
     // Sign request with SigV4 using current credentials
     struct curl_slist *headers = bedrock_sign_request(
-        NULL, "POST", config->endpoint, bedrock_json,
+        NULL, "POST", endpoint_url, bedrock_json,
         config->creds, config->region, AWS_BEDROCK_SERVICE
     );
 
@@ -67,12 +319,13 @@ static ApiCallResult bedrock_execute_request(BedrockConfig *config, const char *
         result.error_message = strdup("Failed to sign request with AWS SigV4");
         result.is_retryable = 0;
         result.headers_json = NULL;  // No headers to log
+        free(streaming_endpoint);
         return result;
     }
 
     // Build HTTP request using the new HTTP client
     HttpRequest req = {0};
-    req.url = config->endpoint;
+    req.url = endpoint_url;
     req.method = "POST";
     req.body = bedrock_json;
     req.headers = headers;
@@ -80,9 +333,18 @@ static ApiCallResult bedrock_execute_request(BedrockConfig *config, const char *
     req.total_timeout_ms = 300000;   // 5 minutes
     req.follow_redirects = 0;
     req.verbose = 0;
+    req.enable_streaming = enable_streaming;
 
-    // Execute HTTP request using the unified HTTP client
-    HttpResponse *http_resp = http_client_execute(&req, progress_callback, state);
+    // Initialize streaming context if needed
+    BedrockStreamingContext stream_ctx = {0};
+    HttpResponse *http_resp = NULL;
+
+    if (enable_streaming) {
+        bedrock_streaming_context_init(&stream_ctx, state);
+        http_resp = http_client_execute_stream(&req, bedrock_streaming_event_handler, &stream_ctx, progress_callback, state);
+    } else {
+        http_resp = http_client_execute(&req, progress_callback, state);
+    }
 
     // Convert headers to JSON for logging before freeing them
     char *headers_json = http_headers_to_json(headers);
@@ -90,11 +352,13 @@ static ApiCallResult bedrock_execute_request(BedrockConfig *config, const char *
 
     // Free the headers list (http_client_execute makes its own copy)
     curl_slist_free_all(headers);
+    free(streaming_endpoint);
 
     if (!http_resp) {
         result.error_message = strdup("Failed to execute HTTP request (memory allocation failed)");
         result.is_retryable = 0;
         free(result.headers_json);  // Clean up headers JSON
+        if (enable_streaming) bedrock_streaming_context_free(&stream_ctx);
         return result;
     }
 
@@ -106,20 +370,87 @@ static ApiCallResult bedrock_execute_request(BedrockConfig *config, const char *
         result.error_message = strdup(http_resp->error_message);
         result.is_retryable = http_resp->is_retryable;
         http_response_free(http_resp);
+        if (enable_streaming) bedrock_streaming_context_free(&stream_ctx);
         return result;
     }
 
     result.raw_response = http_resp->body ? strdup(http_resp->body) : NULL;
+    
+    // Clean up HTTP response (but keep body since we duplicated it)
+    char *body_to_free = http_resp->body;
+    http_resp->body = NULL;  // Prevent double free
     http_response_free(http_resp);
+    free(body_to_free);
 
     // Check HTTP status
     if (result.http_status >= 200 && result.http_status < 300) {
-        // Success - convert Bedrock response to OpenAI format
-        cJSON *openai_json = bedrock_convert_response(result.raw_response);
+        // Success
+        cJSON *openai_json = NULL;
+
+        // If streaming was used, reconstruct response from streaming context
+        if (enable_streaming) {
+            LOG_DEBUG("Reconstructing Bedrock response from streaming context");
+            
+            // Build synthetic response in Anthropic format, then convert to OpenAI
+            cJSON *anth_response = cJSON_CreateObject();
+            cJSON_AddStringToObject(anth_response, "id", "streaming");
+            cJSON_AddStringToObject(anth_response, "type", "message");
+            cJSON_AddStringToObject(anth_response, "role", "assistant");
+            
+            cJSON *content_array = cJSON_CreateArray();
+            
+            // Add text content if we have any
+            if (stream_ctx.accumulated_text && stream_ctx.accumulated_size > 0) {
+                cJSON *text_block = cJSON_CreateObject();
+                cJSON_AddStringToObject(text_block, "type", "text");
+                cJSON_AddStringToObject(text_block, "text", stream_ctx.accumulated_text);
+                cJSON_AddItemToArray(content_array, text_block);
+            }
+            
+            // Add tool use if we have any
+            if (stream_ctx.tool_use_id && stream_ctx.tool_use_name) {
+                cJSON *tool_block = cJSON_CreateObject();
+                cJSON_AddStringToObject(tool_block, "type", "tool_use");
+                cJSON_AddStringToObject(tool_block, "id", stream_ctx.tool_use_id);
+                cJSON_AddStringToObject(tool_block, "name", stream_ctx.tool_use_name);
+                
+                // Parse tool input JSON
+                cJSON *input = NULL;
+                if (stream_ctx.tool_input_json && stream_ctx.tool_input_size > 0) {
+                    input = cJSON_Parse(stream_ctx.tool_input_json);
+                }
+                if (!input) {
+                    input = cJSON_CreateObject();
+                }
+                cJSON_AddItemToObject(tool_block, "input", input);
+                cJSON_AddItemToArray(content_array, tool_block);
+            }
+            
+            cJSON_AddItemToObject(anth_response, "content", content_array);
+            cJSON_AddStringToObject(anth_response, "stop_reason", 
+                stream_ctx.stop_reason ? stream_ctx.stop_reason : "end_turn");
+            
+            // Convert Anthropic format to OpenAI format
+            char *anth_str = cJSON_PrintUnformatted(anth_response);
+            cJSON_Delete(anth_response);
+            
+            if (anth_str) {
+                openai_json = bedrock_convert_response(anth_str);
+                free(anth_str);
+            }
+            
+            // Free streaming context
+            bedrock_streaming_context_free(&stream_ctx);
+        } else {
+            // Non-streaming: convert Bedrock response to OpenAI format
+            openai_json = bedrock_convert_response(result.raw_response);
+        }
+        
         if (!openai_json) {
             result.error_message = strdup("Failed to parse Bedrock response");
             result.is_retryable = 0;
             free(result.headers_json);  // Clean up headers JSON in error paths
+            if (enable_streaming) bedrock_streaming_context_free(&stream_ctx);
             return result;
         }
 
@@ -365,9 +696,17 @@ static ApiCallResult bedrock_call_api(Provider *self, ConversationState *state) 
         profile = config->creds->profile;
     }
 
+    // Check if streaming is enabled via environment variable
+    int enable_streaming = 0;
+    const char *streaming_env = getenv("CLAUDE_C_ENABLE_STREAMING");
+    if (streaming_env && (strcmp(streaming_env, "1") == 0 || strcasecmp(streaming_env, "true") == 0)) {
+        enable_streaming = 1;
+        LOG_DEBUG("Bedrock provider: streaming enabled");
+    }
+
     // === STEP 2: First API call attempt ===
     LOG_DEBUG("Executing first API call attempt...");
-    result = bedrock_execute_request(config, bedrock_json, state);
+    result = bedrock_execute_request(config, bedrock_json, state, enable_streaming);
 
     // Success on first try
     if (result.response) {
@@ -415,7 +754,7 @@ static ApiCallResult bedrock_call_api(Provider *self, ConversationState *state) 
 
                 // === STEP 5: Retry with externally rotated credentials ===
                 LOG_DEBUG("Retrying API call with externally rotated credentials...");
-                result = bedrock_execute_request(config, bedrock_json, state);
+                result = bedrock_execute_request(config, bedrock_json, state, enable_streaming);
 
                 if (result.response) {
                     LOG_INFO("API call succeeded after using externally rotated credentials");
@@ -480,7 +819,7 @@ static ApiCallResult bedrock_call_api(Provider *self, ConversationState *state) 
 
                         // === STEP 5: Retry with rotated credentials ===
                         LOG_DEBUG("Retrying API call with rotated credentials...");
-                        result = bedrock_execute_request(config, bedrock_json, state);
+                        result = bedrock_execute_request(config, bedrock_json, state, enable_streaming);
 
                         if (result.response) {
                             LOG_INFO("API call succeeded after credential rotation");
@@ -554,7 +893,7 @@ static ApiCallResult bedrock_call_api(Provider *self, ConversationState *state) 
 
                     // === STEP 7: Final retry ===
                     LOG_DEBUG("Final API call attempt with re-rotated credentials...");
-                    result = bedrock_execute_request(config, bedrock_json, state);
+                    result = bedrock_execute_request(config, bedrock_json, state, enable_streaming);
 
                     if (result.response) {
                         LOG_INFO("API call succeeded on final retry");

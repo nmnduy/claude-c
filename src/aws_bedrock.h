@@ -19,6 +19,7 @@
 #define AWS_BEDROCK_ENDPOINT_FMT "https://bedrock-runtime.%s.amazonaws.com"
 #define AWS_BEDROCK_SERVICE "bedrock"
 #define AWS_BEDROCK_PATH "/model/%s/invoke"
+#define AWS_BEDROCK_STREAM_PATH "/model/%s/invoke-with-response-stream"
 
 // Environment variables
 #define ENV_USE_BEDROCK "CLAUDE_CODE_USE_BEDROCK"
@@ -126,6 +127,12 @@ int bedrock_handle_auth_error(BedrockConfig *config, long http_status, const cha
  * Returns: Newly allocated string (caller must free), or NULL on error
  */
 char* bedrock_build_endpoint(const char *region, const char *model_id);
+
+/**
+ * Build AWS Bedrock streaming API endpoint URL
+ * Returns: Newly allocated string (caller must free), or NULL on error
+ */
+char* bedrock_build_streaming_endpoint(const char *region, const char *model_id);
 
 /**
  * Convert OpenAI format request to AWS Bedrock format

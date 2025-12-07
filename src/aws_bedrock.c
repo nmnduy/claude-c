@@ -855,6 +855,24 @@ char* bedrock_build_endpoint(const char *region, const char *model_id) {
     return endpoint;
 }
 
+char* bedrock_build_streaming_endpoint(const char *region, const char *model_id) {
+    if (!region || !model_id) {
+        return NULL;
+    }
+
+    // Bedrock streaming endpoint: https://bedrock-runtime.{region}.amazonaws.com/model/{model-id}/invoke-with-response-stream
+    size_t len = strlen(region) + strlen(model_id) + 128;
+    char *endpoint = malloc(len);
+    if (!endpoint) {
+        return NULL;
+    }
+
+    snprintf(endpoint, len, "https://bedrock-runtime.%s.amazonaws.com/model/%s/invoke-with-response-stream",
+             region, model_id);
+
+    return endpoint;
+}
+
 /**
  * Helper: Convert OpenAI image_url format to Anthropic image format
  *
