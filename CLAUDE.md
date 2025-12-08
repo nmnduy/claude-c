@@ -19,6 +19,7 @@ Project instructions for Claude Code when working with this codebase.
 **Current tasks**: `./todo.md`
 **Main implementation**: `src/claude.c` (core agent loop, API calls)
 **Tools**: Built-in tools in `src/claude.c`, MCP support in `src/mcp.h`, `src/mcp.c`
+**Subagent**: `docs/subagent.md` (task delegation with fresh context)
 **MCP integration**: `docs/mcp.md` (external tool servers)
 **TODO system**: `src/todo.h`, `src/todo.c`
 **TUI & Normal Mode**: `src/tui.h`, `src/tui.c`, `docs/normal-mode.md`
@@ -35,7 +36,7 @@ Pure C implementation of a coding agent using Anthropic's Claude API.
 **Stack:**
 - C11 + POSIX
 - libcurl (HTTP), cJSON (parsing), pthread, ncurses (TUI)
-- 7 core tools implemented
+- 8 core tools implemented (including Subagent for task delegation)
 - Prompt caching enabled by default
 - Bash command timeout protection (configurable via `CLAUDE_C_BASH_TIMEOUT`)
 - Real-time streaming support (SSE) for Anthropic API

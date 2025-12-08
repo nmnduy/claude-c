@@ -32,6 +32,9 @@
 #include <dirent.h>
 #include <ctype.h>
 #include <signal.h>
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#endif
 #include "colorscheme.h"
 #include "fallback_colors.h"
 #include "patch_parser.h"
@@ -462,6 +465,19 @@ static char* get_tool_details(const char *tool_name, cJSON *arguments) {
         if (cJSON_IsString(command)) {
             summarize_bash_command(command->valuestring, details, sizeof(details));
         }
+    } else if (strcmp(tool_name, "Subagent") == 0) {
+        cJSON *prompt = cJSON_GetObjectItem(arguments, "prompt");
+        if (cJSON_IsString(prompt)) {
+            // Show first 50 chars of the prompt
+            const char *prompt_str = prompt->valuestring;
+            size_t len = strlen(prompt_str);
+            if (len > 50) {
+                snprintf(details, sizeof(details), "%.47s...", prompt_str);
+            } else {
+                strncpy(details, prompt_str, sizeof(details) - 1);
+                details[sizeof(details) - 1] = '\0';
+            }
+        }
     } else if (strcmp(tool_name, "Read") == 0) {
         cJSON *file_path = cJSON_GetObjectItem(arguments, "file_path");
         cJSON *start_line = cJSON_GetObjectItem(arguments, "start_line");
@@ -611,6 +627,7 @@ cJSON* tool_write(cJSON *params, ConversationState *state);
 cJSON* tool_edit(cJSON *params, ConversationState *state);
 cJSON* tool_todo_write(cJSON *params, ConversationState *state);
 cJSON* tool_bash(cJSON *params, ConversationState *state);
+cJSON* tool_subagent(cJSON *params, ConversationState *state);
 static cJSON* tool_sleep(cJSON *params, ConversationState *state);
 static cJSON* tool_upload_image(cJSON *params, ConversationState *state);
 #else
@@ -1381,6 +1398,209 @@ STATIC cJSON* tool_bash(cJSON *params, ConversationState *state) {
     }
 
     free(output);
+    return result;
+}
+
+STATIC cJSON* tool_subagent(cJSON *params, ConversationState *state) {
+    // Check for interrupt before starting
+    if (state && state->interrupt_requested) {
+        cJSON *error = cJSON_CreateObject();
+        cJSON_AddStringToObject(error, "error", "Operation interrupted by user");
+        return error;
+    }
+
+    const cJSON *prompt_json = cJSON_GetObjectItem(params, "prompt");
+    if (!prompt_json || !cJSON_IsString(prompt_json)) {
+        cJSON *error = cJSON_CreateObject();
+        cJSON_AddStringToObject(error, "error", "Missing 'prompt' parameter");
+        return error;
+    }
+
+    const char *prompt = prompt_json->valuestring;
+    if (strlen(prompt) == 0) {
+        cJSON *error = cJSON_CreateObject();
+        cJSON_AddStringToObject(error, "error", "Prompt cannot be empty");
+        return error;
+    }
+
+    // Get optional timeout parameter (default: 300 seconds = 5 minutes)
+    int timeout_seconds = 300;
+    const cJSON *timeout_json = cJSON_GetObjectItem(params, "timeout");
+    if (timeout_json && cJSON_IsNumber(timeout_json)) {
+        timeout_seconds = timeout_json->valueint;
+        if (timeout_seconds < 0) {
+            timeout_seconds = 0;  // 0 = no timeout
+        }
+    }
+
+    // Get optional tail_lines parameter (default: 100 lines from end)
+    int tail_lines = 100;
+    const cJSON *tail_json = cJSON_GetObjectItem(params, "tail_lines");
+    if (tail_json && cJSON_IsNumber(tail_json)) {
+        tail_lines = tail_json->valueint;
+        if (tail_lines < 0) {
+            tail_lines = 100;  // Default to 100 if negative
+        }
+    }
+
+    // Create unique log file in .claude-c/subagent/ directory
+    char log_dir[PATH_MAX];
+    snprintf(log_dir, sizeof(log_dir), "%s/.claude-c/subagent", state->working_dir);
+
+    // Create directory if it doesn't exist
+    if (mkdir(log_dir, 0755) != 0 && errno != EEXIST) {
+        cJSON *error = cJSON_CreateObject();
+        char err_msg[256];
+        snprintf(err_msg, sizeof(err_msg), "Failed to create subagent log directory: %s", strerror(errno));
+        cJSON_AddStringToObject(error, "error", err_msg);
+        return error;
+    }
+
+    // Generate unique log filename with timestamp
+    time_t now = time(NULL);
+    struct tm *tm_info = localtime(&now);
+    char timestamp[32];
+    strftime(timestamp, sizeof(timestamp), "%Y%m%d_%H%M%S", tm_info);
+
+    char log_file[PATH_MAX];
+    snprintf(log_file, sizeof(log_file), "%s/subagent_%s_%d.log", log_dir, timestamp, getpid());
+
+    // Find the path to the current executable
+    char exe_path[PATH_MAX];
+    ssize_t len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
+    if (len == -1) {
+        // Fallback for macOS and other systems without /proc/self/exe
+#ifdef __APPLE__
+        uint32_t size = sizeof(exe_path);
+        if (_NSGetExecutablePath(exe_path, &size) != 0) {
+            cJSON *error = cJSON_CreateObject();
+            cJSON_AddStringToObject(error, "error", "Failed to determine executable path");
+            return error;
+        }
+        len = (ssize_t)strlen(exe_path);
+#else
+        // Try argv[0] as fallback
+        const char *fallback = "./build/claude-c";
+        strncpy(exe_path, fallback, sizeof(exe_path) - 1);
+        exe_path[sizeof(exe_path) - 1] = '\0';
+        len = (ssize_t)strlen(exe_path);
+#endif
+    } else {
+        exe_path[len] = '\0';
+    }
+
+    // Build the command to execute the subagent
+    // We'll use double quotes and escape the prompt properly
+    // Allocate enough space for worst case (every char needs escaping)
+    size_t escaped_size = strlen(prompt) * 2 + 1;
+    char *escaped_prompt = malloc(escaped_size);
+    if (!escaped_prompt) {
+        cJSON *error = cJSON_CreateObject();
+        cJSON_AddStringToObject(error, "error", "Out of memory");
+        return error;
+    }
+
+    // Escape double quotes, backslashes, dollar signs, and backticks for shell
+    size_t j = 0;
+    for (size_t i = 0; prompt[i] && j < escaped_size - 2; i++) {
+        if (prompt[i] == '"' || prompt[i] == '\\' || prompt[i] == '$' || prompt[i] == '`') {
+            escaped_prompt[j++] = '\\';
+        }
+        escaped_prompt[j++] = prompt[i];
+    }
+    escaped_prompt[j] = '\0';
+
+    LOG_INFO("Starting subagent: %s", log_file);
+
+    // Build and execute command - use system() to avoid nested shell quoting issues
+    char command[BUFFER_SIZE * 2];
+    snprintf(command, sizeof(command),
+             "\"%s\" \"%s\" > \"%s\" 2>&1 </dev/null",
+             exe_path, escaped_prompt, log_file);
+
+    free(escaped_prompt);
+
+    // Execute using system() instead of popen since we're redirecting to a file
+    int status = system(command);
+    if (status == -1) {
+        cJSON *error = cJSON_CreateObject();
+        cJSON_AddStringToObject(error, "error", "Failed to start subagent process");
+        return error;
+    }
+
+    int exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+
+    // Wait a moment for the file to be written
+    usleep(100000); // 100ms
+
+    // Read the last N lines from the log file
+    FILE *log_fp = fopen(log_file, "r");
+    if (!log_fp) {
+        cJSON *error = cJSON_CreateObject();
+        char err_msg[512];
+        snprintf(err_msg, sizeof(err_msg),
+                 "Subagent completed (exit code: %d) but failed to read log file: %s",
+                 exit_code, strerror(errno));
+        cJSON_AddStringToObject(error, "error", err_msg);
+        cJSON_AddStringToObject(error, "log_file", log_file);
+        return error;
+    }
+
+    // Count total lines first
+    int total_lines = 0;
+    char line[BUFFER_SIZE];
+    while (fgets(line, sizeof(line), log_fp)) {
+        total_lines++;
+    }
+
+    // Calculate which line to start from
+    int start_line = (tail_lines > 0 && total_lines > tail_lines) ? (total_lines - tail_lines) : 0;
+
+    // Read the tail content
+    rewind(log_fp);
+    char *tail_output = NULL;
+    size_t tail_size = 0;
+    int current_line = 0;
+
+    while (fgets(line, sizeof(line), log_fp)) {
+        if (current_line >= start_line) {
+            size_t line_len = strlen(line);
+            char *new_output = realloc(tail_output, tail_size + line_len + 1);
+            if (!new_output) {
+                free(tail_output);
+                fclose(log_fp);
+                cJSON *error = cJSON_CreateObject();
+                cJSON_AddStringToObject(error, "error", "Out of memory while reading log");
+                return error;
+            }
+            tail_output = new_output;
+            memcpy(tail_output + tail_size, line, line_len);
+            tail_size += line_len;
+            tail_output[tail_size] = '\0';
+        }
+        current_line++;
+    }
+
+    fclose(log_fp);
+
+    // Build result
+    cJSON *result = cJSON_CreateObject();
+    cJSON_AddNumberToObject(result, "exit_code", exit_code);
+    cJSON_AddStringToObject(result, "log_file", log_file);
+    cJSON_AddNumberToObject(result, "total_lines", total_lines);
+    cJSON_AddNumberToObject(result, "tail_lines_returned", current_line - start_line);
+    cJSON_AddStringToObject(result, "tail_output", tail_output ? tail_output : "");
+
+    if (total_lines > tail_lines) {
+        char msg[256];
+        snprintf(msg, sizeof(msg),
+                 "Log file contains %d lines. Only the last %d lines are shown. "
+                 "Use Read tool to access the full log file, or Grep to search for specific content.",
+                 total_lines, tail_lines);
+        cJSON_AddStringToObject(result, "truncation_warning", msg);
+    }
+
+    free(tail_output);
     return result;
 }
 
@@ -3063,6 +3283,7 @@ typedef struct {
 static Tool tools[] = {
     {"Sleep", tool_sleep},
     {"Bash", tool_bash},
+    {"Subagent", tool_subagent},
     {"Read", tool_read},
     {"Write", tool_write},
     {"Edit", tool_edit},
@@ -3355,7 +3576,7 @@ cJSON* get_tool_definitions(ConversationState *state, int enable_caching) {
     cJSON_AddItemToObject(read, "function", read_func);
     cJSON_AddItemToArray(tool_array, read);
 
-    // Bash, Write, and Edit tools - excluded in plan mode
+    // Bash, Subagent, Write, and Edit tools - excluded in plan mode
     if (!plan_mode) {
         // Bash tool
         cJSON *bash = cJSON_CreateObject();
@@ -3390,6 +3611,48 @@ cJSON* get_tool_definitions(ConversationState *state, int enable_caching) {
         cJSON_AddItemToObject(bash_func, "parameters", bash_params);
         cJSON_AddItemToObject(bash, "function", bash_func);
         cJSON_AddItemToArray(tool_array, bash);
+
+        // Subagent tool
+        cJSON *subagent = cJSON_CreateObject();
+        cJSON_AddStringToObject(subagent, "type", "function");
+        cJSON *subagent_func = cJSON_CreateObject();
+        cJSON_AddStringToObject(subagent_func, "name", "Subagent");
+        cJSON_AddStringToObject(subagent_func, "description",
+            "Spawns a new instance of claude-c with the same configuration to work on a "
+            "delegated task in a fresh context. The subagent runs independently and writes "
+            "all output (stdout and stderr) to a log file. Returns the tail of the log "
+            "(last 100 lines by default) which typically contains the task summary. "
+            "For large outputs, use Read tool to access the full log file, or Grep to "
+            "search for specific content. Use this when: (1) you need a fresh context "
+            "without conversation history, (2) delegating a complex independent task, "
+            "(3) avoiding context limit issues. Note: The subagent has full tool access "
+            "including Write, Edit, and Bash.");
+        cJSON *subagent_params = cJSON_CreateObject();
+        cJSON_AddStringToObject(subagent_params, "type", "object");
+        cJSON *subagent_props = cJSON_CreateObject();
+        cJSON *subagent_prompt = cJSON_CreateObject();
+        cJSON_AddStringToObject(subagent_prompt, "type", "string");
+        cJSON_AddStringToObject(subagent_prompt, "description",
+            "The task prompt for the subagent. Be specific and include all necessary context.");
+        cJSON_AddItemToObject(subagent_props, "prompt", subagent_prompt);
+        cJSON *subagent_timeout = cJSON_CreateObject();
+        cJSON_AddStringToObject(subagent_timeout, "type", "integer");
+        cJSON_AddStringToObject(subagent_timeout, "description",
+            "Optional: Timeout in seconds. Default: 300 (5 minutes). Set to 0 for no timeout.");
+        cJSON_AddItemToObject(subagent_props, "timeout", subagent_timeout);
+        cJSON *subagent_tail = cJSON_CreateObject();
+        cJSON_AddStringToObject(subagent_tail, "type", "integer");
+        cJSON_AddStringToObject(subagent_tail, "description",
+            "Optional: Number of lines to return from end of log. Default: 100. "
+            "The summary is usually at the end.");
+        cJSON_AddItemToObject(subagent_props, "tail_lines", subagent_tail);
+        cJSON_AddItemToObject(subagent_params, "properties", subagent_props);
+        cJSON *subagent_req = cJSON_CreateArray();
+        cJSON_AddItemToArray(subagent_req, cJSON_CreateString("prompt"));
+        cJSON_AddItemToObject(subagent_params, "required", subagent_req);
+        cJSON_AddItemToObject(subagent_func, "parameters", subagent_params);
+        cJSON_AddItemToObject(subagent, "function", subagent_func);
+        cJSON_AddItemToArray(tool_array, subagent);
 
         // Write tool
         cJSON *write = cJSON_CreateObject();
@@ -3952,7 +4215,7 @@ char* build_request_json_from_state(ConversationState *state) {
     cJSON_AddItemToObject(request, "messages", messages_array);
 
     // Add tools with cache_control support (including MCP tools if available)
-    // In plan mode, exclude Bash, Write, and Edit tools
+    // In plan mode, exclude Bash, Subagent, Write, and Edit tools
     cJSON *tool_defs = get_tool_definitions(state, enable_caching);
     cJSON_AddItemToObject(request, "tools", tool_defs);
 
@@ -4474,7 +4737,7 @@ char* build_system_prompt(ConversationState *state) {
         "Planning mode: %s\n"
         "Working directory: %s\n"
         "Additional working directories: ",
-        state->plan_mode ? "ENABLED - You can ONLY use read-only tools (Read, Glob, Grep, Sleep, UploadImage, TodoWrite). The Bash, Write, and Edit tools are NOT available in planning mode." : "disabled",
+        state->plan_mode ? "ENABLED - You can ONLY use read-only tools (Read, Glob, Grep, Sleep, UploadImage, TodoWrite). The Bash, Subagent, Write, and Edit tools are NOT available in planning mode." : "disabled",
         working_dir);
 
     // Add additional directories
@@ -5105,6 +5368,7 @@ static void process_response(ConversationState *state,
                 // Check if this is a plan mode restriction
                 int is_plan_mode_restriction = state->plan_mode &&
                     (strcmp(tool->name, "Bash") == 0 ||
+                     strcmp(tool->name, "Subagent") == 0 ||
                      strcmp(tool->name, "Write") == 0 ||
                      strcmp(tool->name, "Edit") == 0);
 
