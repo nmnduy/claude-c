@@ -194,4 +194,19 @@ int persistence_get_last_prompt_tokens(
     int *prompt_tokens
 );
 
+// Get cached tokens from the most recent API call in the session
+//
+// Parameters:
+//   db: Persistence database handle
+//   session_id: Session identifier
+//   cached_tokens: Output parameter for cached tokens from last call
+//
+// Returns:
+//   0 on success, -1 on error or if no records found
+int persistence_get_last_cached_tokens(
+    PersistenceDB *db,
+    const char *session_id,
+    int *cached_tokens
+);
+
 #endif // PERSISTENCE_H

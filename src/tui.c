@@ -179,11 +179,12 @@ static void render_status_window(TUIState *tui) {
     }
 
     // Render token usage on the right side (only in NORMAL mode)
-    char token_str[64] = {0};
+    char token_str[128] = {0};
     int token_str_len = 0;
     if (tui->mode == TUI_MODE_NORMAL) {
-        // Query prompt tokens from the last API call to show current context size
+        // Query prompt tokens and cached tokens from the last API call
         int prompt_tokens = 0;
+        int cached_tokens = 0;
         if (tui->persistence_db) {
             if (persistence_get_last_prompt_tokens(tui->persistence_db,
                                                    tui->session_id,
@@ -192,11 +193,25 @@ static void render_status_window(TUIState *tui) {
             } else {
                 LOG_DEBUG("[TUI] Failed to retrieve last prompt tokens from DB");
             }
+
+            if (persistence_get_last_cached_tokens(tui->persistence_db,
+                                                   tui->session_id,
+                                                   &cached_tokens) == 0) {
+                LOG_DEBUG("[TUI] Retrieved last cached tokens from DB: %d", cached_tokens);
+            } else {
+                LOG_DEBUG("[TUI] Failed to retrieve last cached tokens from DB");
+            }
         } else {
             LOG_DEBUG("[TUI] No persistence database connection available");
         }
 
-        snprintf(token_str, sizeof(token_str), "Prompt: %d ", prompt_tokens);
+        // Show both prompt tokens and cached tokens in the format: "Prompt: X (+Y cached) "
+        if (cached_tokens > 0) {
+            snprintf(token_str, sizeof(token_str), "Prompt: %d (+%d cached) ", 
+                     prompt_tokens, cached_tokens);
+        } else {
+            snprintf(token_str, sizeof(token_str), "Prompt: %d ", prompt_tokens);
+        }
         token_str_len = (int)strlen(token_str);
         LOG_DEBUG("[TUI] Rendering token display: %s (mode=NORMAL)", token_str);
 

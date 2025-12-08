@@ -282,6 +282,84 @@ int persistence_get_last_prompt_tokens(
     }
 }
 
+// Get cached tokens from the most recent API call in the session
+//
+// Parameters:
+//   db: Persistence database handle
+//   session_id: Session identifier
+//   cached_tokens: Output parameter for cached tokens from last call
+//
+// Returns:
+//   0 on success, -1 on error or if no records found
+int persistence_get_last_cached_tokens(
+    PersistenceDB *db,
+    const char *session_id,
+    int *cached_tokens
+) {
+    if (!db || !db->db || !cached_tokens) {
+        LOG_ERROR("Invalid parameters to persistence_get_last_cached_tokens");
+        return -1;
+    }
+
+    // Initialize output parameter
+    *cached_tokens = 0;
+
+    const char *sql;
+    sqlite3_stmt *stmt;
+    int rc;
+
+    if (session_id) {
+        // Get the most recent token usage for this session
+        sql = "SELECT cached_tokens, prompt_cache_hit_tokens, prompt_cache_miss_tokens "
+              "FROM token_usage "
+              "WHERE session_id = ? "
+              "ORDER BY created_at DESC "
+              "LIMIT 1;";
+    } else {
+        // Get the most recent token usage overall
+        sql = "SELECT cached_tokens, prompt_cache_hit_tokens, prompt_cache_miss_tokens "
+              "FROM token_usage "
+              "ORDER BY created_at DESC "
+              "LIMIT 1;";
+    }
+
+    rc = sqlite3_prepare_v2(db->db, sql, -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        LOG_ERROR("Failed to prepare cached tokens query: %s", sqlite3_errmsg(db->db));
+        return -1;
+    }
+
+    if (session_id) {
+        sqlite3_bind_text(stmt, 1, session_id, -1, SQLITE_TRANSIENT);
+    }
+
+    rc = sqlite3_step(stmt);
+    if (rc == SQLITE_ROW) {
+        // First try the cached_tokens field (highest priority)
+        *cached_tokens = sqlite3_column_int(stmt, 0);
+        
+        // If cached_tokens is 0, try prompt_cache_hit_tokens as fallback
+        if (*cached_tokens == 0) {
+            *cached_tokens = sqlite3_column_int(stmt, 1);
+        }
+        
+        LOG_DEBUG("Retrieved last cached tokens for session %s: %d",
+                 session_id ? session_id : "all", *cached_tokens);
+        sqlite3_finalize(stmt);
+        return 0;
+    } else if (rc == SQLITE_DONE) {
+        // No records found - this is not an error, just no data yet
+        LOG_DEBUG("No token usage records found for session %s",
+                 session_id ? session_id : "all");
+        sqlite3_finalize(stmt);
+        return 0;
+    } else {
+        LOG_ERROR("Failed to execute cached tokens query: %s", sqlite3_errmsg(db->db));
+        sqlite3_finalize(stmt);
+        return -1;
+    }
+}
+
 // SQL schema for the api_calls table
 static const char *SCHEMA_SQL =
     "CREATE TABLE IF NOT EXISTS api_calls ("
