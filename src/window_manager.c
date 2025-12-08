@@ -17,6 +17,7 @@ const WindowManagerConfig DEFAULT_WINDOW_CONFIG = {
     .status_height = 1,
     // No gap between status and input by default
     .padding = 0,
+    .conv_h_padding = 1,    // 1 column horizontal padding for conversation
     .initial_pad_capacity = 1000
 };
 
@@ -148,9 +149,11 @@ int window_manager_init(WindowManager *wm, const WindowManagerConfig *config) {
     LOG_INFO("[WM] Initializing window manager (screen=%dx%d)",
              wm->screen_width, wm->screen_height);
 
-    // Create conversation pad
+    // Create conversation pad with horizontal padding
     wm->conv_pad_capacity = wm->config.initial_pad_capacity;
-    wm->conv_pad = newpad(wm->conv_pad_capacity, wm->screen_width);
+    int conv_pad_width = wm->screen_width - (2 * wm->config.conv_h_padding);
+    if (conv_pad_width < 1) conv_pad_width = 1; // Safety check
+    wm->conv_pad = newpad(wm->conv_pad_capacity, conv_pad_width);
     if (!wm->conv_pad) {
         LOG_ERROR("[WM] Failed to create conversation pad");
         return -1;
@@ -159,8 +162,8 @@ int window_manager_init(WindowManager *wm, const WindowManagerConfig *config) {
     wm->conv_pad_content_lines = 0;
     wm->conv_scroll_offset = 0;
 
-    LOG_DEBUG("[WM] Created conversation pad (capacity=%d, width=%d)",
-              wm->conv_pad_capacity, wm->screen_width);
+    LOG_DEBUG("[WM] Created conversation pad (capacity=%d, width=%d, h_padding=%d)",
+              wm->conv_pad_capacity, conv_pad_width, wm->config.conv_h_padding);
 
     // Create status window (if enabled)
     if (wm->status_height > 0) {
@@ -259,9 +262,11 @@ int window_manager_resize_screen(WindowManager *wm) {
     int old_scroll_offset = wm->conv_scroll_offset;
     int old_capacity = wm->conv_pad_capacity;
 
-    // Recreate conversation pad with new width
+    // Recreate conversation pad with new width (accounting for horizontal padding)
     WINDOW *old_pad = wm->conv_pad;
-    wm->conv_pad = newpad(wm->conv_pad_capacity, wm->screen_width);
+    int conv_pad_width = wm->screen_width - (2 * wm->config.conv_h_padding);
+    if (conv_pad_width < 1) conv_pad_width = 1; // Safety check
+    wm->conv_pad = newpad(wm->conv_pad_capacity, conv_pad_width);
     if (!wm->conv_pad) {
         LOG_ERROR("[WM] Failed to recreate conversation pad");
         wm->conv_pad = old_pad;  // Restore old pad
@@ -276,7 +281,9 @@ int window_manager_resize_screen(WindowManager *wm) {
     if (lines_to_copy > old_capacity) lines_to_copy = old_capacity;
     if (lines_to_copy > wm->conv_pad_capacity) lines_to_copy = wm->conv_pad_capacity;
 
-    int width_to_copy = old_width < wm->screen_width ? old_width : wm->screen_width;
+    int old_conv_width = old_width - (2 * wm->config.conv_h_padding);
+    if (old_conv_width < 1) old_conv_width = 1;
+    int width_to_copy = old_conv_width < conv_pad_width ? old_conv_width : conv_pad_width;
 
     // Additional safety: verify old_pad is still valid before copying
     if (old_pad && lines_to_copy > 0 && width_to_copy > 0) {
@@ -289,8 +296,8 @@ int window_manager_resize_screen(WindowManager *wm) {
         old_pad = NULL;
     }
 
-    LOG_DEBUG("[WM] Recreated conversation pad (capacity=%d, width=%d)",
-              wm->conv_pad_capacity, wm->screen_width);
+    LOG_DEBUG("[WM] Recreated conversation pad (capacity=%d, width=%d, h_padding=%d)",
+              wm->conv_pad_capacity, conv_pad_width, wm->config.conv_h_padding);
 
     // Recreate status window (if enabled)
     if (wm->status_win) {
@@ -376,8 +383,10 @@ int window_manager_ensure_pad_capacity(WindowManager *wm, int needed_lines) {
     LOG_INFO("[WM] Expanding pad capacity from %d to %d lines",
              wm->conv_pad_capacity, new_capacity);
 
-    // Create new larger pad
-    WINDOW *new_pad = newpad(new_capacity, wm->screen_width);
+    // Create new larger pad (with horizontal padding)
+    int conv_pad_width = wm->screen_width - (2 * wm->config.conv_h_padding);
+    if (conv_pad_width < 1) conv_pad_width = 1; // Safety check
+    WINDOW *new_pad = newpad(new_capacity, conv_pad_width);
     if (!new_pad) {
         LOG_ERROR("[WM] Failed to create expanded pad");
         return -1;
@@ -386,7 +395,7 @@ int window_manager_ensure_pad_capacity(WindowManager *wm, int needed_lines) {
 
     // Copy existing content
     copy_pad_content(wm->conv_pad, new_pad,
-                    wm->conv_pad_content_lines, wm->screen_width);
+                    wm->conv_pad_content_lines, conv_pad_width);
 
     // Replace old pad
     delwin(wm->conv_pad);
@@ -488,16 +497,18 @@ void window_manager_refresh_conversation(WindowManager *wm) {
         wm->conv_scroll_offset = max_scroll;
     }
 
-    // Refresh pad viewport
+    // Refresh pad viewport with horizontal padding offset
     // prefresh(pad, pad_y, pad_x, screen_y1, screen_x1, screen_y2, screen_x2)
+    int x1 = wm->config.conv_h_padding;
     int y2 = wm->conv_viewport_height - 1;
-    int x2 = wm->screen_width - 1;
+    int x2 = wm->screen_width - 1 - wm->config.conv_h_padding;
     if (y2 < 0) y2 = 0;
-    if (x2 < 0) x2 = 0;
+    if (x1 < 0) x1 = 0;
+    if (x2 < x1) x2 = x1;
     prefresh(wm->conv_pad,
              wm->conv_scroll_offset, 0,  // pad position
-             0, 0,                        // screen top-left
-             y2, x2);                     // screen bottom-right
+             0, x1,                       // screen top-left (with horizontal offset)
+             y2, x2);                     // screen bottom-right (with horizontal offset)
 }
 
 void window_manager_refresh_status(WindowManager *wm) {
