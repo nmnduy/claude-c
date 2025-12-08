@@ -177,9 +177,9 @@ static int openai_streaming_event_handler(StreamEvent *event, void *userdata) {
                         cJSON_ArrayForEach(tool_call, tool_calls) {
                             cJSON *index_obj = cJSON_GetObjectItem(tool_call, "index");
                             if (!index_obj || !cJSON_IsNumber(index_obj)) continue;
-                            
+
                             int index = index_obj->valueint;
-                            
+
                             // Ensure array has enough space
                             while (cJSON_GetArraySize(ctx->tool_calls_array) <= index) {
                                 cJSON *new_tool = cJSON_CreateObject();
@@ -191,16 +191,16 @@ static int openai_streaming_event_handler(StreamEvent *event, void *userdata) {
                                 cJSON_AddItemToObject(new_tool, "function", function);
                                 cJSON_AddItemToArray(ctx->tool_calls_array, new_tool);
                             }
-                            
+
                             cJSON *existing_tool = cJSON_GetArrayItem(ctx->tool_calls_array, index);
                             if (!existing_tool) continue;
-                            
+
                             // Update id if present
                             cJSON *id_obj = cJSON_GetObjectItem(tool_call, "id");
                             if (id_obj && cJSON_IsString(id_obj) && id_obj->valuestring[0]) {
                                 cJSON_ReplaceItemInObject(existing_tool, "id", cJSON_CreateString(id_obj->valuestring));
                             }
-                            
+
                             // Update function data
                             cJSON *function_delta = cJSON_GetObjectItem(tool_call, "function");
                             if (function_delta) {
@@ -209,12 +209,12 @@ static int openai_streaming_event_handler(StreamEvent *event, void *userdata) {
                                     existing_function = cJSON_CreateObject();
                                     cJSON_AddItemToObject(existing_tool, "function", existing_function);
                                 }
-                                
+
                                 cJSON *name_obj = cJSON_GetObjectItem(function_delta, "name");
                                 if (name_obj && cJSON_IsString(name_obj)) {
                                     cJSON_ReplaceItemInObject(existing_function, "name", cJSON_Duplicate(name_obj, 1));
                                 }
-                                
+
                                 cJSON *args_obj = cJSON_GetObjectItem(function_delta, "arguments");
                                 if (args_obj && cJSON_IsString(args_obj)) {
                                     // Append to existing arguments
@@ -431,7 +431,7 @@ static ApiCallResult openai_call_api(Provider *self, ConversationState *state) {
         // If streaming was used, reconstruct response from streaming context
         if (enable_streaming) {
             LOG_DEBUG("Reconstructing OpenAI response from streaming context");
-            
+
             // Build synthetic response in OpenAI format
             raw_json = cJSON_CreateObject();
             cJSON_AddStringToObject(raw_json, "id", stream_ctx.message_id ? stream_ctx.message_id : "streaming");
@@ -439,40 +439,40 @@ static ApiCallResult openai_call_api(Provider *self, ConversationState *state) {
             cJSON_AddStringToObject(raw_json, "model", stream_ctx.model ? stream_ctx.model : "unknown");
             time_t now = time(NULL);
             cJSON_AddNumberToObject(raw_json, "created", (double)now);
-            
+
             cJSON *choices = cJSON_CreateArray();
             cJSON *choice = cJSON_CreateObject();
             cJSON_AddNumberToObject(choice, "index", 0);
-            
+
             cJSON *message = cJSON_CreateObject();
             cJSON_AddStringToObject(message, "role", "assistant");
-            
+
             // Add content if we have text
             if (stream_ctx.accumulated_text && stream_ctx.accumulated_size > 0) {
                 cJSON_AddStringToObject(message, "content", stream_ctx.accumulated_text);
             } else {
                 cJSON_AddNullToObject(message, "content");
             }
-            
+
             // Add tool calls if we have any
             if (stream_ctx.tool_calls_count > 0) {
                 cJSON_AddItemToObject(message, "tool_calls", cJSON_Duplicate(stream_ctx.tool_calls_array, 1));
             }
-            
+
             cJSON_AddItemToObject(choice, "message", message);
-            cJSON_AddStringToObject(choice, "finish_reason", 
+            cJSON_AddStringToObject(choice, "finish_reason",
                 stream_ctx.finish_reason ? stream_ctx.finish_reason : "stop");
-            
+
             cJSON_AddItemToArray(choices, choice);
             cJSON_AddItemToObject(raw_json, "choices", choices);
-            
+
             // Add usage (placeholder since OpenAI streaming doesn't always include it)
             cJSON *usage = cJSON_CreateObject();
             cJSON_AddNumberToObject(usage, "prompt_tokens", 0);
             cJSON_AddNumberToObject(usage, "completion_tokens", 0);
             cJSON_AddNumberToObject(usage, "total_tokens", 0);
             cJSON_AddItemToObject(raw_json, "usage", usage);
-            
+
             // Free streaming context
             openai_streaming_context_free(&stream_ctx);
         } else {

@@ -36,6 +36,9 @@
 #include "fallback_colors.h"
 #include "patch_parser.h"
 #include "tool_utils.h"
+#ifndef TEST_BUILD
+#include "openai_messages.h"
+#endif
 
 #ifdef TEST_BUILD
 // Disable unused function warnings for test builds since not all functions are used by tests
@@ -95,6 +98,11 @@ static struct curl_slist* bedrock_sign_request(
 static int bedrock_handle_auth_error(BedrockConfig *config, long http_status, const char *error_message, const char *response_body) {
     (void)config; (void)http_status; (void)error_message; (void)response_body;
     return 0;
+}
+
+static void ensure_tool_results(ConversationState *state) {
+    (void)state;
+    // Stub for test builds
 }
 #else
 // Normal build: use actual implementations
@@ -3643,6 +3651,11 @@ char* build_request_json_from_state(ConversationState *state) {
     if (conversation_state_lock(state) != 0) {
         return NULL;
     }
+
+    // Ensure all tool calls have matching results before building request
+#ifndef TEST_BUILD
+    ensure_tool_results(state);
+#endif
 
     char *json_str = NULL;
 

@@ -174,18 +174,18 @@ static StreamEventType sse_event_name_to_type(const char *name, const char *data
         if (strcmp(name, "error") == 0) return SSE_EVENT_ERROR;
         if (strcmp(name, "ping") == 0) return SSE_EVENT_PING;
     }
-    
+
     // OpenAI uses implicit events (no event: field, just data:)
     // Check if data is "[DONE]" marker
     if (data && strcmp(data, "[DONE]") == 0) {
         return SSE_EVENT_OPENAI_DONE;
     }
-    
+
     // If no event name specified and data exists, assume OpenAI chunk
     if (!name && data && data[0] != '\0') {
         return SSE_EVENT_OPENAI_CHUNK;
     }
-    
+
     return SSE_EVENT_PING;  // Unknown/empty events treated as ping
 }
 
@@ -200,7 +200,7 @@ static int sse_parser_dispatch_event(SSEParserState *parser) {
     event.raw_data = parser->data_buffer->data;
 
     // Try to parse data as JSON (skip for OpenAI [DONE] marker)
-    if (parser->data_buffer->data && parser->data_buffer->size > 0 && 
+    if (parser->data_buffer->data && parser->data_buffer->size > 0 &&
         strcmp(parser->data_buffer->data, "[DONE]") != 0) {
         event.data = cJSON_Parse(parser->data_buffer->data);
         if (!event.data) {

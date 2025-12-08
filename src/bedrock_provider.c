@@ -298,7 +298,7 @@ static ApiCallResult bedrock_execute_request(BedrockConfig *config, const char *
     // Use streaming endpoint if streaming is enabled
     char *streaming_endpoint = NULL;
     const char *endpoint_url = config->endpoint;
-    
+
     if (enable_streaming) {
         streaming_endpoint = bedrock_build_streaming_endpoint(config->region, config->model_id);
         if (!streaming_endpoint) {
@@ -375,7 +375,7 @@ static ApiCallResult bedrock_execute_request(BedrockConfig *config, const char *
     }
 
     result.raw_response = http_resp->body ? strdup(http_resp->body) : NULL;
-    
+
     // Clean up HTTP response (but keep body since we duplicated it)
     char *body_to_free = http_resp->body;
     http_resp->body = NULL;  // Prevent double free
@@ -390,15 +390,15 @@ static ApiCallResult bedrock_execute_request(BedrockConfig *config, const char *
         // If streaming was used, reconstruct response from streaming context
         if (enable_streaming) {
             LOG_DEBUG("Reconstructing Bedrock response from streaming context");
-            
+
             // Build synthetic response in Anthropic format, then convert to OpenAI
             cJSON *anth_response = cJSON_CreateObject();
             cJSON_AddStringToObject(anth_response, "id", "streaming");
             cJSON_AddStringToObject(anth_response, "type", "message");
             cJSON_AddStringToObject(anth_response, "role", "assistant");
-            
+
             cJSON *content_array = cJSON_CreateArray();
-            
+
             // Add text content if we have any
             if (stream_ctx.accumulated_text && stream_ctx.accumulated_size > 0) {
                 cJSON *text_block = cJSON_CreateObject();
@@ -406,14 +406,14 @@ static ApiCallResult bedrock_execute_request(BedrockConfig *config, const char *
                 cJSON_AddStringToObject(text_block, "text", stream_ctx.accumulated_text);
                 cJSON_AddItemToArray(content_array, text_block);
             }
-            
+
             // Add tool use if we have any
             if (stream_ctx.tool_use_id && stream_ctx.tool_use_name) {
                 cJSON *tool_block = cJSON_CreateObject();
                 cJSON_AddStringToObject(tool_block, "type", "tool_use");
                 cJSON_AddStringToObject(tool_block, "id", stream_ctx.tool_use_id);
                 cJSON_AddStringToObject(tool_block, "name", stream_ctx.tool_use_name);
-                
+
                 // Parse tool input JSON
                 cJSON *input = NULL;
                 if (stream_ctx.tool_input_json && stream_ctx.tool_input_size > 0) {
@@ -425,27 +425,27 @@ static ApiCallResult bedrock_execute_request(BedrockConfig *config, const char *
                 cJSON_AddItemToObject(tool_block, "input", input);
                 cJSON_AddItemToArray(content_array, tool_block);
             }
-            
+
             cJSON_AddItemToObject(anth_response, "content", content_array);
-            cJSON_AddStringToObject(anth_response, "stop_reason", 
+            cJSON_AddStringToObject(anth_response, "stop_reason",
                 stream_ctx.stop_reason ? stream_ctx.stop_reason : "end_turn");
-            
+
             // Convert Anthropic format to OpenAI format
             char *anth_str = cJSON_PrintUnformatted(anth_response);
             cJSON_Delete(anth_response);
-            
+
             if (anth_str) {
                 openai_json = bedrock_convert_response(anth_str);
                 free(anth_str);
             }
-            
+
             // Free streaming context
             bedrock_streaming_context_free(&stream_ctx);
         } else {
             // Non-streaming: convert Bedrock response to OpenAI format
             openai_json = bedrock_convert_response(result.raw_response);
         }
-        
+
         if (!openai_json) {
             result.error_message = strdup("Failed to parse Bedrock response");
             result.is_retryable = 0;

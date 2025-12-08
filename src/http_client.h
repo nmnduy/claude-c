@@ -64,7 +64,7 @@ typedef enum {
     SSE_EVENT_MESSAGE_STOP,     // message_stop event
     SSE_EVENT_ERROR,            // error event
     SSE_EVENT_PING,             // ping event (keepalive)
-    
+
     // OpenAI Chat Completions API events (data events without explicit event type)
     SSE_EVENT_OPENAI_CHUNK,     // OpenAI chunk (default "data:" event)
     SSE_EVENT_OPENAI_DONE       // OpenAI [DONE] marker
