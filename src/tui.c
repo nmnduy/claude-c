@@ -1043,11 +1043,13 @@ static void input_redraw(TUIState *tui, const char *prompt) {
 
     // Draw box with accent color if colors are available
     if (has_colors()) {
-        wattron(win, COLOR_PAIR(NCURSES_PAIR_ASSISTANT));
+        wattron(win, COLOR_PAIR(NCURSES_PAIR_FOREGROUND) | A_DIM);
         box(win, 0, 0);
-        wattroff(win, COLOR_PAIR(NCURSES_PAIR_ASSISTANT));
+        wattroff(win, COLOR_PAIR(NCURSES_PAIR_FOREGROUND) | A_DIM);
     } else {
+        wattron(win, A_DIM);
         box(win, 0, 0);
+        wattroff(win, A_DIM);
     }
 
     // Draw prompt on first visible line (if we're not scrolled past it)
