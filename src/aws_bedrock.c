@@ -1444,6 +1444,45 @@ cJSON* bedrock_convert_response(const char *bedrock_response) {
         if (output_tokens && cJSON_IsNumber(output_tokens)) total += output_tokens->valueint;
         cJSON_AddNumberToObject(usage, "total_tokens", total);
 
+        // Preserve cache-related fields for token usage tracking
+        // Anthropic-style: cache_read_input_tokens
+        cJSON *cache_read_input_tokens = cJSON_GetObjectItem(usage_anthropic, "cache_read_input_tokens");
+        if (cache_read_input_tokens && cJSON_IsNumber(cache_read_input_tokens)) {
+            cJSON_AddNumberToObject(usage, "cache_read_input_tokens", cache_read_input_tokens->valueint);
+            LOG_DEBUG("Preserved cache_read_input_tokens: %d", cache_read_input_tokens->valueint);
+        }
+
+        // DeepSeek/Moonshot-style: cached_tokens
+        cJSON *cached_tokens = cJSON_GetObjectItem(usage_anthropic, "cached_tokens");
+        if (cached_tokens && cJSON_IsNumber(cached_tokens)) {
+            cJSON_AddNumberToObject(usage, "cached_tokens", cached_tokens->valueint);
+            LOG_DEBUG("Preserved cached_tokens: %d", cached_tokens->valueint);
+        }
+
+        // DeepSeek-style: prompt_cache_hit_tokens and prompt_cache_miss_tokens
+        cJSON *prompt_cache_hit_tokens = cJSON_GetObjectItem(usage_anthropic, "prompt_cache_hit_tokens");
+        cJSON *prompt_cache_miss_tokens = cJSON_GetObjectItem(usage_anthropic, "prompt_cache_miss_tokens");
+        
+        if (prompt_cache_hit_tokens && cJSON_IsNumber(prompt_cache_hit_tokens)) {
+            cJSON_AddNumberToObject(usage, "prompt_cache_hit_tokens", prompt_cache_hit_tokens->valueint);
+            LOG_DEBUG("Preserved prompt_cache_hit_tokens: %d", prompt_cache_hit_tokens->valueint);
+        }
+        
+        if (prompt_cache_miss_tokens && cJSON_IsNumber(prompt_cache_miss_tokens)) {
+            cJSON_AddNumberToObject(usage, "prompt_cache_miss_tokens", prompt_cache_miss_tokens->valueint);
+            LOG_DEBUG("Preserved prompt_cache_miss_tokens: %d", prompt_cache_miss_tokens->valueint);
+        }
+
+        // DeepSeek-style: prompt_tokens_details with cached_tokens inside
+        cJSON *prompt_tokens_details = cJSON_GetObjectItem(usage_anthropic, "prompt_tokens_details");
+        if (prompt_tokens_details) {
+            cJSON *prompt_tokens_details_copy = cJSON_Duplicate(prompt_tokens_details, 1);
+            if (prompt_tokens_details_copy) {
+                cJSON_AddItemToObject(usage, "prompt_tokens_details", prompt_tokens_details_copy);
+                LOG_DEBUG("Preserved prompt_tokens_details");
+            }
+        }
+
         cJSON_AddItemToObject(openai_json, "usage", usage);
     }
 
