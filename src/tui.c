@@ -1939,6 +1939,7 @@ void tui_show_startup_banner(TUIState *tui, const char *version, const char *mod
         "In Scroll mode, Scroll: j/k (line), Ctrl+D/U (half page), gg/G (top/bottom).",
         /* "Use PageUp/PageDown or Arrow keys to scroll.", */
         /* "Type /help for commands (e.g., /clear, /exit, /add-dir).", */
+        "Press Shift+Tab to toggle Plan mode (read-only tools only).",
         "Press Ctrl+C to cancel a running API/tool action.",
         /* "Use /add-dir to attach a directory as context.", */
         "Press Ctrl+D to exit quickly.",
@@ -2081,10 +2082,21 @@ static int handle_command_mode_input(TUIState *tui, int ch, const char *prompt) 
 
 // Handle normal mode input
 // Returns: 0 to continue, 1 to switch to insert mode, -1 on error/quit
-static int handle_normal_mode_input(TUIState *tui, int ch, const char *prompt) {
+static int handle_normal_mode_input(TUIState *tui, int ch, const char *prompt, void *user_data) {
     if (!tui || !tui->wm.conv_pad) {
         return 0;
     }
+
+    // Structure for extracting ConversationState from user_data
+    // Matches InteractiveContext in claude.c
+    typedef struct {
+        ConversationState *state;
+        TUIState *tui;
+        void *worker;
+        void *instruction_queue;
+        TUIMessageQueue *tui_queue;
+        int instruction_queue_capacity;
+    } InteractiveContextView;
 
     // Calculate scrolling parameters based on the visible viewport height,
     // not the pad capacity (using pad size could make half-page jumps too large
@@ -2204,6 +2216,50 @@ static int handle_normal_mode_input(TUIState *tui, int ch, const char *prompt) {
             input_redraw(tui, prompt);
             break;
 
+        case KEY_BTAB:  // Shift+Tab: toggle plan_mode (also works in Normal mode)
+            if (user_data) {
+                InteractiveContextView *ctx = (InteractiveContextView *)user_data;
+                ConversationState *state = ctx->state;
+
+                if (state) {
+                    // Lock the conversation state
+                    if (conversation_state_lock(state) == 0) {
+                        // Toggle plan_mode in state
+                        state->plan_mode = state->plan_mode ? 0 : 1;
+                        int new_plan_mode = state->plan_mode;
+
+                        // Rebuild system prompt to reflect plan mode change
+                        char *new_system_prompt = build_system_prompt(state);
+                        if (new_system_prompt) {
+                            if (state->count > 0 && state->messages[0].role == MSG_SYSTEM) {
+                                free(state->messages[0].contents[0].text);
+                                size_t len = strlen(new_system_prompt) + 1;
+                                state->messages[0].contents[0].text = malloc(len);
+                                if (!state->messages[0].contents[0].text) {
+                                    LOG_ERROR("[TUI] Failed to allocate memory for updated system prompt");
+                                } else {
+                                    strlcpy(state->messages[0].contents[0].text, new_system_prompt, len);
+                                    LOG_DEBUG("[TUI] System prompt updated to reflect plan mode change");
+                                }
+                            }
+                            free(new_system_prompt);
+                        } else {
+                            LOG_ERROR("[TUI] Failed to rebuild system prompt after plan mode toggle");
+                        }
+
+                        conversation_state_unlock(state);
+
+                        // Log the toggle
+                        LOG_INFO("[TUI] Plan mode toggled: %s", new_plan_mode ? "ON" : "OFF");
+                        LOG_DEBUG("[TUI] Plan mode value in state: %d", state->plan_mode);
+
+                        // Refresh status bar to show change
+                        render_status_window(tui);
+                    }
+                }
+            }
+            return 0;  // Handled, don't pass to default case
+
         case 'q':  // Quit (when input is empty)
             if (tui->input_buffer && tui->input_buffer->length == 0) {
                 return -1;  // Signal quit
@@ -2292,7 +2348,7 @@ int tui_process_input_char(TUIState *tui, int ch, const char *prompt, void *user
 
     // Handle normal mode separately
     if (tui->mode == TUI_MODE_NORMAL) {
-        int result = handle_normal_mode_input(tui, ch, prompt);
+        int result = handle_normal_mode_input(tui, ch, prompt, user_data);
         if (result == -1) {
             return -1;  // Quit signal
         }
