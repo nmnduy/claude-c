@@ -2385,6 +2385,13 @@ static cJSON* tool_glob(cJSON *params, ConversationState *state) {
     return result;
 }
 
+// Helper function to check if a command exists
+static int command_exists(const char *cmd) {
+    char test_cmd[256];
+    snprintf(test_cmd, sizeof(test_cmd), "command -v %s >/dev/null 2>&1", cmd);
+    return system(test_cmd) == 0;
+}
+
 static cJSON* tool_grep(cJSON *params, ConversationState *state) {
     const cJSON *pattern_json = cJSON_GetObjectItem(params, "pattern");
     const cJSON *path_json = cJSON_GetObjectItem(params, "path");
@@ -2414,45 +2421,132 @@ static cJSON* tool_grep(cJSON *params, ConversationState *state) {
     int match_count = 0;
     int truncated = 0;
 
-    // Common exclusions to avoid build artifacts and large binary/generated files
-    // This list mimics what tools like ripgrep exclude by default
-    const char *exclusions =
-        "--exclude-dir=.git "
-        "--exclude-dir=.svn "
-        "--exclude-dir=.hg "
-        "--exclude-dir=node_modules "
-        "--exclude-dir=bower_components "
-        "--exclude-dir=vendor "
-        "--exclude-dir=build "
-        "--exclude-dir=dist "
-        "--exclude-dir=target "
-        "--exclude-dir=.cache "
-        "--exclude-dir=.venv "
-        "--exclude-dir=venv "
-        "--exclude-dir=__pycache__ "
-        "--exclude='*.min.js' "
-        "--exclude='*.min.css' "
-        "--exclude='*.pyc' "
-        "--exclude='*.o' "
-        "--exclude='*.a' "
-        "--exclude='*.so' "
-        "--exclude='*.dylib' "
-        "--exclude='*.exe' "
-        "--exclude='*.dll' "
-        "--exclude='*.class' "
-        "--exclude='*.jar' "
-        "--exclude='*.war' "
-        "--exclude='*.zip' "
-        "--exclude='*.tar' "
-        "--exclude='*.gz' "
-        "--exclude='*.log' "
-        "--exclude='.DS_Store' ";
+    // Determine which grep tool to use (prefer rg > ag > grep)
+    const char *grep_tool = "grep";
+    const char *exclusions = "";
+
+    if (command_exists("rg")) {
+        grep_tool = "rg";
+        // rg uses -g '!pattern' for exclusions
+        exclusions =
+            "-g '!.git' "
+            "-g '!.svn' "
+            "-g '!.hg' "
+            "-g '!node_modules' "
+            "-g '!bower_components' "
+            "-g '!vendor' "
+            "-g '!build' "
+            "-g '!dist' "
+            "-g '!target' "
+            "-g '!.cache' "
+            "-g '!.venv' "
+            "-g '!venv' "
+            "-g '!__pycache__' "
+            "-g '!*.min.js' "
+            "-g '!*.min.css' "
+            "-g '!*.pyc' "
+            "-g '!*.o' "
+            "-g '!*.a' "
+            "-g '!*.so' "
+            "-g '!*.dylib' "
+            "-g '!*.exe' "
+            "-g '!*.dll' "
+            "-g '!*.class' "
+            "-g '!*.jar' "
+            "-g '!*.war' "
+            "-g '!*.zip' "
+            "-g '!*.tar' "
+            "-g '!*.gz' "
+            "-g '!*.log' "
+            "-g '!.DS_Store' ";
+    } else if (command_exists("ag")) {
+        grep_tool = "ag";
+        // ag uses --ignore=pattern options
+        exclusions =
+            "--ignore=.git "
+            "--ignore=.svn "
+            "--ignore=.hg "
+            "--ignore=node_modules "
+            "--ignore=bower_components "
+            "--ignore=vendor "
+            "--ignore=build "
+            "--ignore=dist "
+            "--ignore=target "
+            "--ignore=.cache "
+            "--ignore=.venv "
+            "--ignore=venv "
+            "--ignore=__pycache__ "
+            "--ignore='*.min.js' "
+            "--ignore='*.min.css' "
+            "--ignore='*.pyc' "
+            "--ignore='*.o' "
+            "--ignore='*.a' "
+            "--ignore='*.so' "
+            "--ignore='*.dylib' "
+            "--ignore='*.exe' "
+            "--ignore='*.dll' "
+            "--ignore='*.class' "
+            "--ignore='*.jar' "
+            "--ignore='*.war' "
+            "--ignore='*.zip' "
+            "--ignore='*.tar' "
+            "--ignore='*.gz' "
+            "--ignore='*.log' "
+            "--ignore=.DS_Store ";
+    } else {
+        // Standard grep exclusions
+        exclusions =
+            "--exclude-dir=.git "
+            "--exclude-dir=.svn "
+            "--exclude-dir=.hg "
+            "--exclude-dir=node_modules "
+            "--exclude-dir=bower_components "
+            "--exclude-dir=vendor "
+            "--exclude-dir=build "
+            "--exclude-dir=dist "
+            "--exclude-dir=target "
+            "--exclude-dir=.cache "
+            "--exclude-dir=.venv "
+            "--exclude-dir=venv "
+            "--exclude-dir=__pycache__ "
+            "--exclude='*.min.js' "
+            "--exclude='*.min.css' "
+            "--exclude='*.pyc' "
+            "--exclude='*.o' "
+            "--exclude='*.a' "
+            "--exclude='*.so' "
+            "--exclude='*.dylib' "
+            "--exclude='*.exe' "
+            "--exclude='*.dll' "
+            "--exclude='*.class' "
+            "--exclude='*.jar' "
+            "--exclude='*.war' "
+            "--exclude='*.zip' "
+            "--exclude='*.tar' "
+            "--exclude='*.gz' "
+            "--exclude='*.log' "
+            "--exclude='.DS_Store' ";
+    }
 
     // Search in main working directory
     char command[BUFFER_SIZE * 2];
-    snprintf(command, sizeof(command),
-             "cd %s && grep -r -n %s '%s' %s 2>/dev/null || true",
-             state->working_dir, exclusions, pattern, path);
+    if (strcmp(grep_tool, "rg") == 0) {
+        // rg: recursive by default, shows line numbers by default when output is to terminal
+        // but we need -n for consistency since we're piping
+        snprintf(command, sizeof(command),
+                 "cd %s && rg -n %s '%s' %s 2>/dev/null || true",
+                 state->working_dir, exclusions, pattern, path);
+    } else if (strcmp(grep_tool, "ag") == 0) {
+        // ag: recursive by default, shows line numbers with -n
+        snprintf(command, sizeof(command),
+                 "cd %s && ag -n %s '%s' %s 2>/dev/null || true",
+                 state->working_dir, exclusions, pattern, path);
+    } else {
+        // Standard grep
+        snprintf(command, sizeof(command),
+                 "cd %s && grep -r -n %s '%s' %s 2>/dev/null || true",
+                 state->working_dir, exclusions, pattern, path);
+    }
 
     FILE *pipe = popen(command, "r");
     if (!pipe) {
@@ -2478,9 +2572,19 @@ static cJSON* tool_grep(cJSON *params, ConversationState *state) {
 
     // Search in additional working directories (if not already truncated)
     for (int dir_idx = 0; dir_idx < state->additional_dirs_count && !truncated; dir_idx++) {
-        snprintf(command, sizeof(command),
-                 "cd %s && grep -r -n %s '%s' %s 2>/dev/null || true",
-                 state->additional_dirs[dir_idx], exclusions, pattern, path);
+        if (strcmp(grep_tool, "rg") == 0) {
+            snprintf(command, sizeof(command),
+                     "cd %s && rg -n %s '%s' %s 2>/dev/null || true",
+                     state->additional_dirs[dir_idx], exclusions, pattern, path);
+        } else if (strcmp(grep_tool, "ag") == 0) {
+            snprintf(command, sizeof(command),
+                     "cd %s && ag -n %s '%s' %s 2>/dev/null || true",
+                     state->additional_dirs[dir_idx], exclusions, pattern, path);
+        } else {
+            snprintf(command, sizeof(command),
+                     "cd %s && grep -r -n %s '%s' %s 2>/dev/null || true",
+                     state->additional_dirs[dir_idx], exclusions, pattern, path);
+        }
 
         pipe = popen(command, "r");
         if (!pipe) continue;  // Skip this directory on error
