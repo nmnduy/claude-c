@@ -118,6 +118,11 @@ static void ensure_tool_results(ConversationState *state) {
 
 // Internal API for module access
 #include "claude_internal.h"
+
+// Session management
+#ifndef TEST_BUILD
+#include "session.h"
+#endif
 #include "provider.h"  // For ApiCallResult and Provider definitions
 #include "todo.h"
 
@@ -6514,6 +6519,9 @@ int main(int argc, char *argv[]) {
         printf("  %s \"PROMPT\"                       Execute single command and exit\n", argv[0]);
         printf("  %s -d, --dump-conversation [ID]  Dump conversation to console and exit\n", argv[0]);
         printf("                                      (defaults to most recent session if no ID given)\n");
+        printf("  %s -r, --resume [ID]             Resume a previous conversation session\n", argv[0]);
+        printf("                                      (defaults to most recent session if no ID given)\n");
+        printf("  %s -l, --list-sessions [N]       List available sessions (N = max to show)\n", argv[0]);
         printf("  %s -h, --help                     Show this help message\n", argv[0]);
         printf("  %s --version                      Show version information\n\n", argv[0]);
         printf("Environment Variables:\n");
@@ -6558,16 +6566,60 @@ int main(int argc, char *argv[]) {
     }
 #endif
 
+    // Check for resume session flag
+#ifndef TEST_BUILD
+    int resume_session = 0;
+    const char *resume_session_id = NULL;
+    if ((argc == 2 || argc == 3) && (strcmp(argv[1], "-r") == 0 || strcmp(argv[1], "--resume") == 0)) {
+        resume_session = 1;
+        resume_session_id = (argc == 3) ? argv[2] : NULL;  // NULL = most recent session
+        LOG_INFO("Resume session mode enabled, session_id: %s", resume_session_id ? resume_session_id : "most recent");
+    }
+#endif
+
+    // Check for list sessions flag
+#ifndef TEST_BUILD
+    int list_sessions = 0;
+    int session_limit = 10;  // Default limit
+    if ((argc == 2 || argc == 3) && (strcmp(argv[1], "-l") == 0 || strcmp(argv[1], "--list-sessions") == 0)) {
+        list_sessions = 1;
+        if (argc == 3) {
+            session_limit = atoi(argv[2]);
+            if (session_limit <= 0) {
+                session_limit = 0;  // 0 means no limit
+            }
+        }
+        LOG_INFO("List sessions mode enabled, limit: %d", session_limit);
+    }
+#endif
+
+    // Handle list sessions mode
+#ifndef TEST_BUILD
+    if (list_sessions) {
+        // Initialize persistence database
+        PersistenceDB *db = persistence_init(NULL);
+        if (!db) {
+            fprintf(stderr, "Error: Failed to open persistence database\n");
+            return 1;
+        }
+        
+        int result = session_list_sessions(db, session_limit);
+        persistence_close(db);
+        return result == 0 ? 0 : 1;
+    }
+#endif
+
     // Check for single command mode: ./claude-c "prompt"
     int is_single_command_mode = 0;
     char *single_command = NULL;
 
-    if (argc == 2) {
+    if (argc == 2 && !resume_session && !list_sessions) {
         // Single argument provided - treat as prompt for single command mode
+        // (but not if it's a resume flag without session ID)
         is_single_command_mode = 1;
         single_command = argv[1];
         LOG_INFO("Single command mode enabled with prompt: %s", single_command);
-    } else if (argc > 2) {
+    } else if (argc > 2 && !resume_session && !list_sessions) {
         LOG_ERROR("Unexpected arguments provided");
         printf("Try '%s --help' for usage information.\n", argv[0]);
         return 1;
@@ -6741,6 +6793,46 @@ int main(int argc, char *argv[]) {
     } else {
         LOG_ERROR("Failed to allocate memory for todo list");
     }
+
+#ifndef TEST_BUILD
+    // Resume session if requested
+    if (resume_session && persistence_db) {
+        LOG_INFO("Attempting to resume session: %s", resume_session_id ? resume_session_id : "most recent");
+        
+        // Load session from database
+        if (session_load_from_db(persistence_db, resume_session_id, &state) == 0) {
+            LOG_INFO("Successfully resumed session: %s", state.session_id);
+            
+            // Update session ID for logging
+            if (state.session_id) {
+                log_set_session_id(state.session_id);
+            }
+            
+            // Update the local session_id variable to match the loaded session
+            if (session_id && state.session_id && strcmp(session_id, state.session_id) != 0) {
+                free(session_id);
+                session_id = strdup(state.session_id);
+            }
+        } else {
+            LOG_ERROR("Failed to resume session");
+            if (resume_session_id) {
+                fprintf(stderr, "Error: Failed to resume session '%s'. Session may not exist.\n", resume_session_id);
+            } else {
+                fprintf(stderr, "Error: Failed to resume most recent session. No sessions found in database.\n");
+            }
+            
+            // Clean up and exit
+            conversation_free(&state);
+            free(session_id);
+            if (persistence_db) {
+                persistence_close(persistence_db);
+            }
+            curl_global_cleanup();
+            log_shutdown();
+            return 1;
+        }
+    }
+#endif
 
 #ifndef TEST_BUILD
     // Defer provider initialization to first API call to avoid blocking TUI startup.
