@@ -1100,7 +1100,6 @@ static void input_redraw(TUIState *tui, const char *prompt) {
         // Render character
         char c = input->buffer[i];
         if (c == '\n') {
-            mvwaddch(win, screen_y, screen_x, (unsigned char)'+' | A_DIM);
             screen_y++;
             current_line++;
             screen_x = 1;  // Reset to left edge (after border)
