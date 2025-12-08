@@ -17,9 +17,6 @@ const WindowManagerConfig DEFAULT_WINDOW_CONFIG = {
     .status_height = 1,
     // No gap between status and input by default
     .padding = 0,
-    .left_margin = 2,    // 2 columns left margin
-    .right_margin = 2,   // 2 columns right margin
-    .top_margin = 1,     // 1 line top margin
     .initial_pad_capacity = 1000
 };
 
@@ -32,41 +29,29 @@ static void calculate_layout(WindowManager *wm) {
     if (!wm) return;
 
     int screen_height = wm->screen_height;
-    int screen_width = wm->screen_width;
     if (screen_height < 0) screen_height = 0;
-    if (screen_width < 0) screen_width = 0;
-
-    // Calculate margins and usable area
-    wm->x_offset = wm->config.left_margin;
-    wm->y_offset = wm->config.top_margin;
-    wm->usable_width = screen_width - wm->config.left_margin - wm->config.right_margin;
-    wm->usable_height = screen_height - wm->config.top_margin;
-
-    // Ensure we have positive dimensions
-    if (wm->usable_width < 1) wm->usable_width = 1;
-    if (wm->usable_height < 1) wm->usable_height = 1;
 
     // Ensure input height fits on very small screens. We prefer to always
     // leave at least 1 row for conversation viewport if possible.
     int min_conv_forced = 1; // absolute minimum to avoid invalid prefresh()
-    if (wm->usable_height <= 0) {
+    if (screen_height <= 0) {
         wm->input_height = 0;
-    } else if (wm->input_height >= wm->usable_height) {
-        wm->input_height = wm->usable_height > min_conv_forced
-            ? wm->usable_height - min_conv_forced
-            : wm->usable_height; // may be 0 or 1
+    } else if (wm->input_height >= screen_height) {
+        wm->input_height = screen_height > min_conv_forced
+            ? screen_height - min_conv_forced
+            : screen_height; // may be 0 or 1
         if (wm->input_height < 0) wm->input_height = 0;
     }
 
     // Determine if we have space for status window
-    int available_height = wm->usable_height - wm->input_height - wm->config.padding;
+    int available_height = screen_height - wm->input_height - wm->config.padding;
     if (available_height < 0) available_height = 0;
 
     // Determine if we have space for status window
     if (available_height < wm->config.min_conv_height + wm->config.status_height) {
         wm->status_height = 0;
-        LOG_DEBUG("[WM] No space for status window (usable_h=%d, input_h=%d)",
-                  wm->usable_height, wm->input_height);
+        LOG_DEBUG("[WM] No space for status window (screen_h=%d, input_h=%d)",
+                  screen_height, wm->input_height);
     } else {
         wm->status_height = wm->config.status_height;
     }
@@ -77,11 +62,8 @@ static void calculate_layout(WindowManager *wm) {
         wm->conv_viewport_height = (available_height > 0) ? 1 : 0;
     }
 
-    LOG_DEBUG("[WM] Layout: screen=%dx%d, margins=(L:%d,R:%d,T:%d), usable=%dx%d, offset=(%d,%d), conv_viewport=%d, status=%d, input=%d, pad=%d",
+    LOG_DEBUG("[WM] Layout: screen=%dx%d, conv_viewport=%d, status=%d, input=%d, pad=%d",
               wm->screen_width, wm->screen_height,
-              wm->config.left_margin, wm->config.right_margin, wm->config.top_margin,
-              wm->usable_width, wm->usable_height,
-              wm->x_offset, wm->y_offset,
               wm->conv_viewport_height, wm->status_height,
               wm->input_height, wm->config.padding);
 }
@@ -166,9 +148,9 @@ int window_manager_init(WindowManager *wm, const WindowManagerConfig *config) {
     LOG_INFO("[WM] Initializing window manager (screen=%dx%d)",
              wm->screen_width, wm->screen_height);
 
-    // Create conversation pad (uses usable_width for wrapping)
+    // Create conversation pad
     wm->conv_pad_capacity = wm->config.initial_pad_capacity;
-    wm->conv_pad = newpad(wm->conv_pad_capacity, wm->usable_width);
+    wm->conv_pad = newpad(wm->conv_pad_capacity, wm->screen_width);
     if (!wm->conv_pad) {
         LOG_ERROR("[WM] Failed to create conversation pad");
         return -1;
@@ -178,26 +160,25 @@ int window_manager_init(WindowManager *wm, const WindowManagerConfig *config) {
     wm->conv_scroll_offset = 0;
 
     LOG_DEBUG("[WM] Created conversation pad (capacity=%d, width=%d)",
-              wm->conv_pad_capacity, wm->usable_width);
+              wm->conv_pad_capacity, wm->screen_width);
 
-    // Create status window (if enabled) - positioned with margins
+    // Create status window (if enabled)
     if (wm->status_height > 0) {
-        int status_y = wm->y_offset + wm->conv_viewport_height;
-        wm->status_win = newwin(wm->status_height, wm->usable_width,
-                               status_y, wm->x_offset);
+        wm->status_win = newwin(wm->status_height, wm->screen_width,
+                               wm->conv_viewport_height, 0);
         if (!wm->status_win) {
             LOG_WARN("[WM] Failed to create status window, continuing without it");
             wm->status_height = 0;
         } else {
-            LOG_DEBUG("[WM] Created status window (h=%d, w=%d, y=%d, x=%d)",
-                      wm->status_height, wm->usable_width, status_y, wm->x_offset);
+            LOG_DEBUG("[WM] Created status window (h=%d, w=%d, y=%d)",
+                      wm->status_height, wm->screen_width, wm->conv_viewport_height);
         }
     }
 
-    // Create input window - positioned with margins
+    // Create input window
     int input_y = wm->screen_height - wm->input_height;
     if (input_y < 0) input_y = 0;
-    wm->input_win = newwin(wm->input_height, wm->usable_width, input_y, wm->x_offset);
+    wm->input_win = newwin(wm->input_height, wm->screen_width, input_y, 0);
     if (!wm->input_win) {
         LOG_ERROR("[WM] Failed to create input window");
         if (wm->status_win) delwin(wm->status_win);
@@ -206,8 +187,8 @@ int window_manager_init(WindowManager *wm, const WindowManagerConfig *config) {
     }
     keypad(wm->input_win, TRUE);
 
-    LOG_DEBUG("[WM] Created input window (h=%d, w=%d, y=%d, x=%d)",
-              wm->input_height, wm->usable_width, input_y, wm->x_offset);
+    LOG_DEBUG("[WM] Created input window (h=%d, w=%d, y=%d)",
+              wm->input_height, wm->screen_width, input_y);
 
     wm->is_initialized = 1;
 
@@ -278,9 +259,9 @@ int window_manager_resize_screen(WindowManager *wm) {
     int old_scroll_offset = wm->conv_scroll_offset;
     int old_capacity = wm->conv_pad_capacity;
 
-    // Recreate conversation pad with new width (usable_width accounts for margins)
+    // Recreate conversation pad with new width
     WINDOW *old_pad = wm->conv_pad;
-    wm->conv_pad = newpad(wm->conv_pad_capacity, wm->usable_width);
+    wm->conv_pad = newpad(wm->conv_pad_capacity, wm->screen_width);
     if (!wm->conv_pad) {
         LOG_ERROR("[WM] Failed to recreate conversation pad");
         wm->conv_pad = old_pad;  // Restore old pad
@@ -295,9 +276,7 @@ int window_manager_resize_screen(WindowManager *wm) {
     if (lines_to_copy > old_capacity) lines_to_copy = old_capacity;
     if (lines_to_copy > wm->conv_pad_capacity) lines_to_copy = wm->conv_pad_capacity;
 
-    // Use the smaller of old width and new usable width
-    int old_usable_width = old_width - wm->config.left_margin - wm->config.right_margin;
-    int width_to_copy = old_usable_width < wm->usable_width ? old_usable_width : wm->usable_width;
+    int width_to_copy = old_width < wm->screen_width ? old_width : wm->screen_width;
 
     // Additional safety: verify old_pad is still valid before copying
     if (old_pad && lines_to_copy > 0 && width_to_copy > 0) {
@@ -311,18 +290,17 @@ int window_manager_resize_screen(WindowManager *wm) {
     }
 
     LOG_DEBUG("[WM] Recreated conversation pad (capacity=%d, width=%d)",
-              wm->conv_pad_capacity, wm->usable_width);
+              wm->conv_pad_capacity, wm->screen_width);
 
-    // Recreate status window (if enabled) - with margins
+    // Recreate status window (if enabled)
     if (wm->status_win) {
         delwin(wm->status_win);
         wm->status_win = NULL;
     }
 
     if (wm->status_height > 0) {
-        int status_y = wm->y_offset + wm->conv_viewport_height;
-        wm->status_win = newwin(wm->status_height, wm->usable_width,
-                               status_y, wm->x_offset);
+        wm->status_win = newwin(wm->status_height, wm->screen_width,
+                               wm->conv_viewport_height, 0);
         if (!wm->status_win) {
             LOG_WARN("[WM] Failed to recreate status window");
             wm->status_height = 0;
@@ -331,14 +309,14 @@ int window_manager_resize_screen(WindowManager *wm) {
         }
     }
 
-    // Recreate input window - with margins
+    // Recreate input window
     if (wm->input_win) {
         delwin(wm->input_win);
     }
 
     int input_y = wm->screen_height - wm->input_height;
     if (input_y < 0) input_y = 0;
-    wm->input_win = newwin(wm->input_height, wm->usable_width, input_y, wm->x_offset);
+    wm->input_win = newwin(wm->input_height, wm->screen_width, input_y, 0);
     if (!wm->input_win) {
         LOG_ERROR("[WM] Failed to recreate input window");
         return -1;
@@ -399,7 +377,7 @@ int window_manager_ensure_pad_capacity(WindowManager *wm, int needed_lines) {
              wm->conv_pad_capacity, new_capacity);
 
     // Create new larger pad
-    WINDOW *new_pad = newpad(new_capacity, wm->usable_width);
+    WINDOW *new_pad = newpad(new_capacity, wm->screen_width);
     if (!new_pad) {
         LOG_ERROR("[WM] Failed to create expanded pad");
         return -1;
@@ -408,7 +386,7 @@ int window_manager_ensure_pad_capacity(WindowManager *wm, int needed_lines) {
 
     // Copy existing content
     copy_pad_content(wm->conv_pad, new_pad,
-                    wm->conv_pad_content_lines, wm->usable_width);
+                    wm->conv_pad_content_lines, wm->screen_width);
 
     // Replace old pad
     delwin(wm->conv_pad);
@@ -456,9 +434,8 @@ int window_manager_resize_input(WindowManager *wm, int desired_content_lines) {
     }
 
     if (wm->status_height > 0) {
-        int status_y = wm->y_offset + wm->conv_viewport_height;
-        wm->status_win = newwin(wm->status_height, wm->usable_width,
-                               status_y, wm->x_offset);
+        wm->status_win = newwin(wm->status_height, wm->screen_width,
+                               wm->conv_viewport_height, 0);
         if (!wm->status_win) {
             LOG_WARN("[WM] Failed to recreate status window after input resize");
             wm->status_height = 0;
@@ -468,7 +445,7 @@ int window_manager_resize_input(WindowManager *wm, int desired_content_lines) {
     // Recreate input window
     delwin(wm->input_win);
     int input_y = wm->screen_height - wm->input_height;
-    wm->input_win = newwin(wm->input_height, wm->usable_width, input_y, wm->x_offset);
+    wm->input_win = newwin(wm->input_height, wm->screen_width, input_y, 0);
     if (!wm->input_win) {
         LOG_ERROR("[WM] Failed to recreate input window");
         return -1;
@@ -497,7 +474,7 @@ void window_manager_refresh_conversation(WindowManager *wm) {
         return;
     }
 
-    if (wm->conv_viewport_height <= 0 || wm->usable_width <= 0) {
+    if (wm->conv_viewport_height <= 0 || wm->screen_width <= 0) {
         return; // nothing to show or invalid geometry
     }
 
@@ -511,18 +488,16 @@ void window_manager_refresh_conversation(WindowManager *wm) {
         wm->conv_scroll_offset = max_scroll;
     }
 
-    // Refresh pad viewport with margins
+    // Refresh pad viewport
     // prefresh(pad, pad_y, pad_x, screen_y1, screen_x1, screen_y2, screen_x2)
-    int y1 = wm->y_offset;
-    int x1 = wm->x_offset;
-    int y2 = wm->y_offset + wm->conv_viewport_height - 1;
-    int x2 = wm->x_offset + wm->usable_width - 1;
-    if (y2 < y1) y2 = y1;
-    if (x2 < x1) x2 = x1;
+    int y2 = wm->conv_viewport_height - 1;
+    int x2 = wm->screen_width - 1;
+    if (y2 < 0) y2 = 0;
+    if (x2 < 0) x2 = 0;
     prefresh(wm->conv_pad,
              wm->conv_scroll_offset, 0,  // pad position
-             y1, x1,                      // screen top-left (with margins)
-             y2, x2);                     // screen bottom-right (with margins)
+             0, 0,                        // screen top-left
+             y2, x2);                     // screen bottom-right
 }
 
 void window_manager_refresh_status(WindowManager *wm) {

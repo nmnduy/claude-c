@@ -23,10 +23,7 @@ typedef struct {
     int min_input_height;     // Minimum input window height
     int max_input_height;     // Maximum input window height
     int status_height;        // Status window height (0 to disable)
-    int padding;              // Padding between windows (vertical)
-    int left_margin;          // Left margin for all windows
-    int right_margin;         // Right margin for all windows
-    int top_margin;           // Top margin above conversation window
+    int padding;              // Padding between windows
     int initial_pad_capacity; // Initial pad capacity (lines)
 } WindowManagerConfig;
 
@@ -35,12 +32,6 @@ typedef struct {
     // Screen dimensions
     int screen_width;
     int screen_height;
-
-    // Usable area (after margins)
-    int usable_width;
-    int usable_height;
-    int x_offset;  // Left margin
-    int y_offset;  // Top margin
 
     // Conversation pad (virtual scrollable window)
     WINDOW *conv_pad;
