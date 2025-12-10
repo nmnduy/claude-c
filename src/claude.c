@@ -67,6 +67,14 @@ static void persistence_log_api_call(
     int tool_count
 ) { (void)db; (void)session_id; (void)url; (void)request; (void)headers; (void)response; (void)model; (void)status; (void)code; (void)error_msg; (void)duration_ms; (void)tool_count; }
 
+static int persistence_get_session_token_usage(
+    PersistenceDB *db,
+    const char *session_id,
+    int *prompt_tokens,
+    int *completion_tokens,
+    int *cached_tokens
+) { (void)db; (void)session_id; (void)prompt_tokens; (void)completion_tokens; (void)cached_tokens; return -1; }
+
 // Stub Bedrock types and functions
 typedef struct {
     char *access_key_id;
@@ -6151,6 +6159,50 @@ static int submit_input_callback(const char *input, void *user_data) {
 // Forward declaration for recursion
 static int process_single_command_response(ConversationState *state, ApiResponse *response);
 
+/**
+ * Print token usage statistics for the current session
+ * This is called at the end of single command mode (including subagent)
+ */
+static void print_token_usage(ConversationState *state) {
+    if (!state || !state->persistence_db) {
+        return;
+    }
+    
+    int prompt_tokens = 0;
+    int completion_tokens = 0;
+    int cached_tokens = 0;
+    
+    // Get token usage for this session
+    int result = persistence_get_session_token_usage(
+        state->persistence_db,
+        state->session_id,
+        &prompt_tokens,
+        &completion_tokens,
+        &cached_tokens
+    );
+    
+    if (result == 0) {
+        // Calculate total tokens (excluding cached tokens since they're free)
+        int total_tokens = prompt_tokens + completion_tokens;
+        
+        // Print token usage summary
+        fprintf(stderr, "\n=== Token Usage Summary ===\n");
+        fprintf(stderr, "Session: %s\n", state->session_id ? state->session_id : "unknown");
+        fprintf(stderr, "Prompt tokens: %d\n", prompt_tokens);
+        fprintf(stderr, "Completion tokens: %d\n", completion_tokens);
+        if (cached_tokens > 0) {
+            fprintf(stderr, "Cached tokens (free): %d\n", cached_tokens);
+            fprintf(stderr, "Total billed tokens: %d (excluding %d cached)\n", 
+                    total_tokens, cached_tokens);
+        } else {
+            fprintf(stderr, "Total tokens: %d\n", total_tokens);
+        }
+        fprintf(stderr, "===========================\n");
+    } else {
+        fprintf(stderr, "\nNote: Token usage statistics unavailable\n");
+    }
+}
+
 static int single_command_mode(ConversationState *state, const char *prompt) {
     LOG_INFO("Executing single command: %s", prompt);
 
@@ -6189,6 +6241,11 @@ static int single_command_mode(ConversationState *state, const char *prompt) {
     // Process response recursively (handles tool calls and follow-up responses)
     int result = process_single_command_response(state, response);
     api_response_free(response);
+    
+    // Print token usage summary at the end of single command mode
+    // This includes subagent executions
+    print_token_usage(state);
+    
     return result;
 }
 
