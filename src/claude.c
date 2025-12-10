@@ -469,6 +469,13 @@ static void emit_diff_line(const char *line,
     free(trimmed);
 }
 
+// Helper function to get current timestamp in YYYY-MM-DD HH:MM:SS format
+static void get_current_timestamp(char *buffer, size_t buffer_size) {
+    time_t now = time(NULL);
+    struct tm *tm_info = localtime(&now);
+    strftime(buffer, buffer_size, "%Y-%m-%d %H:%M:%S", tm_info);
+}
+
 // Helper function to extract tool details from arguments
 static char* get_tool_details(const char *tool_name, cJSON *arguments) {
     if (!arguments || !cJSON_IsObject(arguments)) {
@@ -6511,42 +6518,56 @@ static int process_single_command_response(ConversationState *state, ApiResponse
 
                 // Print tool name header with details
                 char *tool_details = get_tool_details(tool->name, input);
+                
+                // Add timestamp to tool details
+                char details_with_timestamp[384]; // 256 for details + 128 for timestamp
+                if (tool_details && strlen(tool_details) > 0) {
+                    char timestamp[32]; // Increased for YYYY-MM-DD HH:MM:SS format
+                    get_current_timestamp(timestamp, sizeof(timestamp));
+                    snprintf(details_with_timestamp, sizeof(details_with_timestamp), 
+                             "%s (%s)", tool_details, timestamp);
+                } else {
+                    char timestamp[32]; // Increased for YYYY-MM-DD HH:MM:SS format
+                    get_current_timestamp(timestamp, sizeof(timestamp));
+                    snprintf(details_with_timestamp, sizeof(details_with_timestamp), 
+                             "(%s)", timestamp);
+                }
 
                 // Print opening HTML-style tag with tool name and optional details
                 printf("<tool name=\"%s\"", tool->name);
-                if (tool_details && strlen(tool_details) > 0) {
+                if (strlen(details_with_timestamp) > 0) {
                     // Escape quotes and ampersands in tool details for XML attribute
                     // Worst case: every character could be & or " requiring 6 chars each
-                    size_t max_escaped_len = strlen(tool_details) * 6 + 1;
+                    size_t max_escaped_len = strlen(details_with_timestamp) * 6 + 1;
                     char *escaped_details = malloc(max_escaped_len);
                     if (escaped_details) {
                         size_t j = 0;
-                        for (size_t k = 0; tool_details[k]; k++) {
-                            if (tool_details[k] == '"') {
+                        for (size_t k = 0; details_with_timestamp[k]; k++) {
+                            if (details_with_timestamp[k] == '"') {
                                 escaped_details[j++] = '&';
                                 escaped_details[j++] = 'q';
                                 escaped_details[j++] = 'u';
                                 escaped_details[j++] = 'o';
                                 escaped_details[j++] = 't';
                                 escaped_details[j++] = ';';
-                            } else if (tool_details[k] == '&') {
+                            } else if (details_with_timestamp[k] == '&') {
                                 escaped_details[j++] = '&';
                                 escaped_details[j++] = 'a';
                                 escaped_details[j++] = 'm';
                                 escaped_details[j++] = 'p';
                                 escaped_details[j++] = ';';
-                            } else if (tool_details[k] == '<') {
+                            } else if (details_with_timestamp[k] == '<') {
                                 escaped_details[j++] = '&';
                                 escaped_details[j++] = 'l';
                                 escaped_details[j++] = 't';
                                 escaped_details[j++] = ';';
-                            } else if (tool_details[k] == '>') {
+                            } else if (details_with_timestamp[k] == '>') {
                                 escaped_details[j++] = '&';
                                 escaped_details[j++] = 'g';
                                 escaped_details[j++] = 't';
                                 escaped_details[j++] = ';';
                             } else {
-                                escaped_details[j++] = tool_details[k];
+                                escaped_details[j++] = details_with_timestamp[k];
                             }
                         }
                         escaped_details[j] = '\0';
