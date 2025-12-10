@@ -1951,6 +1951,7 @@ void tui_show_startup_banner(TUIState *tui, const char *version, const char *mod
     static const char *tips[] = {
         "Esc/Ctrl+[ to enter Scroll mode (vim-style); press 'i' to insert.",
         "In Scroll mode, Scroll: j/k (line), Ctrl+D/U (half page), gg/G (top/bottom).",
+        "In Scroll mode, use ( and ) to jump between text blocks (paragraphs).",
         /* "Use PageUp/PageDown or Arrow keys to scroll.", */
         /* "Type /help for commands (e.g., /clear, /exit, /add-dir).", */
         "Press Shift+Tab to toggle Plan mode (read-only tools only).",
@@ -2094,6 +2095,99 @@ static int handle_command_mode_input(TUIState *tui, int ch, const char *prompt) 
     return 0;
 }
 
+// Helper: Check if a line is empty (only whitespace)
+static int is_line_empty(WINDOW *pad, int line) {
+    if (!pad || line < 0) {
+        return 0;
+    }
+
+    int pad_width, pad_height;
+    getmaxyx(pad, pad_height, pad_width);
+    
+    if (line >= pad_height) {
+        return 0;
+    }
+
+    // Check first 100 columns (or pad width, whichever is smaller)
+    int cols_to_check = pad_width < 100 ? pad_width : 100;
+    
+    for (int col = 0; col < cols_to_check; col++) {
+        chtype ch = mvwinch(pad, line, col);
+        char c = (char)(ch & A_CHARTEXT);
+        
+        // If we find any non-whitespace character, line is not empty
+        if (c != ' ' && c != '\t' && c != '\0' && c != '\n') {
+            return 0;
+        }
+    }
+    
+    return 1;  // Line is empty
+}
+
+// Helper: Find next paragraph boundary (empty line) going down
+// Returns the line number of the next empty line, or -1 if none found
+static int find_next_paragraph(WINDOW *pad, int start_line, int max_lines) {
+    if (!pad || start_line < 0 || max_lines <= 0) {
+        return -1;
+    }
+
+    int pad_height, pad_width;
+    getmaxyx(pad, pad_height, pad_width);
+    (void)pad_width;  // Unused
+
+    // Start searching from the line after start_line
+    // Skip current position if it's already on an empty line
+    int search_start = start_line + 1;
+    
+    // If we're on an empty line, skip past consecutive empty lines first
+    while (search_start < max_lines && search_start < pad_height && 
+           is_line_empty(pad, search_start)) {
+        search_start++;
+    }
+    
+    // Now find the next empty line
+    for (int line = search_start; line < max_lines && line < pad_height; line++) {
+        if (is_line_empty(pad, line)) {
+            return line;
+        }
+    }
+    
+    // No paragraph boundary found, return max_lines (scroll to end)
+    return max_lines - 1;
+}
+
+// Helper: Find previous paragraph boundary (empty line) going up
+// Returns the line number of the previous empty line, or 0 if none found
+static int find_prev_paragraph(WINDOW *pad, int start_line, int max_lines) {
+    if (!pad || start_line < 0 || max_lines <= 0) {
+        return 0;
+    }
+
+    int pad_height, pad_width;
+    getmaxyx(pad, pad_height, pad_width);
+    (void)pad_width;  // Unused
+    (void)max_lines;  // Unused
+
+    // Start searching from the line before start_line
+    // Skip current position if it's already on an empty line
+    int search_start = start_line - 1;
+    
+    // If we're on an empty line, skip past consecutive empty lines first
+    while (search_start >= 0 && is_line_empty(pad, search_start)) {
+        search_start--;
+    }
+    
+    // Now find the previous empty line
+    for (int line = search_start; line >= 0; line--) {
+        if (is_line_empty(pad, line)) {
+            return line;
+        }
+    }
+    
+    // No paragraph boundary found, return 0 (scroll to top)
+    return 0;
+}
+
 // Handle normal mode input
 // Returns: 0 to continue, 1 to switch to insert mode, -1 on error/quit
 static int handle_normal_mode_input(TUIState *tui, int ch, const char *prompt, void *user_data) {
@@ -2228,6 +2322,46 @@ static int handle_normal_mode_input(TUIState *tui, int ch, const char *prompt, v
                 render_status_window(tui);
             }
             input_redraw(tui, prompt);
+            break;
+
+        case ')':  // Jump to next paragraph (text block)
+            {
+                int current_scroll = window_manager_get_scroll_offset(&tui->wm);
+                int content_lines = window_manager_get_content_lines(&tui->wm);
+                
+                // Find next paragraph boundary from current scroll position
+                int next_para = find_next_paragraph(tui->wm.conv_pad, current_scroll, content_lines);
+                
+                if (next_para > current_scroll) {
+                    // Calculate how many lines to scroll
+                    int scroll_delta = next_para - current_scroll;
+                    tui_scroll_conversation(tui, scroll_delta);
+                    
+                    LOG_DEBUG("[TUI] Paragraph jump down: from line %d to %d (delta=%d)", 
+                             current_scroll, next_para, scroll_delta);
+                }
+                input_redraw(tui, prompt);
+            }
+            break;
+
+        case '(':  // Jump to previous paragraph (text block)
+            {
+                int current_scroll = window_manager_get_scroll_offset(&tui->wm);
+                int content_lines = window_manager_get_content_lines(&tui->wm);
+                
+                // Find previous paragraph boundary from current scroll position
+                int prev_para = find_prev_paragraph(tui->wm.conv_pad, current_scroll, content_lines);
+                
+                if (prev_para < current_scroll) {
+                    // Calculate how many lines to scroll (negative for up)
+                    int scroll_delta = prev_para - current_scroll;
+                    tui_scroll_conversation(tui, scroll_delta);
+                    
+                    LOG_DEBUG("[TUI] Paragraph jump up: from line %d to %d (delta=%d)", 
+                             current_scroll, prev_para, scroll_delta);
+                }
+                input_redraw(tui, prompt);
+            }
             break;
 
         case KEY_BTAB:  // Shift+Tab: toggle plan_mode (also works in Normal mode)
