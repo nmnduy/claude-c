@@ -1798,6 +1798,21 @@ STATIC cJSON* tool_subagent(cJSON *params, ConversationState *state) {
         cJSON_AddStringToObject(result, "truncation_warning", msg);
     }
 
+    // Add log file location message to result for visibility
+    char log_msg[512];
+    snprintf(log_msg, sizeof(log_msg), 
+             "Log file: %s (Use Read/Grep tools to inspect)",
+             log_file);
+    
+    // Add to JSON result
+    cJSON_AddStringToObject(result, "log_file_message", log_msg);
+    
+    // Also print directly in oneshot mode for immediate visibility
+    if (g_oneshot_mode) {
+        printf("%s\n", log_msg);
+        fflush(stdout);
+    }
+
     free(tail_output);
     return result;
 }
