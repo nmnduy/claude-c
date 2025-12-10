@@ -178,6 +178,30 @@ typedef struct {
     int content_count;
 } Message;
 
+/*
+ * Subagent process tracking
+ */
+typedef struct SubagentProcess {
+    pid_t pid;                     // Process ID
+    char *log_file;                // Log file path
+    char *prompt;                  // Original prompt
+    time_t start_time;             // When the subagent was started
+    int timeout_seconds;           // Timeout in seconds (0 = no timeout)
+    int completed;                 // Whether the process has completed
+    int exit_code;                 // Exit code if completed
+} SubagentProcess;
+
+/*
+ * Subagent process manager
+ */
+typedef struct SubagentManager {
+    SubagentProcess **processes;   // Array of tracked subagent processes
+    int process_count;             // Number of tracked processes
+    int process_capacity;          // Capacity of processes array
+    pthread_mutex_t mutex;         // Synchronize access to process list
+    int mutex_initialized;         // Tracks mutex initialization
+} SubagentManager;
+
 typedef struct ConversationState {
     InternalMessage messages[MAX_MESSAGES];  // Vendor-agnostic internal format
     int count;
@@ -203,6 +227,9 @@ typedef struct ConversationState {
 
     // TUI reference for streaming updates (NULL if not using TUI)
     TUIState *tui;                  // TUI state for real-time streaming display
+    
+    // Subagent process management
+    SubagentManager *subagent_manager;  // Tracks running subagent processes
 } ConversationState;
 
 // ============================================================================

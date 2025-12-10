@@ -648,6 +648,8 @@ cJSON* tool_bash(cJSON *params, ConversationState *state);
 cJSON* tool_subagent(cJSON *params, ConversationState *state);
 static cJSON* tool_sleep(cJSON *params, ConversationState *state);
 static cJSON* tool_upload_image(cJSON *params, ConversationState *state);
+static cJSON* tool_check_subagent_progress(cJSON *params, ConversationState *state);
+static cJSON* tool_interrupt_subagent(cJSON *params, ConversationState *state);
 #else
 #define STATIC static
 // Forward declarations
@@ -1723,7 +1725,7 @@ STATIC cJSON* tool_subagent(cJSON *params, ConversationState *state) {
 
     LOG_INFO("Starting subagent: %s", log_file);
 
-    // Build and execute command - use system() to avoid nested shell quoting issues
+    // Build the command
     char command[BUFFER_SIZE * 2];
     snprintf(command, sizeof(command),
              "\"%s\" \"%s\" > \"%s\" 2>&1 </dev/null",
@@ -1731,102 +1733,281 @@ STATIC cJSON* tool_subagent(cJSON *params, ConversationState *state) {
 
     free(escaped_prompt);
 
-    // Execute using system() instead of popen since we're redirecting to a file
-    int status = system(command);
-    if (status == -1) {
+    // Fork and execute
+    pid_t pid = fork();
+    if (pid < 0) {
         cJSON *error = cJSON_CreateObject();
-        cJSON_AddStringToObject(error, "error", "Failed to start subagent process");
+        cJSON_AddStringToObject(error, "error", "Failed to fork subagent process");
         return error;
     }
 
-    int exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+    if (pid == 0) {
+        // Child process - execute the command
+        execl("/bin/sh", "sh", "-c", command, (char *)NULL);
+        // If we get here, exec failed
+        fprintf(stderr, "Failed to execute subagent: %s\n", strerror(errno));
+        exit(1);
+    }
 
-    // Wait a moment for the file to be written
-    usleep(100000); // 100ms
+    // Parent process - return immediately with PID and log file info
+    // The orchestrator can check progress by reading the log file
+    
+    // Build result with PID and log file info
+    cJSON *result = cJSON_CreateObject();
+    cJSON_AddNumberToObject(result, "pid", pid);
+    cJSON_AddStringToObject(result, "log_file", log_file);
+    cJSON_AddNumberToObject(result, "timeout_seconds", timeout_seconds);
+    
+    // Add message about how to check progress
+    char msg[512];
+    snprintf(msg, sizeof(msg),
+             "Subagent started with PID %d. Log file: %s\n"
+             "Use 'CheckSubagentProgress' tool to monitor progress or 'InterruptSubagent' to stop it.",
+             pid, log_file);
+    cJSON_AddStringToObject(result, "message", msg);
+    
+    return result;
+}
 
-    // Read the last N lines from the log file
-    FILE *log_fp = fopen(log_file, "r");
-    if (!log_fp) {
+STATIC cJSON* tool_check_subagent_progress(cJSON *params, ConversationState *state) {
+    // Check for interrupt before starting
+    if (state && state->interrupt_requested) {
         cJSON *error = cJSON_CreateObject();
-        char err_msg[512];
-        snprintf(err_msg, sizeof(err_msg),
-                 "Subagent completed (exit code: %d) but failed to read log file: %s",
-                 exit_code, strerror(errno));
-        cJSON_AddStringToObject(error, "error", err_msg);
-        cJSON_AddStringToObject(error, "log_file", log_file);
+        cJSON_AddStringToObject(error, "error", "Operation interrupted by user");
         return error;
     }
 
-    // Count total lines first
+    const cJSON *pid_json = cJSON_GetObjectItem(params, "pid");
+    const cJSON *log_file_json = cJSON_GetObjectItem(params, "log_file");
+    
+    pid_t pid = 0;
+    const char *log_file = NULL;
+    
+    // We need either PID or log file to check progress
+    if (pid_json && cJSON_IsNumber(pid_json)) {
+        pid = (pid_t)pid_json->valueint;
+    }
+    
+    if (log_file_json && cJSON_IsString(log_file_json)) {
+        log_file = log_file_json->valuestring;
+    }
+    
+    if (pid == 0 && !log_file) {
+        cJSON *error = cJSON_CreateObject();
+        cJSON_AddStringToObject(error, "error", "Missing 'pid' or 'log_file' parameter");
+        return error;
+    }
+    
+    // Get optional tail_lines parameter (default: 50 lines from end)
+    int tail_lines = 50;
+    const cJSON *tail_json = cJSON_GetObjectItem(params, "tail_lines");
+    if (tail_json && cJSON_IsNumber(tail_json)) {
+        tail_lines = tail_json->valueint;
+        if (tail_lines < 0) {
+            tail_lines = 50;  // Default to 50 if negative
+        }
+    }
+    
+    // Check if process is still running
+    int is_running = 0;
+    int exit_code = -1;
+    
+    if (pid > 0) {
+        // Check process status using waitpid with WNOHANG (non-blocking)
+        int status;
+        pid_t result = waitpid(pid, &status, WNOHANG);
+        
+        if (result == 0) {
+            // Process is still running
+            is_running = 1;
+        } else if (result == pid) {
+            // Process has terminated
+            is_running = 0;
+            if (WIFEXITED(status)) {
+                exit_code = WEXITSTATUS(status);
+            } else if (WIFSIGNALED(status)) {
+                exit_code = -WTERMSIG(status);  // Negative signal number
+            }
+        } else if (result == -1) {
+            // Error or process doesn't exist
+            if (errno == ECHILD) {
+                // No child process with this PID
+                is_running = 0;
+                exit_code = -999;  // Special code for "no such process"
+            }
+        }
+    }
+    
+    // Read log file if provided
     int total_lines = 0;
-    char line[BUFFER_SIZE];
-    while (fgets(line, sizeof(line), log_fp)) {
-        total_lines++;
-    }
-
-    // Calculate which line to start from
-    int start_line = (tail_lines > 0 && total_lines > tail_lines) ? (total_lines - tail_lines) : 0;
-
-    // Read the tail content
-    rewind(log_fp);
     char *tail_output = NULL;
     size_t tail_size = 0;
-    int current_line = 0;
-
-    while (fgets(line, sizeof(line), log_fp)) {
-        if (current_line >= start_line) {
-            size_t line_len = strlen(line);
-            char *new_output = realloc(tail_output, tail_size + line_len + 1);
-            if (!new_output) {
-                free(tail_output);
-                fclose(log_fp);
-                cJSON *error = cJSON_CreateObject();
-                cJSON_AddStringToObject(error, "error", "Out of memory while reading log");
-                return error;
+    
+    if (log_file) {
+        FILE *log_fp = fopen(log_file, "r");
+        if (log_fp) {
+            // Count total lines first
+            char line[BUFFER_SIZE];
+            while (fgets(line, sizeof(line), log_fp)) {
+                total_lines++;
             }
-            tail_output = new_output;
-            memcpy(tail_output + tail_size, line, line_len);
-            tail_size += line_len;
-            tail_output[tail_size] = '\0';
+            
+            // Calculate which line to start from
+            int start_line = (tail_lines > 0 && total_lines > tail_lines) ? (total_lines - tail_lines) : 0;
+            
+            // Read the tail content
+            rewind(log_fp);
+            int current_line = 0;
+            
+            while (fgets(line, sizeof(line), log_fp)) {
+                if (current_line >= start_line) {
+                    size_t line_len = strlen(line);
+                    char *new_output = realloc(tail_output, tail_size + line_len + 1);
+                    if (!new_output) {
+                        free(tail_output);
+                        fclose(log_fp);
+                        cJSON *error = cJSON_CreateObject();
+                        cJSON_AddStringToObject(error, "error", "Out of memory while reading log");
+                        return error;
+                    }
+                    tail_output = new_output;
+                    memcpy(tail_output + tail_size, line, line_len);
+                    tail_size += line_len;
+                    tail_output[tail_size] = '\0';
+                }
+                current_line++;
+            }
+            
+            fclose(log_fp);
         }
-        current_line++;
     }
-
-    fclose(log_fp);
-
+    
     // Build result
     cJSON *result = cJSON_CreateObject();
-    cJSON_AddNumberToObject(result, "exit_code", exit_code);
-    cJSON_AddStringToObject(result, "log_file", log_file);
-    cJSON_AddNumberToObject(result, "total_lines", total_lines);
-    cJSON_AddNumberToObject(result, "tail_lines_returned", current_line - start_line);
-    cJSON_AddStringToObject(result, "tail_output", tail_output ? tail_output : "");
-
-    if (total_lines > tail_lines) {
-        char msg[256];
-        snprintf(msg, sizeof(msg),
-                 "Log file contains %d lines. Only the last %d lines are shown. "
-                 "Use Read tool to access the full log file, or Grep to search for specific content.",
-                 total_lines, tail_lines);
-        cJSON_AddStringToObject(result, "truncation_warning", msg);
-    }
-
-    // Add log file location message to result for visibility
-    char log_msg[512];
-    snprintf(log_msg, sizeof(log_msg), 
-             "Log file: %s (Use Read/Grep tools to inspect)",
-             log_file);
     
-    // Add to JSON result
-    cJSON_AddStringToObject(result, "log_file_message", log_msg);
-    
-    // Also print directly in oneshot mode for immediate visibility
-    if (g_oneshot_mode) {
-        printf("%s\n", log_msg);
-        fflush(stdout);
+    if (pid > 0) {
+        cJSON_AddNumberToObject(result, "pid", pid);
+        cJSON_AddBoolToObject(result, "is_running", is_running);
+        if (!is_running) {
+            cJSON_AddNumberToObject(result, "exit_code", exit_code);
+        }
     }
-
+    
+    if (log_file) {
+        cJSON_AddStringToObject(result, "log_file", log_file);
+        cJSON_AddNumberToObject(result, "total_lines", total_lines);
+        cJSON_AddNumberToObject(result, "tail_lines_returned", tail_lines > total_lines ? total_lines : tail_lines);
+        cJSON_AddStringToObject(result, "tail_output", tail_output ? tail_output : "");
+        
+        if (total_lines > tail_lines) {
+            char msg[256];
+            snprintf(msg, sizeof(msg),
+                     "Log file contains %d lines. Only the last %d lines are shown. "
+                     "Use Read tool to access the full log file, or Grep to search for specific content.",
+                     total_lines, tail_lines);
+            cJSON_AddStringToObject(result, "truncation_warning", msg);
+        }
+    }
+    
+    // Add summary message
+    char summary[512];
+    if (pid > 0) {
+        if (is_running) {
+            snprintf(summary, sizeof(summary), 
+                     "Subagent with PID %d is still running. Log file: %s", 
+                     pid, log_file ? log_file : "(unknown)");
+        } else {
+            snprintf(summary, sizeof(summary), 
+                     "Subagent with PID %d has completed with exit code %d. Log file: %s", 
+                     pid, exit_code, log_file ? log_file : "(unknown)");
+        }
+    } else {
+        snprintf(summary, sizeof(summary), 
+                 "Log file: %s (PID unknown)", 
+                 log_file ? log_file : "(unknown)");
+    }
+    cJSON_AddStringToObject(result, "summary", summary);
+    
     free(tail_output);
+    return result;
+}
+
+STATIC cJSON* tool_interrupt_subagent(cJSON *params, ConversationState *state) {
+    // Check for interrupt before starting
+    if (state && state->interrupt_requested) {
+        cJSON *error = cJSON_CreateObject();
+        cJSON_AddStringToObject(error, "error", "Operation interrupted by user");
+        return error;
+    }
+
+    const cJSON *pid_json = cJSON_GetObjectItem(params, "pid");
+    if (!pid_json || !cJSON_IsNumber(pid_json)) {
+        cJSON *error = cJSON_CreateObject();
+        cJSON_AddStringToObject(error, "error", "Missing 'pid' parameter");
+        return error;
+    }
+    
+    pid_t pid = (pid_t)pid_json->valueint;
+    if (pid <= 0) {
+        cJSON *error = cJSON_CreateObject();
+        cJSON_AddStringToObject(error, "error", "Invalid PID");
+        return error;
+    }
+    
+    // Try to kill the process
+    int killed = 0;
+    char kill_msg[256];
+    
+    // First try SIGTERM (graceful shutdown)
+    if (kill(pid, SIGTERM) == 0) {
+        snprintf(kill_msg, sizeof(kill_msg), 
+                 "Sent SIGTERM to subagent with PID %d. Waiting 2 seconds for graceful shutdown...", 
+                 pid);
+        
+        // Wait a bit for graceful shutdown
+        sleep(2);
+        
+        // Check if it's still running
+        int status;
+        if (waitpid(pid, &status, WNOHANG) == 0) {
+            // Still running, send SIGKILL
+            if (kill(pid, SIGKILL) == 0) {
+                snprintf(kill_msg + strlen(kill_msg), sizeof(kill_msg) - strlen(kill_msg),
+                         " Process did not terminate gracefully. Sent SIGKILL.");
+                killed = 1;
+            } else {
+                snprintf(kill_msg + strlen(kill_msg), sizeof(kill_msg) - strlen(kill_msg),
+                         " Failed to send SIGKILL: %s", strerror(errno));
+            }
+        } else {
+            // Process terminated
+            snprintf(kill_msg + strlen(kill_msg), sizeof(kill_msg) - strlen(kill_msg),
+                     " Process terminated gracefully.");
+            killed = 1;
+        }
+    } else {
+        // SIGTERM failed, maybe process doesn't exist or we don't have permission
+        if (errno == ESRCH) {
+            snprintf(kill_msg, sizeof(kill_msg), 
+                     "No subagent process found with PID %d (may have already terminated).", 
+                     pid);
+        } else if (errno == EPERM) {
+            snprintf(kill_msg, sizeof(kill_msg), 
+                     "Permission denied: cannot kill subagent with PID %d.", 
+                     pid);
+        } else {
+            snprintf(kill_msg, sizeof(kill_msg), 
+                     "Failed to send SIGTERM to PID %d: %s", 
+                     pid, strerror(errno));
+        }
+    }
+    
+    // Build result
+    cJSON *result = cJSON_CreateObject();
+    cJSON_AddNumberToObject(result, "pid", pid);
+    cJSON_AddBoolToObject(result, "killed", killed);
+    cJSON_AddStringToObject(result, "message", kill_msg);
+    
     return result;
 }
 
@@ -3510,6 +3691,8 @@ static Tool tools[] = {
     {"Sleep", tool_sleep},
     {"Bash", tool_bash},
     {"Subagent", tool_subagent},
+    {"CheckSubagentProgress", tool_check_subagent_progress},
+    {"InterruptSubagent", tool_interrupt_subagent},
     {"Read", tool_read},
     {"Write", tool_write},
     {"Edit", tool_edit},
