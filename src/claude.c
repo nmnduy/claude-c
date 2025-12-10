@@ -572,6 +572,77 @@ static char* get_tool_details(const char *tool_name, cJSON *arguments) {
             int count = cJSON_GetArraySize(todos);
             snprintf(details, sizeof(details), "%d task%s", count, count == 1 ? "" : "s");
         }
+    } else if (strcmp(tool_name, "Sleep") == 0) {
+        cJSON *duration = cJSON_GetObjectItem(arguments, "duration");
+        if (cJSON_IsNumber(duration)) {
+            int seconds = duration->valueint;
+            if (seconds == 1) {
+                snprintf(details, sizeof(details), "for 1 second");
+            } else {
+                snprintf(details, sizeof(details), "for %d seconds", seconds);
+            }
+        }
+    } else if (strcmp(tool_name, "UploadImage") == 0) {
+        cJSON *file_path = cJSON_GetObjectItem(arguments, "file_path");
+        if (cJSON_IsString(file_path)) {
+            const char *path = file_path->valuestring;
+            // Extract just the filename from the path
+            const char *filename = strrchr(path, '/');
+            filename = filename ? filename + 1 : path;
+            strncpy(details, filename, sizeof(details) - 1);
+            details[sizeof(details) - 1] = '\0';
+        }
+    } else if (strcmp(tool_name, "CheckSubagentProgress") == 0) {
+        cJSON *pid = cJSON_GetObjectItem(arguments, "pid");
+        cJSON *log_file = cJSON_GetObjectItem(arguments, "log_file");
+        if (cJSON_IsNumber(pid)) {
+            snprintf(details, sizeof(details), "PID %d", pid->valueint);
+        } else if (cJSON_IsString(log_file)) {
+            const char *path = log_file->valuestring;
+            // Extract just the filename from the path
+            const char *filename = strrchr(path, '/');
+            filename = filename ? filename + 1 : path;
+            snprintf(details, sizeof(details), "log: %s", filename);
+        } else {
+            snprintf(details, sizeof(details), "checking subagent");
+        }
+    } else if (strcmp(tool_name, "InterruptSubagent") == 0) {
+        cJSON *pid = cJSON_GetObjectItem(arguments, "pid");
+        if (cJSON_IsNumber(pid)) {
+            snprintf(details, sizeof(details), "PID %d", pid->valueint);
+        } else {
+            snprintf(details, sizeof(details), "interrupt subagent");
+        }
+    } else if (strcmp(tool_name, "ListMcpResources") == 0) {
+        cJSON *server = cJSON_GetObjectItem(arguments, "server");
+        if (cJSON_IsString(server)) {
+            snprintf(details, sizeof(details), "server: %s", server->valuestring);
+        } else {
+            snprintf(details, sizeof(details), "all servers");
+        }
+    } else if (strcmp(tool_name, "ReadMcpResource") == 0) {
+        cJSON *server = cJSON_GetObjectItem(arguments, "server");
+        cJSON *uri = cJSON_GetObjectItem(arguments, "uri");
+        if (cJSON_IsString(server) && cJSON_IsString(uri)) {
+            // Show server and truncate URI if too long
+            const char *uri_str = uri->valuestring;
+            size_t uri_len = strlen(uri_str);
+            if (uri_len > 30) {
+                snprintf(details, sizeof(details), "%s: %.27s...", server->valuestring, uri_str);
+            } else {
+                snprintf(details, sizeof(details), "%s: %s", server->valuestring, uri_str);
+            }
+        } else if (cJSON_IsString(server)) {
+            snprintf(details, sizeof(details), "server: %s", server->valuestring);
+        } else if (cJSON_IsString(uri)) {
+            const char *uri_str = uri->valuestring;
+            size_t uri_len = strlen(uri_str);
+            if (uri_len > 30) {
+                snprintf(details, sizeof(details), "%.27s...", uri_str);
+            } else {
+                snprintf(details, sizeof(details), "%s", uri_str);
+            }
+        }
     } else if (strncmp(tool_name, "mcp_", 4) == 0) {
         // Handle MCP tools (format: mcp_<server>_<toolname>)
         // Extract the actual tool name after the server prefix for display
@@ -824,7 +895,7 @@ static cJSON* tool_upload_image(cJSON *params, ConversationState *state) {
     const char *src_ptr = path_json->valuestring;
     char *dst_ptr = cleaned_path;
     size_t j = 0;
-    
+
     while (*src_ptr && j < sizeof(cleaned_path) - 1) {
         if (*src_ptr != '\n' && *src_ptr != '\r') {
             *dst_ptr++ = *src_ptr;
@@ -833,12 +904,12 @@ static cJSON* tool_upload_image(cJSON *params, ConversationState *state) {
         src_ptr++;
     }
     *dst_ptr = '\0';
-    
+
     // Also trim trailing whitespace
     while (dst_ptr > cleaned_path && (*(dst_ptr-1) == ' ' || *(dst_ptr-1) == '\t')) {
         *(--dst_ptr) = '\0';
     }
-    
+
     // Resolve the path relative to working directory
     char *resolved_path = resolve_path(cleaned_path, state->working_dir);
     if (!resolved_path) {
@@ -851,7 +922,7 @@ static cJSON* tool_upload_image(cJSON *params, ConversationState *state) {
     if (access(resolved_path, R_OK) != 0) {
         cJSON *error = cJSON_CreateObject();
         char err_msg[256];
-        snprintf(err_msg, sizeof(err_msg), "Cannot read image file '%s': %s", 
+        snprintf(err_msg, sizeof(err_msg), "Cannot read image file '%s': %s",
                  resolved_path, strerror(errno));
         cJSON_AddStringToObject(error, "error", err_msg);
         free(resolved_path);
@@ -864,16 +935,16 @@ static cJSON* tool_upload_image(cJSON *params, ConversationState *state) {
     int created_temp_copy = 0;
     char *temp_copy_path = NULL;
     char *path_to_read = resolved_path; // This will point to either original or temp copy
-    
+
     if (strstr(resolved_path, "/var/folders/") == resolved_path ||
         strstr(resolved_path, "/private/var/folders/") == resolved_path) {
         // This is a macOS temporary file - create a copy in a safe location
-        
+
         // Create a temporary filename in /tmp
         // Use mkstemp to create a secure temp file
         char template[PATH_MAX];
         snprintf(template, sizeof(template), "/tmp/claude-c-upload-XXXXXX");
-        
+
         int fd = mkstemp(template);
         if (fd == -1) {
             LOG_WARN("Failed to create temp file for macOS screenshot copy: %s", strerror(errno));
@@ -881,24 +952,24 @@ static cJSON* tool_upload_image(cJSON *params, ConversationState *state) {
         } else {
             close(fd);
             temp_copy_path = strdup(template);
-            
+
             // Copy the file
             FILE *src = fopen(resolved_path, "rb");
             FILE *dst = fopen(temp_copy_path, "wb");
-            
+
             if (src && dst) {
                 char buffer[8192];
                 size_t bytes;
                 while ((bytes = fread(buffer, 1, sizeof(buffer), src)) > 0) {
                     fwrite(buffer, 1, bytes, dst);
                 }
-                
+
                 fclose(src);
                 fclose(dst);
-                
-                LOG_DEBUG("Copied macOS temporary screenshot from '%s' to '%s'", 
+
+                LOG_DEBUG("Copied macOS temporary screenshot from '%s' to '%s'",
                          resolved_path, temp_copy_path);
-                
+
                 // Use the temp copy for reading
                 path_to_read = temp_copy_path;
                 created_temp_copy = 1;
@@ -919,7 +990,7 @@ static cJSON* tool_upload_image(cJSON *params, ConversationState *state) {
     if (!f) {
         cJSON *error = cJSON_CreateObject();
         char err_msg[256];
-        snprintf(err_msg, sizeof(err_msg), "Failed to open image file '%s': %s", 
+        snprintf(err_msg, sizeof(err_msg), "Failed to open image file '%s': %s",
                  path_to_read, strerror(errno));
         cJSON_AddStringToObject(error, "error", err_msg);
         free(resolved_path);
@@ -1004,7 +1075,7 @@ static cJSON* tool_upload_image(cJSON *params, ConversationState *state) {
                 lower_ext[k] = (char)tolower((unsigned char)ext[k]);
             }
             lower_ext[ext_len] = '\0';
-            
+
             if (strcmp(lower_ext, ".png") == 0) {
                 mime_type = "image/png";
             } else if (strcmp(lower_ext, ".jpg") == 0 || strcmp(lower_ext, ".jpeg") == 0) {
@@ -1022,13 +1093,13 @@ static cJSON* tool_upload_image(cJSON *params, ConversationState *state) {
             }
         }
     }
-    
+
     // Try to detect image type from magic numbers (file signatures)
     // This helps with temporary files that might have no extension or wrong extension
     if (file_size >= 8) {  // Need at least 8 bytes for most magic numbers
         unsigned char magic[8];
         memcpy(magic, image_data, 8);
-        
+
         // PNG: \x89PNG\r\n\x1a\n
         if (magic[0] == 0x89 && magic[1] == 'P' && magic[2] == 'N' && magic[3] == 'G' &&
             magic[4] == 0x0D && magic[5] == 0x0A && magic[6] == 0x1A && magic[7] == 0x0A) {
@@ -1048,7 +1119,7 @@ static cJSON* tool_upload_image(cJSON *params, ConversationState *state) {
             // Check first 4 bytes for "RIFF"
             if (magic[0] == 'R' && magic[1] == 'I' && magic[2] == 'F' && magic[3] == 'F') {
                 // Check bytes 8-11 for "WEBP"
-                if (image_data[8] == 'W' && image_data[9] == 'E' && 
+                if (image_data[8] == 'W' && image_data[9] == 'E' &&
                     image_data[10] == 'B' && image_data[11] == 'P') {
                     mime_type = "image/webp";
                 }
@@ -1078,13 +1149,13 @@ static cJSON* tool_upload_image(cJSON *params, ConversationState *state) {
     cJSON_AddStringToObject(result, "content_type", "image"); // Special marker for image content
 
     free(base64_data);
-    
+
     // Clean up temp file if we created one
     if (created_temp_copy && temp_copy_path) {
         LOG_DEBUG("Cleaning up temporary screenshot copy: %s", temp_copy_path);
         unlink(temp_copy_path);
     }
-    
+
     // Free paths
     free(resolved_path);
     if (temp_copy_path) {
@@ -1758,13 +1829,13 @@ STATIC cJSON* tool_subagent(cJSON *params, ConversationState *state) {
 
     // Parent process - return immediately with PID and log file info
     // The orchestrator can check progress by reading the log file
-    
+
     // Build result with PID and log file info
     cJSON *result = cJSON_CreateObject();
     cJSON_AddNumberToObject(result, "pid", pid);
     cJSON_AddStringToObject(result, "log_file", log_file);
     cJSON_AddNumberToObject(result, "timeout_seconds", timeout_seconds);
-    
+
     // Add message about how to check progress
     char msg[512];
     snprintf(msg, sizeof(msg),
@@ -1772,7 +1843,7 @@ STATIC cJSON* tool_subagent(cJSON *params, ConversationState *state) {
              "Use 'CheckSubagentProgress' tool to monitor progress or 'InterruptSubagent' to stop it.",
              pid, log_file);
     cJSON_AddStringToObject(result, "message", msg);
-    
+
     return result;
 }
 
@@ -1786,25 +1857,25 @@ STATIC cJSON* tool_check_subagent_progress(cJSON *params, ConversationState *sta
 
     const cJSON *pid_json = cJSON_GetObjectItem(params, "pid");
     const cJSON *log_file_json = cJSON_GetObjectItem(params, "log_file");
-    
+
     pid_t pid = 0;
     const char *log_file = NULL;
-    
+
     // We need either PID or log file to check progress
     if (pid_json && cJSON_IsNumber(pid_json)) {
         pid = (pid_t)pid_json->valueint;
     }
-    
+
     if (log_file_json && cJSON_IsString(log_file_json)) {
         log_file = log_file_json->valuestring;
     }
-    
+
     if (pid == 0 && !log_file) {
         cJSON *error = cJSON_CreateObject();
         cJSON_AddStringToObject(error, "error", "Missing 'pid' or 'log_file' parameter");
         return error;
     }
-    
+
     // Get optional tail_lines parameter (default: 50 lines from end)
     int tail_lines = 50;
     const cJSON *tail_json = cJSON_GetObjectItem(params, "tail_lines");
@@ -1814,16 +1885,16 @@ STATIC cJSON* tool_check_subagent_progress(cJSON *params, ConversationState *sta
             tail_lines = 50;  // Default to 50 if negative
         }
     }
-    
+
     // Check if process is still running
     int is_running = 0;
     int exit_code = -1;
-    
+
     if (pid > 0) {
         // Check process status using waitpid with WNOHANG (non-blocking)
         int status;
         pid_t result = waitpid(pid, &status, WNOHANG);
-        
+
         if (result == 0) {
             // Process is still running
             is_running = 1;
@@ -1844,12 +1915,12 @@ STATIC cJSON* tool_check_subagent_progress(cJSON *params, ConversationState *sta
             }
         }
     }
-    
+
     // Read log file if provided
     int total_lines = 0;
     char *tail_output = NULL;
     size_t tail_size = 0;
-    
+
     if (log_file) {
         FILE *log_fp = fopen(log_file, "r");
         if (log_fp) {
@@ -1858,14 +1929,14 @@ STATIC cJSON* tool_check_subagent_progress(cJSON *params, ConversationState *sta
             while (fgets(line, sizeof(line), log_fp)) {
                 total_lines++;
             }
-            
+
             // Calculate which line to start from
             int start_line = (tail_lines > 0 && total_lines > tail_lines) ? (total_lines - tail_lines) : 0;
-            
+
             // Read the tail content
             rewind(log_fp);
             int current_line = 0;
-            
+
             while (fgets(line, sizeof(line), log_fp)) {
                 if (current_line >= start_line) {
                     size_t line_len = strlen(line);
@@ -1884,14 +1955,14 @@ STATIC cJSON* tool_check_subagent_progress(cJSON *params, ConversationState *sta
                 }
                 current_line++;
             }
-            
+
             fclose(log_fp);
         }
     }
-    
+
     // Build result
     cJSON *result = cJSON_CreateObject();
-    
+
     if (pid > 0) {
         cJSON_AddNumberToObject(result, "pid", pid);
         cJSON_AddBoolToObject(result, "is_running", is_running);
@@ -1899,13 +1970,13 @@ STATIC cJSON* tool_check_subagent_progress(cJSON *params, ConversationState *sta
             cJSON_AddNumberToObject(result, "exit_code", exit_code);
         }
     }
-    
+
     if (log_file) {
         cJSON_AddStringToObject(result, "log_file", log_file);
         cJSON_AddNumberToObject(result, "total_lines", total_lines);
         cJSON_AddNumberToObject(result, "tail_lines_returned", tail_lines > total_lines ? total_lines : tail_lines);
         cJSON_AddStringToObject(result, "tail_output", tail_output ? tail_output : "");
-        
+
         if (total_lines > tail_lines) {
             char msg[256];
             snprintf(msg, sizeof(msg),
@@ -1915,26 +1986,26 @@ STATIC cJSON* tool_check_subagent_progress(cJSON *params, ConversationState *sta
             cJSON_AddStringToObject(result, "truncation_warning", msg);
         }
     }
-    
+
     // Add summary message
     char summary[512];
     if (pid > 0) {
         if (is_running) {
-            snprintf(summary, sizeof(summary), 
-                     "Subagent with PID %d is still running. Log file: %s", 
+            snprintf(summary, sizeof(summary),
+                     "Subagent with PID %d is still running. Log file: %s",
                      pid, log_file ? log_file : "(unknown)");
         } else {
-            snprintf(summary, sizeof(summary), 
-                     "Subagent with PID %d has completed with exit code %d. Log file: %s", 
+            snprintf(summary, sizeof(summary),
+                     "Subagent with PID %d has completed with exit code %d. Log file: %s",
                      pid, exit_code, log_file ? log_file : "(unknown)");
         }
     } else {
-        snprintf(summary, sizeof(summary), 
-                 "Log file: %s (PID unknown)", 
+        snprintf(summary, sizeof(summary),
+                 "Log file: %s (PID unknown)",
                  log_file ? log_file : "(unknown)");
     }
     cJSON_AddStringToObject(result, "summary", summary);
-    
+
     free(tail_output);
     return result;
 }
@@ -1953,27 +2024,27 @@ STATIC cJSON* tool_interrupt_subagent(cJSON *params, ConversationState *state) {
         cJSON_AddStringToObject(error, "error", "Missing 'pid' parameter");
         return error;
     }
-    
+
     pid_t pid = (pid_t)pid_json->valueint;
     if (pid <= 0) {
         cJSON *error = cJSON_CreateObject();
         cJSON_AddStringToObject(error, "error", "Invalid PID");
         return error;
     }
-    
+
     // Try to kill the process
     int killed = 0;
     char kill_msg[256];
-    
+
     // First try SIGTERM (graceful shutdown)
     if (kill(pid, SIGTERM) == 0) {
-        snprintf(kill_msg, sizeof(kill_msg), 
-                 "Sent SIGTERM to subagent with PID %d. Waiting 2 seconds for graceful shutdown...", 
+        snprintf(kill_msg, sizeof(kill_msg),
+                 "Sent SIGTERM to subagent with PID %d. Waiting 2 seconds for graceful shutdown...",
                  pid);
-        
+
         // Wait a bit for graceful shutdown
         sleep(2);
-        
+
         // Check if it's still running
         int status;
         if (waitpid(pid, &status, WNOHANG) == 0) {
@@ -1995,26 +2066,26 @@ STATIC cJSON* tool_interrupt_subagent(cJSON *params, ConversationState *state) {
     } else {
         // SIGTERM failed, maybe process doesn't exist or we don't have permission
         if (errno == ESRCH) {
-            snprintf(kill_msg, sizeof(kill_msg), 
-                     "No subagent process found with PID %d (may have already terminated).", 
+            snprintf(kill_msg, sizeof(kill_msg),
+                     "No subagent process found with PID %d (may have already terminated).",
                      pid);
         } else if (errno == EPERM) {
-            snprintf(kill_msg, sizeof(kill_msg), 
-                     "Permission denied: cannot kill subagent with PID %d.", 
+            snprintf(kill_msg, sizeof(kill_msg),
+                     "Permission denied: cannot kill subagent with PID %d.",
                      pid);
         } else {
-            snprintf(kill_msg, sizeof(kill_msg), 
-                     "Failed to send SIGTERM to PID %d: %s", 
+            snprintf(kill_msg, sizeof(kill_msg),
+                     "Failed to send SIGTERM to PID %d: %s",
                      pid, strerror(errno));
         }
     }
-    
+
     // Build result
     cJSON *result = cJSON_CreateObject();
     cJSON_AddNumberToObject(result, "pid", pid);
     cJSON_AddBoolToObject(result, "killed", killed);
     cJSON_AddStringToObject(result, "message", kill_msg);
-    
+
     return result;
 }
 
@@ -6371,11 +6442,11 @@ static void print_token_usage(ConversationState *state) {
     if (!state || !state->persistence_db) {
         return;
     }
-    
+
     int prompt_tokens = 0;
     int completion_tokens = 0;
     int cached_tokens = 0;
-    
+
     // Get token usage for this session
     int result = persistence_get_session_token_usage(
         state->persistence_db,
@@ -6384,11 +6455,11 @@ static void print_token_usage(ConversationState *state) {
         &completion_tokens,
         &cached_tokens
     );
-    
+
     if (result == 0) {
         // Calculate total tokens (excluding cached tokens since they're free)
         int total_tokens = prompt_tokens + completion_tokens;
-        
+
         // Print token usage summary
         fprintf(stderr, "\n=== Token Usage Summary ===\n");
         fprintf(stderr, "Session: %s\n", state->session_id ? state->session_id : "unknown");
@@ -6396,7 +6467,7 @@ static void print_token_usage(ConversationState *state) {
         fprintf(stderr, "Completion tokens: %d\n", completion_tokens);
         if (cached_tokens > 0) {
             fprintf(stderr, "Cached tokens (free): %d\n", cached_tokens);
-            fprintf(stderr, "Total billed tokens: %d (excluding %d cached)\n", 
+            fprintf(stderr, "Total billed tokens: %d (excluding %d cached)\n",
                     total_tokens, cached_tokens);
         } else {
             fprintf(stderr, "Total tokens: %d\n", total_tokens);
@@ -6445,11 +6516,11 @@ static int single_command_mode(ConversationState *state, const char *prompt) {
     // Process response recursively (handles tool calls and follow-up responses)
     int result = process_single_command_response(state, response);
     api_response_free(response);
-    
+
     // Print token usage summary at the end of single command mode
     // This includes subagent executions
     print_token_usage(state);
-    
+
     return result;
 }
 
@@ -6518,18 +6589,18 @@ static int process_single_command_response(ConversationState *state, ApiResponse
 
                 // Print tool name header with details
                 char *tool_details = get_tool_details(tool->name, input);
-                
+
                 // Add timestamp to tool details
                 char details_with_timestamp[384]; // 256 for details + 128 for timestamp
                 if (tool_details && strlen(tool_details) > 0) {
                     char timestamp[32]; // Increased for YYYY-MM-DD HH:MM:SS format
                     get_current_timestamp(timestamp, sizeof(timestamp));
-                    snprintf(details_with_timestamp, sizeof(details_with_timestamp), 
+                    snprintf(details_with_timestamp, sizeof(details_with_timestamp),
                              "%s (%s)", tool_details, timestamp);
                 } else {
                     char timestamp[32]; // Increased for YYYY-MM-DD HH:MM:SS format
                     get_current_timestamp(timestamp, sizeof(timestamp));
-                    snprintf(details_with_timestamp, sizeof(details_with_timestamp), 
+                    snprintf(details_with_timestamp, sizeof(details_with_timestamp),
                              "(%s)", timestamp);
                 }
 
@@ -6642,14 +6713,14 @@ static int process_single_command_response(ConversationState *state, ApiResponse
 static int create_unix_socket(const char *socket_path) {
     // Remove existing socket file if it exists
     unlink(socket_path);
-    
+
     // Create socket
     int server_fd = socket(AF_UNIX, SOCK_STREAM, 0);
     if (server_fd < 0) {
         LOG_ERROR("Failed to create socket: %s", strerror(errno));
         return -1;
     }
-    
+
     // Set socket to non-blocking
     int flags = fcntl(server_fd, F_GETFL, 0);
     if (flags < 0) {
@@ -6662,19 +6733,19 @@ static int create_unix_socket(const char *socket_path) {
         close(server_fd);
         return -1;
     }
-    
+
     // Bind socket
     struct sockaddr_un addr;
     memset(&addr, 0, sizeof(addr));
     addr.sun_family = AF_UNIX;
     strncpy(addr.sun_path, socket_path, sizeof(addr.sun_path) - 1);
-    
+
     if (bind(server_fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
         LOG_ERROR("Failed to bind socket: %s", strerror(errno));
         close(server_fd);
         return -1;
     }
-    
+
     // Listen for connections
     if (listen(server_fd, 1) < 0) {
         LOG_ERROR("Failed to listen on socket: %s", strerror(errno));
@@ -6682,7 +6753,7 @@ static int create_unix_socket(const char *socket_path) {
         unlink(socket_path);
         return -1;
     }
-    
+
     LOG_INFO("Socket created and listening on: %s", socket_path);
     return server_fd;
 }
@@ -6691,7 +6762,7 @@ static int create_unix_socket(const char *socket_path) {
 static int accept_socket_connection(int server_fd) {
     struct sockaddr_un addr;
     socklen_t addr_len = sizeof(addr);
-    
+
     int client_fd = accept(server_fd, (struct sockaddr*)&addr, &addr_len);
     if (client_fd < 0) {
         if (errno != EAGAIN && errno != EWOULDBLOCK) {
@@ -6699,13 +6770,13 @@ static int accept_socket_connection(int server_fd) {
         }
         return -1;
     }
-    
+
     // Set client socket to non-blocking
     int flags = fcntl(client_fd, F_GETFL, 0);
     if (flags >= 0) {
         fcntl(client_fd, F_SETFL, flags | O_NONBLOCK);
     }
-    
+
     LOG_INFO("Accepted socket connection");
     return client_fd;
 }
@@ -6723,7 +6794,7 @@ static int read_socket_input(int client_fd, char *buffer, size_t buffer_size) {
         LOG_INFO("Socket client disconnected");
         return -1; // Client disconnected
     }
-    
+
     buffer[bytes_read] = '\0';
     return (int)bytes_read;
 }
@@ -6741,14 +6812,14 @@ static int socket_external_input_callback(void *user_data, char *buffer, size_t 
     if (!ctx || !ctx->socket_ipc.enabled) {
         return 0;
     }
-    
+
     SocketIPC *socket_ipc = &ctx->socket_ipc;
-    
+
     // Accept new connection if none
     if (socket_ipc->client_fd < 0) {
         socket_ipc->client_fd = accept_socket_connection(socket_ipc->server_fd);
     }
-    
+
     // Read from socket if connected
     if (socket_ipc->client_fd >= 0 && socket_has_data(socket_ipc->client_fd)) {
         int bytes = read_socket_input(socket_ipc->client_fd, buffer, buffer_size - 1);
@@ -6761,30 +6832,30 @@ static int socket_external_input_callback(void *user_data, char *buffer, size_t 
             return 0;
         }
     }
-    
+
     return 0;
 }
 
 // Cleanup socket resources
 static void cleanup_socket(SocketIPC *socket_ipc) {
     if (!socket_ipc) return;
-    
+
     if (socket_ipc->client_fd >= 0) {
         close(socket_ipc->client_fd);
         socket_ipc->client_fd = -1;
     }
-    
+
     if (socket_ipc->server_fd >= 0) {
         close(socket_ipc->server_fd);
         socket_ipc->server_fd = -1;
     }
-    
+
     if (socket_ipc->socket_path) {
         unlink(socket_ipc->socket_path);
         free(socket_ipc->socket_path);
         socket_ipc->socket_path = NULL;
     }
-    
+
     socket_ipc->enabled = 0;
 }
 
@@ -6895,7 +6966,7 @@ static void interactive_mode(ConversationState *state, int socket_ipc_enabled, c
     };
 
     void *event_loop_queue = tui_queue_initialized ? (void *)&tui_queue : NULL;
-    tui_event_loop(&tui, prompt, submit_input_callback, interrupt_callback, NULL, 
+    tui_event_loop(&tui, prompt, submit_input_callback, interrupt_callback, NULL,
                    socket_ipc.enabled ? socket_external_input_callback : NULL,
                    &ctx, event_loop_queue);
 
@@ -6915,7 +6986,7 @@ static void interactive_mode(ConversationState *state, int socket_ipc_enabled, c
 
     // Cleanup socket IPC
     cleanup_socket(&socket_ipc);
-    
+
     // Cleanup TUI
     tui_cleanup(&tui);
     printf("Goodbye!\n");
@@ -7280,7 +7351,7 @@ int main(int argc, char *argv[]) {
             fprintf(stderr, "Error: Failed to open persistence database\n");
             return 1;
         }
-        
+
         int result = session_list_sessions(db, session_limit);
         persistence_close(db);
         return result == 0 ? 0 : 1;
@@ -7476,16 +7547,16 @@ int main(int argc, char *argv[]) {
     // Resume session if requested
     if (resume_session && persistence_db) {
         LOG_INFO("Attempting to resume session: %s", resume_session_id ? resume_session_id : "most recent");
-        
+
         // Load session from database
         if (session_load_from_db(persistence_db, resume_session_id, &state) == 0) {
             LOG_INFO("Successfully resumed session: %s", state.session_id);
-            
+
             // Update session ID for logging
             if (state.session_id) {
                 log_set_session_id(state.session_id);
             }
-            
+
             // Update the local session_id variable to match the loaded session
             if (session_id && state.session_id && strcmp(session_id, state.session_id) != 0) {
                 free(session_id);
@@ -7498,7 +7569,7 @@ int main(int argc, char *argv[]) {
             } else {
                 fprintf(stderr, "Error: Failed to resume most recent session. No sessions found in database.\n");
             }
-            
+
             // Clean up and exit
             conversation_free(&state);
             free(session_id);

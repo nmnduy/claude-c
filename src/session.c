@@ -173,7 +173,7 @@ int session_load_from_db(PersistenceDB *db, const char *session_id, Conversation
 
         // Parse OpenAI response into internal message format
         InternalMessage assistant_msg = parse_openai_response(response);
-        
+
         // Add assistant message to conversation
         if (assistant_msg.content_count > 0) {
             if (conversation_state_lock(state) == 0) {
@@ -394,7 +394,7 @@ int session_list_sessions(PersistenceDB *db, int limit) {
         char *timestamp = NULL;
         char *model = NULL;
         int message_count = 0;
-        
+
         if (session_get_metadata(db, sessions[i], &timestamp, &model, &message_count) == 0) {
             // Truncate session ID for display
             char display_id[41];
@@ -403,19 +403,19 @@ int session_list_sessions(PersistenceDB *db, int limit) {
             } else {
                 snprintf(display_id, sizeof(display_id), "%s", sessions[i]);
             }
-            
-            printf("%-40s %-20s %-15s %d\n", 
-                   display_id, 
+
+            printf("%-40s %-20s %-15s %d\n",
+                   display_id,
                    timestamp ? timestamp : "unknown",
                    model ? model : "unknown",
                    message_count);
-            
+
             free(timestamp);
             free(model);
             count++;
         } else {
-            printf("%-40s %-20s %-15s %s\n", 
-                   sessions[i], 
+            printf("%-40s %-20s %-15s %s\n",
+                   sessions[i],
                    "unknown", "unknown", "unknown");
             count++;
         }

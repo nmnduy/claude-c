@@ -337,12 +337,12 @@ int persistence_get_last_cached_tokens(
     if (rc == SQLITE_ROW) {
         // First try the cached_tokens field (highest priority)
         *cached_tokens = sqlite3_column_int(stmt, 0);
-        
+
         // If cached_tokens is 0, try prompt_cache_hit_tokens as fallback
         if (*cached_tokens == 0) {
             *cached_tokens = sqlite3_column_int(stmt, 1);
         }
-        
+
         LOG_DEBUG("Retrieved last cached tokens for session %s: %d",
                  session_id ? session_id : "all", *cached_tokens);
         sqlite3_finalize(stmt);

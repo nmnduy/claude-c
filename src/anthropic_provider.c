@@ -297,32 +297,32 @@ static cJSON* anthropic_to_openai_response(const char *anthropic_raw) {
         cJSON *output_tokens = cJSON_GetObjectItem(usage, "output_tokens");
         if (cJSON_IsNumber(input_tokens)) cJSON_AddNumberToObject(openai_usage, "prompt_tokens", input_tokens->valuedouble);
         if (cJSON_IsNumber(output_tokens)) cJSON_AddNumberToObject(openai_usage, "completion_tokens", output_tokens->valuedouble);
-        
+
         // Preserve cache-related fields for token usage tracking
         // Anthropic-style: cache_read_input_tokens
         cJSON *cache_read_input_tokens = cJSON_GetObjectItem(usage, "cache_read_input_tokens");
         if (cache_read_input_tokens && cJSON_IsNumber(cache_read_input_tokens)) {
             cJSON_AddNumberToObject(openai_usage, "cache_read_input_tokens", cache_read_input_tokens->valuedouble);
         }
-        
+
         // DeepSeek/Moonshot-style: cached_tokens
         cJSON *cached_tokens = cJSON_GetObjectItem(usage, "cached_tokens");
         if (cached_tokens && cJSON_IsNumber(cached_tokens)) {
             cJSON_AddNumberToObject(openai_usage, "cached_tokens", cached_tokens->valuedouble);
         }
-        
+
         // DeepSeek-style: prompt_cache_hit_tokens and prompt_cache_miss_tokens
         cJSON *prompt_cache_hit_tokens = cJSON_GetObjectItem(usage, "prompt_cache_hit_tokens");
         cJSON *prompt_cache_miss_tokens = cJSON_GetObjectItem(usage, "prompt_cache_miss_tokens");
-        
+
         if (prompt_cache_hit_tokens && cJSON_IsNumber(prompt_cache_hit_tokens)) {
             cJSON_AddNumberToObject(openai_usage, "prompt_cache_hit_tokens", prompt_cache_hit_tokens->valuedouble);
         }
-        
+
         if (prompt_cache_miss_tokens && cJSON_IsNumber(prompt_cache_miss_tokens)) {
             cJSON_AddNumberToObject(openai_usage, "prompt_cache_miss_tokens", prompt_cache_miss_tokens->valuedouble);
         }
-        
+
         // DeepSeek-style: prompt_tokens_details with cached_tokens inside
         cJSON *prompt_tokens_details = cJSON_GetObjectItem(usage, "prompt_tokens_details");
         if (prompt_tokens_details) {
@@ -331,7 +331,7 @@ static cJSON* anthropic_to_openai_response(const char *anthropic_raw) {
                 cJSON_AddItemToObject(openai_usage, "prompt_tokens_details", prompt_tokens_details_copy);
             }
         }
-        
+
         cJSON_AddItemToObject(openai, "usage", openai_usage);
     }
 

@@ -1462,12 +1462,12 @@ cJSON* bedrock_convert_response(const char *bedrock_response) {
         // DeepSeek-style: prompt_cache_hit_tokens and prompt_cache_miss_tokens
         cJSON *prompt_cache_hit_tokens = cJSON_GetObjectItem(usage_anthropic, "prompt_cache_hit_tokens");
         cJSON *prompt_cache_miss_tokens = cJSON_GetObjectItem(usage_anthropic, "prompt_cache_miss_tokens");
-        
+
         if (prompt_cache_hit_tokens && cJSON_IsNumber(prompt_cache_hit_tokens)) {
             cJSON_AddNumberToObject(usage, "prompt_cache_hit_tokens", prompt_cache_hit_tokens->valueint);
             LOG_DEBUG("Preserved prompt_cache_hit_tokens: %d", prompt_cache_hit_tokens->valueint);
         }
-        
+
         if (prompt_cache_miss_tokens && cJSON_IsNumber(prompt_cache_miss_tokens)) {
             cJSON_AddNumberToObject(usage, "prompt_cache_miss_tokens", prompt_cache_miss_tokens->valueint);
             LOG_DEBUG("Preserved prompt_cache_miss_tokens: %d", prompt_cache_miss_tokens->valueint);

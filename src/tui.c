@@ -207,7 +207,7 @@ static void render_status_window(TUIState *tui) {
 
         // Show both prompt tokens and cached tokens in the format: "Prompt: X (+Y cached) "
         if (cached_tokens > 0) {
-            snprintf(token_str, sizeof(token_str), "Prompt: %d (+%d cached) ", 
+            snprintf(token_str, sizeof(token_str), "Prompt: %d (+%d cached) ",
                      prompt_tokens, cached_tokens);
         } else {
             snprintf(token_str, sizeof(token_str), "Prompt: %d ", prompt_tokens);
@@ -2103,24 +2103,24 @@ static int is_line_empty(WINDOW *pad, int line) {
 
     int pad_width, pad_height;
     getmaxyx(pad, pad_height, pad_width);
-    
+
     if (line >= pad_height) {
         return 0;
     }
 
     // Check first 100 columns (or pad width, whichever is smaller)
     int cols_to_check = pad_width < 100 ? pad_width : 100;
-    
+
     for (int col = 0; col < cols_to_check; col++) {
         chtype ch = mvwinch(pad, line, col);
         char c = (char)(ch & A_CHARTEXT);
-        
+
         // If we find any non-whitespace character, line is not empty
         if (c != ' ' && c != '\t' && c != '\0' && c != '\n') {
             return 0;
         }
     }
-    
+
     return 1;  // Line is empty
 }
 
@@ -2138,20 +2138,20 @@ static int find_next_paragraph(WINDOW *pad, int start_line, int max_lines) {
     // Start searching from the line after start_line
     // Skip current position if it's already on an empty line
     int search_start = start_line + 1;
-    
+
     // If we're on an empty line, skip past consecutive empty lines first
-    while (search_start < max_lines && search_start < pad_height && 
+    while (search_start < max_lines && search_start < pad_height &&
            is_line_empty(pad, search_start)) {
         search_start++;
     }
-    
+
     // Now find the next empty line
     for (int line = search_start; line < max_lines && line < pad_height; line++) {
         if (is_line_empty(pad, line)) {
             return line;
         }
     }
-    
+
     // No paragraph boundary found, return max_lines (scroll to end)
     return max_lines - 1;
 }
@@ -2171,19 +2171,19 @@ static int find_prev_paragraph(WINDOW *pad, int start_line, int max_lines) {
     // Start searching from the line before start_line
     // Skip current position if it's already on an empty line
     int search_start = start_line - 1;
-    
+
     // If we're on an empty line, skip past consecutive empty lines first
     while (search_start >= 0 && is_line_empty(pad, search_start)) {
         search_start--;
     }
-    
+
     // Now find the previous empty line
     for (int line = search_start; line >= 0; line--) {
         if (is_line_empty(pad, line)) {
             return line;
         }
     }
-    
+
     // No paragraph boundary found, return 0 (scroll to top)
     return 0;
 }
@@ -2328,16 +2328,16 @@ static int handle_normal_mode_input(TUIState *tui, int ch, const char *prompt, v
             {
                 int current_scroll = window_manager_get_scroll_offset(&tui->wm);
                 int content_lines = window_manager_get_content_lines(&tui->wm);
-                
+
                 // Find next paragraph boundary from current scroll position
                 int next_para = find_next_paragraph(tui->wm.conv_pad, current_scroll, content_lines);
-                
+
                 if (next_para > current_scroll) {
                     // Calculate how many lines to scroll
                     int scroll_delta = next_para - current_scroll;
                     tui_scroll_conversation(tui, scroll_delta);
-                    
-                    LOG_DEBUG("[TUI] Paragraph jump down: from line %d to %d (delta=%d)", 
+
+                    LOG_DEBUG("[TUI] Paragraph jump down: from line %d to %d (delta=%d)",
                              current_scroll, next_para, scroll_delta);
                 }
                 input_redraw(tui, prompt);
@@ -2348,16 +2348,16 @@ static int handle_normal_mode_input(TUIState *tui, int ch, const char *prompt, v
             {
                 int current_scroll = window_manager_get_scroll_offset(&tui->wm);
                 int content_lines = window_manager_get_content_lines(&tui->wm);
-                
+
                 // Find previous paragraph boundary from current scroll position
                 int prev_para = find_prev_paragraph(tui->wm.conv_pad, current_scroll, content_lines);
-                
+
                 if (prev_para < current_scroll) {
                     // Calculate how many lines to scroll (negative for up)
                     int scroll_delta = prev_para - current_scroll;
                     tui_scroll_conversation(tui, scroll_delta);
-                    
-                    LOG_DEBUG("[TUI] Paragraph jump up: from line %d to %d (delta=%d)", 
+
+                    LOG_DEBUG("[TUI] Paragraph jump up: from line %d to %d (delta=%d)",
                              current_scroll, prev_para, scroll_delta);
                 }
                 input_redraw(tui, prompt);
@@ -3240,21 +3240,21 @@ int tui_event_loop(TUIState *tui, const char *prompt,
                 // Process external input
                 ext_buffer[ext_bytes] = '\0';
                 LOG_DEBUG("[TUI] External input received: %s", ext_buffer);
-                
+
                 // Check for termination signal
                 if (ext_bytes == 1 && ext_buffer[0] == 0x04) {
                     LOG_INFO("Termination signal received via external input");
                     running = 0;
                     break;
                 }
-                
+
                 // Check for termination command
                 if (ext_bytes >= 12 && strncmp(ext_buffer, "__TERMINATE__", 12) == 0) {
                     LOG_INFO("Termination command received via external input");
                     running = 0;
                     break;
                 }
-                
+
                 // Submit the input
                 if (ext_buffer[0] != '\0') {
                     LOG_DEBUG("[TUI] Submitting external input (%d bytes)", ext_bytes);
