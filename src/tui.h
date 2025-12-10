@@ -193,12 +193,18 @@ typedef int (*InterruptCallback)(void *user_data);
 // Returns: void (does not affect event loop flow)
 typedef void (*KeypressCallback)(void *user_data);
 
+// Event loop callback for checking external input sources (e.g., sockets)
+// Called periodically to check for input from external sources
+// Returns: >0 if input was read (bytes in buffer), 0 if no input, -1 on error/termination
+typedef int (*ExternalInputCallback)(void *user_data, char *buffer, size_t buffer_size);
+
 // Main event loop (non-blocking, ~60 FPS)
 // Processes input, handles resize, and processes TUI message queue
 // prompt: Input prompt to display
 // submit_callback: Function to call when user submits input
 // interrupt_callback: Function to call when user presses Ctrl+C (can be NULL)
 // keypress_callback: Function to call on any keypress (can be NULL)
+// external_input_callback: Function to check for external input (e.g., sockets) (can be NULL)
 // user_data: Opaque pointer passed to callbacks
 // msg_queue: Optional TUI message queue to process (can be NULL)
 // Returns: 0 on normal exit, -1 on error
@@ -206,6 +212,7 @@ int tui_event_loop(TUIState *tui, const char *prompt,
                    InputSubmitCallback submit_callback,
                    InterruptCallback interrupt_callback,
                    KeypressCallback keypress_callback,
+                   ExternalInputCallback external_input_callback,
                    void *user_data,
                    void *msg_queue);
 

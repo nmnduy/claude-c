@@ -35,6 +35,11 @@
 #ifdef __APPLE__
 #include <mach-o/dyld.h>
 #endif
+
+// Socket IPC support
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <poll.h>
 #include "colorscheme.h"
 #include "fallback_colors.h"
 #include "patch_parser.h"
@@ -5923,6 +5928,14 @@ static void ai_worker_handle_instruction(AIWorkerContext *ctx, const AIInstructi
 
 
 
+// Socket IPC context
+typedef struct {
+    int server_fd;           // Listening socket file descriptor
+    int client_fd;           // Connected client file descriptor (-1 if none)
+    char *socket_path;       // Path to Unix domain socket
+    int enabled;             // Whether socket IPC is enabled
+} SocketIPC;
+
 typedef struct {
     ConversationState *state;
     TUIState *tui;
@@ -5930,6 +5943,7 @@ typedef struct {
     AIInstructionQueue *instruction_queue;
     TUIMessageQueue *tui_queue;
     int instruction_queue_capacity;
+    SocketIPC socket_ipc;    // Socket IPC support
 } InteractiveContext;
 
 // Interrupt callback invoked by the TUI event loop when the user presses Ctrl+C in INSERT mode
@@ -6416,8 +6430,164 @@ static int process_single_command_response(ConversationState *state, ApiResponse
     return 0;
 }
 
+// ============================================================================
+// Socket IPC Functions
+// ============================================================================
+
+// Create and bind Unix domain socket
+static int create_unix_socket(const char *socket_path) {
+    // Remove existing socket file if it exists
+    unlink(socket_path);
+    
+    // Create socket
+    int server_fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (server_fd < 0) {
+        LOG_ERROR("Failed to create socket: %s", strerror(errno));
+        return -1;
+    }
+    
+    // Set socket to non-blocking
+    int flags = fcntl(server_fd, F_GETFL, 0);
+    if (flags < 0) {
+        LOG_ERROR("Failed to get socket flags: %s", strerror(errno));
+        close(server_fd);
+        return -1;
+    }
+    if (fcntl(server_fd, F_SETFL, flags | O_NONBLOCK) < 0) {
+        LOG_ERROR("Failed to set socket non-blocking: %s", strerror(errno));
+        close(server_fd);
+        return -1;
+    }
+    
+    // Bind socket
+    struct sockaddr_un addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sun_family = AF_UNIX;
+    strncpy(addr.sun_path, socket_path, sizeof(addr.sun_path) - 1);
+    
+    if (bind(server_fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+        LOG_ERROR("Failed to bind socket: %s", strerror(errno));
+        close(server_fd);
+        return -1;
+    }
+    
+    // Listen for connections
+    if (listen(server_fd, 1) < 0) {
+        LOG_ERROR("Failed to listen on socket: %s", strerror(errno));
+        close(server_fd);
+        unlink(socket_path);
+        return -1;
+    }
+    
+    LOG_INFO("Socket created and listening on: %s", socket_path);
+    return server_fd;
+}
+
+// Accept incoming connection
+static int accept_socket_connection(int server_fd) {
+    struct sockaddr_un addr;
+    socklen_t addr_len = sizeof(addr);
+    
+    int client_fd = accept(server_fd, (struct sockaddr*)&addr, &addr_len);
+    if (client_fd < 0) {
+        if (errno != EAGAIN && errno != EWOULDBLOCK) {
+            LOG_ERROR("Failed to accept connection: %s", strerror(errno));
+        }
+        return -1;
+    }
+    
+    // Set client socket to non-blocking
+    int flags = fcntl(client_fd, F_GETFL, 0);
+    if (flags >= 0) {
+        fcntl(client_fd, F_SETFL, flags | O_NONBLOCK);
+    }
+    
+    LOG_INFO("Accepted socket connection");
+    return client_fd;
+}
+
+// Read input from socket
+static int read_socket_input(int client_fd, char *buffer, size_t buffer_size) {
+    ssize_t bytes_read = read(client_fd, buffer, buffer_size - 1);
+    if (bytes_read < 0) {
+        if (errno != EAGAIN && errno != EWOULDBLOCK) {
+            LOG_ERROR("Failed to read from socket: %s", strerror(errno));
+            return -1;
+        }
+        return 0; // No data available
+    } else if (bytes_read == 0) {
+        LOG_INFO("Socket client disconnected");
+        return -1; // Client disconnected
+    }
+    
+    buffer[bytes_read] = '\0';
+    return (int)bytes_read;
+}
+
+// Check if socket has data available
+static int socket_has_data(int fd) {
+    struct pollfd pfd = { .fd = fd, .events = POLLIN, .revents = 0 };
+    int result = poll(&pfd, 1, 0); // Non-blocking poll
+    return result > 0 && (pfd.revents & POLLIN);
+}
+
+// External input callback for socket IPC
+static int socket_external_input_callback(void *user_data, char *buffer, size_t buffer_size) {
+    InteractiveContext *ctx = (InteractiveContext *)user_data;
+    if (!ctx || !ctx->socket_ipc.enabled) {
+        return 0;
+    }
+    
+    SocketIPC *socket_ipc = &ctx->socket_ipc;
+    
+    // Accept new connection if none
+    if (socket_ipc->client_fd < 0) {
+        socket_ipc->client_fd = accept_socket_connection(socket_ipc->server_fd);
+    }
+    
+    // Read from socket if connected
+    if (socket_ipc->client_fd >= 0 && socket_has_data(socket_ipc->client_fd)) {
+        int bytes = read_socket_input(socket_ipc->client_fd, buffer, buffer_size - 1);
+        if (bytes > 0) {
+            return bytes;
+        } else if (bytes < 0) {
+            // Client disconnected
+            close(socket_ipc->client_fd);
+            socket_ipc->client_fd = -1;
+            return 0;
+        }
+    }
+    
+    return 0;
+}
+
+// Cleanup socket resources
+static void cleanup_socket(SocketIPC *socket_ipc) {
+    if (!socket_ipc) return;
+    
+    if (socket_ipc->client_fd >= 0) {
+        close(socket_ipc->client_fd);
+        socket_ipc->client_fd = -1;
+    }
+    
+    if (socket_ipc->server_fd >= 0) {
+        close(socket_ipc->server_fd);
+        socket_ipc->server_fd = -1;
+    }
+    
+    if (socket_ipc->socket_path) {
+        unlink(socket_ipc->socket_path);
+        free(socket_ipc->socket_path);
+        socket_ipc->socket_path = NULL;
+    }
+    
+    socket_ipc->enabled = 0;
+}
+
+
+
 // Advanced input handler with readline-like keybindings, driven by non-blocking event loop
-static void interactive_mode(ConversationState *state) {
+static void interactive_mode(ConversationState *state, int socket_ipc_enabled, const char *socket_path) {
     const char *prompt = ">";
 
     // Initialize TUI
@@ -6496,6 +6666,20 @@ static void interactive_mode(ConversationState *state) {
         }
     }
 
+    // Initialize socket IPC if enabled
+    SocketIPC socket_ipc = {0};
+    if (socket_ipc_enabled && socket_path) {
+        socket_ipc.server_fd = create_unix_socket(socket_path);
+        if (socket_ipc.server_fd < 0) {
+            LOG_ERROR("Failed to create socket, continuing without socket IPC");
+            socket_ipc.enabled = 0;
+        } else {
+            socket_ipc.client_fd = -1;
+            socket_ipc.socket_path = strdup(socket_path);
+            socket_ipc.enabled = 1;
+        }
+    }
+
     InteractiveContext ctx = {
         .state = state,
         .tui = &tui,
@@ -6503,10 +6687,13 @@ static void interactive_mode(ConversationState *state) {
         .instruction_queue = instruction_queue_initialized ? &instruction_queue : NULL,
         .tui_queue = tui_queue_initialized ? &tui_queue : NULL,
         .instruction_queue_capacity = instruction_queue_initialized ? (int)AI_QUEUE_CAPACITY : 0,
+        .socket_ipc = socket_ipc,
     };
 
     void *event_loop_queue = tui_queue_initialized ? (void *)&tui_queue : NULL;
-    tui_event_loop(&tui, prompt, submit_input_callback, interrupt_callback, NULL, &ctx, event_loop_queue);
+    tui_event_loop(&tui, prompt, submit_input_callback, interrupt_callback, NULL, 
+                   socket_ipc.enabled ? socket_external_input_callback : NULL,
+                   &ctx, event_loop_queue);
 
     if (worker_started) {
         ai_worker_stop(&worker_ctx);
@@ -6522,6 +6709,9 @@ static void interactive_mode(ConversationState *state) {
         tui_msg_queue_free(&tui_queue);
     }
 
+    // Cleanup socket IPC
+    cleanup_socket(&socket_ipc);
+    
     // Cleanup TUI
     tui_cleanup(&tui);
     printf("Goodbye!\n");
@@ -6763,6 +6953,10 @@ static char* generate_session_id(void) {
     return session_id;
 }
 
+
+
+
+
 // ============================================================================
 // Main Entry Point
 #ifndef TEST_BUILD
@@ -6787,6 +6981,7 @@ int main(int argc, char *argv[]) {
         printf("  %s -r, --resume [ID]             Resume a previous conversation session\n", argv[0]);
         printf("                                      (defaults to most recent session if no ID given)\n");
         printf("  %s -l, --list-sessions [N]       List available sessions (N = max to show)\n", argv[0]);
+        printf("  %s -s, --socket PATH             Enable IPC socket at PATH for remote input\n", argv[0]);
         printf("  %s -h, --help                     Show this help message\n", argv[0]);
         printf("  %s --version                      Show version information\n\n", argv[0]);
         printf("Environment Variables:\n");
@@ -6858,6 +7053,20 @@ int main(int argc, char *argv[]) {
     }
 #endif
 
+    // Check for socket IPC flag
+    int socket_ipc_enabled = 0;
+    char *socket_path = NULL;
+    if ((argc == 2 || argc == 3) && (strcmp(argv[1], "-s") == 0 || strcmp(argv[1], "--socket") == 0)) {
+        if (argc != 3) {
+            fprintf(stderr, "Error: Socket path required with --socket option\n");
+            fprintf(stderr, "Usage: %s --socket /path/to/socket\n", argv[0]);
+            return 1;
+        }
+        socket_ipc_enabled = 1;
+        socket_path = argv[2];
+        LOG_INFO("Socket IPC enabled, path: %s", socket_path);
+    }
+
     // Handle list sessions mode
 #ifndef TEST_BUILD
     if (list_sessions) {
@@ -6878,13 +7087,13 @@ int main(int argc, char *argv[]) {
     int is_single_command_mode = 0;
     char *single_command = NULL;
 
-    if (argc == 2 && !resume_session && !list_sessions) {
+    if (argc == 2 && !resume_session && !list_sessions && !socket_ipc_enabled) {
         // Single argument provided - treat as prompt for single command mode
         // (but not if it's a resume flag without session ID)
         is_single_command_mode = 1;
         single_command = argv[1];
         LOG_INFO("Single command mode enabled with prompt: %s", single_command);
-    } else if (argc > 2 && !resume_session && !list_sessions) {
+    } else if (argc > 2 && !resume_session && !list_sessions && !socket_ipc_enabled) {
         LOG_ERROR("Unexpected arguments provided");
         printf("Try '%s --help' for usage information.\n", argv[0]);
         return 1;
@@ -7207,7 +7416,7 @@ int main(int argc, char *argv[]) {
     if (is_single_command_mode) {
         exit_code = single_command_mode(&state, single_command);
     } else {
-        interactive_mode(&state);
+        interactive_mode(&state, socket_ipc_enabled, socket_path);
     }
 
     // Cleanup conversation messages

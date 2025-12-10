@@ -3185,6 +3185,7 @@ int tui_event_loop(TUIState *tui, const char *prompt,
                    InputSubmitCallback submit_callback,
                    InterruptCallback interrupt_callback,
                    KeypressCallback keypress_callback,
+                   ExternalInputCallback external_input_callback,
                    void *user_data,
                    void *msg_queue_ptr) {
     if (!tui || !tui->is_initialized || !submit_callback) {
@@ -3231,7 +3232,78 @@ int tui_event_loop(TUIState *tui, const char *prompt,
         // 2. Check for paste timeout (even when no input arrives)
         check_paste_timeout(tui, prompt);
 
-        // 3. Poll for input (non-blocking)
+        // 3. Check for external input (e.g., sockets)
+        if (external_input_callback) {
+            char ext_buffer[4096];
+            int ext_bytes = external_input_callback(user_data, ext_buffer, sizeof(ext_buffer));
+            if (ext_bytes > 0) {
+                // Process external input
+                ext_buffer[ext_bytes] = '\0';
+                LOG_DEBUG("[TUI] External input received: %s", ext_buffer);
+                
+                // Check for termination signal
+                if (ext_bytes == 1 && ext_buffer[0] == 0x04) {
+                    LOG_INFO("Termination signal received via external input");
+                    running = 0;
+                    break;
+                }
+                
+                // Check for termination command
+                if (ext_bytes >= 12 && strncmp(ext_buffer, "__TERMINATE__", 12) == 0) {
+                    LOG_INFO("Termination command received via external input");
+                    running = 0;
+                    break;
+                }
+                
+                // Submit the input
+                if (ext_buffer[0] != '\0') {
+                    LOG_DEBUG("[TUI] Submitting external input (%d bytes)", ext_bytes);
+                    // Save to persistent history (keep DB open)
+                    // Append to in-memory history with simple de-dup of last entry
+                    if (tui->history_file) {
+                        history_file_append(tui->history_file, ext_buffer);
+                    }
+                    if (tui->input_history_count == 0 ||
+                        strcmp(tui->input_history[tui->input_history_count - 1], ext_buffer) != 0) {
+                        // Ensure capacity
+                        if (tui->input_history_count >= tui->input_history_capacity) {
+                            int new_cap = tui->input_history_capacity > 0 ? tui->input_history_capacity * 2 : 100;
+                            char **new_arr = realloc(tui->input_history, (size_t)new_cap * sizeof(char*));
+                            if (new_arr) {
+                                tui->input_history = new_arr;
+                                tui->input_history_capacity = new_cap;
+                            }
+                        }
+                        if (tui->input_history_count < tui->input_history_capacity) {
+                            tui->input_history[tui->input_history_count++] = strdup(ext_buffer);
+                        }
+                    }
+                    // Reset history navigation state after submit
+                    free(tui->input_saved_before_history);
+                    tui->input_saved_before_history = NULL;
+                    tui->input_history_pos = -1;
+                    // Call the callback
+                    int callback_result = submit_callback(ext_buffer, user_data);
+
+                    // Clear input buffer after submission
+                    tui_clear_input_buffer(tui);
+                    tui_redraw_input(tui, prompt);
+
+                    // Check if callback wants to exit
+                    if (callback_result != 0) {
+                        LOG_DEBUG("[TUI] Callback requested exit (code=%d)", callback_result);
+                        running = 0;
+                    }
+                }
+            } else if (ext_bytes < 0) {
+                // Error or termination requested
+                LOG_DEBUG("[TUI] External input callback returned error/termination");
+                running = 0;
+                break;
+            }
+        }
+
+        // 4. Poll for TUI input (non-blocking)
         // If in paste mode, drain all available input quickly
         int chars_processed = 0;
         // Drain more than 1 char per frame to avoid artificial delays/lag on quick typing
